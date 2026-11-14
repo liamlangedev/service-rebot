@@ -7,9 +7,14 @@ pick up the RIGHT controller, then:
   uv run quest_ee_teleop.py                    # Quest over USB ADB
   uv run quest_ee_teleop.py --ip 172.24.1.43   # Quest over Wi-Fi ADB
   uv run quest_ee_teleop.py --demo             # no headset: scripted controller
+  uv run quest_ee_teleop.py --vr               # see the MuJoCo scene IN the headset
+  uv run quest_ee_teleop.py --passthrough      # see-through headset, watch the PC screen
 
 The script installs/launches the OculusReader app on the headset over ADB and
-opens the MuJoCo viewer. Controls (right controller):
+opens the MuJoCo viewer. With --vr it instead opens a WebXR page in the Quest
+browser (over USB, via adb reverse) that draws the live simulation around you
+and streams the controllers back; press "Enter VR" (or "Start AR" for
+passthrough) on that page. Controls (right controller):
 
   A                 start mimicking: the gripper follows your hand position AND
                     rotation, relative to where your hand was when you pressed A
@@ -54,6 +59,16 @@ def parse_args():
                         "a little when your hand's orientation is out of reach, e.g. "
                         "holding it level close to the table)")
     p.add_argument("--demo", action="store_true", help="scripted controller, no headset")
+    p.add_argument("--vr", action="store_true",
+                   help="show the simulation in the headset (WebXR page, USB) and read "
+                        "the controllers from it instead of the OculusReader app")
+    p.add_argument("--passthrough", action="store_true",
+                   help="like --vr, but the headset draws nothing: it is see-through, so "
+                        "you watch the MuJoCo window on the PC screen while the "
+                        "controllers drive the sim")
+    p.add_argument("--vr-port", type=int, default=8765, help="port of the VR page server")
+    p.add_argument("--no-viewer", action="store_true",
+                   help="skip the desktop MuJoCo window (e.g. with --vr)")
     p.add_argument("--headless", action="store_true", help="no viewer (for tests)")
     p.add_argument("--duration", type=float, default=None, help="stop after N seconds")
     return p.parse_args()
@@ -94,7 +109,7 @@ def open_quest(hand: str, ip: str | None):
     return src
 
 
-def wait_for_controller(src, hand: str, timeout: float = 30.0):
+def wait_for_controller(src, hand: str, timeout: float = 30.0, hint: str | None = None):
     """Blocks until the controller pose streams (headset awake, app in front)."""
     t0, last_msg = time.time(), 0.0
     while time.time() - t0 < timeout:
@@ -104,7 +119,7 @@ def wait_for_controller(src, hand: str, timeout: float = 30.0):
         if time.time() - last_msg > 3.0:
             last_msg = time.time()
             print(f"[quest] waiting for the {'right' if hand == 'r' else 'left'} controller... "
-                  "(headset on, green grid app in front, press a button on the controller)")
+                  f"({hint or 'headset on, green grid app in front, press a button on the controller'})")
         time.sleep(0.05)
     print("[quest] no controller yet; starting anyway, it will pick up when tracked")
     return False
@@ -114,12 +129,26 @@ def main():
     args = parse_args()
     start_btn, stop_btn = ("A", "B") if args.hand == "r" else ("X", "Y")
 
-    source = DemoController() if args.demo else open_quest(args.hand, args.ip)
-    if not args.demo:
-        wait_for_controller(source, args.hand)
-
     sim = RebotSim()
     m, d = sim.model, sim.data
+
+    bridge = None
+    if args.vr or args.passthrough:
+        from teleop.vr_view import VRBridge, open_on_headset
+        bridge = VRBridge(m, port=args.vr_port, extra_sites=[GRASP_SITE])
+        bridge.start()
+        open_on_headset(args.vr_port, "view=passthrough" if args.passthrough else "")
+    if args.demo:
+        source = DemoController()
+    elif bridge is not None:
+        # Don't block: the page needs the live scene before you can enter VR.
+        source = bridge.source(args.hand)
+        print("[vr] on the headset page press "
+              + ("'Start AR' (see-through)" if args.passthrough
+                 else "'Enter VR' (or 'Start AR' for passthrough)"))
+    else:
+        source = open_quest(args.hand, args.ip)
+        wait_for_controller(source, args.hand)
     # Control the point between the fingertips, so the fingers go where your hand goes.
     ik = DiffIK(m, GRASP_SITE, ARM_JOINTS, q_rest=HOME_QPOS, max_joint_vel=args.max_joint_vel,
                 min_rot_weight=None if args.strict_rotation else 0.05)
@@ -142,7 +171,7 @@ def main():
             state["go_home"] = True
 
     viewer = None
-    if not args.headless:
+    if not (args.headless or args.no_viewer):
         viewer = mujoco.viewer.launch_passive(m, d, key_callback=key_callback)
         viewer.cam.lookat[:] = [0.25, 0.0, 0.3]
         viewer.cam.distance = 1.3
@@ -199,6 +228,13 @@ def main():
                 mujoco.mj_step(m, d)
             if viewer is not None and tick % sync_every == 0:
                 viewer.sync()
+            if bridge is not None and tick % sync_every == 0:
+                bridge.publish(d)
+                if tick % (sync_every * 10) == 0:
+                    bridge.status(("FOLLOWING" if state["following"] else
+                                   f"paused - press {start_btn}")
+                                  + f"   grip {state['gripper'] * 1000:.0f} mm",
+                                  state["following"])
 
             if now - last_print > 0.5:
                 last_print = now
@@ -221,6 +257,8 @@ def main():
         pass
     finally:
         source.close()
+        if bridge is not None:
+            bridge.close()
         # MuJoCo's passive viewer can segfault while shutting down GLFW, and the
         # OculusReader logcat thread is not a daemon: exit hard.
         sys.stdout.flush()
