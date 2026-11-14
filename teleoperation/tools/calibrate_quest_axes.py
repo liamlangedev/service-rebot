@@ -9,8 +9,9 @@ Stand where you will teleoperate from, facing the way the robot faces
   3. back to origin, move ~20 cm LEFT, A  -> left axis
   4. back to origin, move ~20 cm UP, A    -> up axis
 
-Writes config/quest_calibration.json, which sim_teleop.py picks up. This also
-removes any guesswork about OculusReader's axis convention and headset yaw.
+Writes config/quest_calibration_<source>.json, which sim_teleop.py picks up.
+WebXR and OculusReader use different tracking frames, so calibrate each
+source you use.
 """
 import argparse
 import json
@@ -21,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from teleop.quest_input import BUTTON_KEYS, CALIBRATION_FILE, QuestSource  # noqa: E402
+from teleop.quest_input import BUTTON_NAMES, calibration_file, make_quest_source  # noqa: E402
 
 
 def frame_from_axes(fwd: np.ndarray, left: np.ndarray, up: np.ndarray) -> np.ndarray:
@@ -39,33 +40,36 @@ def frame_from_axes(fwd: np.ndarray, left: np.ndarray, up: np.ndarray) -> np.nda
     return np.vstack([x, y, z])
 
 
-def wait_press(src: QuestSource, key: str, prompt: str) -> np.ndarray:
+def wait_press(src, prompt: str) -> np.ndarray:
     print(prompt)
-    while src.raw()[1].get(key, False):  # wait for release first
+    while src.read().reset:  # wait for release first
         time.sleep(0.01)
     while True:
-        T, buttons = src.raw()
-        if T is not None and buttons.get(key, False):
-            print(f"   recorded {np.round(T[:3, 3], 3)}")
-            return T[:3, 3].copy()
+        s = src.read()
+        if s.valid and s.reset:
+            print(f"   recorded {np.round(s.raw[:3, 3], 3)}")
+            return s.raw[:3, 3].copy()
         time.sleep(0.01)
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ip", default=None)
+    p.add_argument("--source", choices=["webxr", "oculus"], default="webxr")
+    p.add_argument("--relay", default="ws://127.0.0.1:8443/ws")
+    p.add_argument("--ip", default=None, help="Quest IP for wireless ADB (oculus)")
     p.add_argument("--hand", choices=["r", "l"], default="r")
     args = p.parse_args()
 
-    src = QuestSource(hand=args.hand, ip_address=args.ip, robot_from_quest=np.eye(3))
-    key = BUTTON_KEYS[args.hand]["reset"]
+    src = make_quest_source(args.source, args.hand, args.ip, args.relay,
+                            robot_from_quest=np.eye(3))
+    key = BUTTON_NAMES[args.hand]["reset"]
     try:
-        o = wait_press(src, key, f"1/4 hold still and press {key}")
-        f = wait_press(src, key, f"2/4 move ~20 cm FORWARD, press {key}") - o
-        o2 = wait_press(src, key, f"   return to start, press {key}")
-        l = wait_press(src, key, f"3/4 move ~20 cm LEFT, press {key}") - o2
-        o3 = wait_press(src, key, f"   return to start, press {key}")
-        u = wait_press(src, key, f"4/4 move ~20 cm UP, press {key}") - o3
+        o = wait_press(src, f"1/4 hold still and press {key}")
+        f = wait_press(src, f"2/4 move ~20 cm FORWARD, press {key}") - o
+        o2 = wait_press(src, f"   return to start, press {key}")
+        l = wait_press(src, f"3/4 move ~20 cm LEFT, press {key}") - o2
+        o3 = wait_press(src, f"   return to start, press {key}")
+        u = wait_press(src, f"4/4 move ~20 cm UP, press {key}") - o3
     finally:
         src.close()
 
@@ -78,10 +82,10 @@ def main():
     print(f" check (cm, expect ~[20,0,0], [0,20,0], [0,0,20]):\n"
           f"  fwd {np.round(C @ f * 100, 1)}\n  left {np.round(C @ l * 100, 1)}\n"
           f"  up {np.round(C @ u * 100, 1)}")
-    CALIBRATION_FILE.parent.mkdir(exist_ok=True)
-    CALIBRATION_FILE.write_text(json.dumps({"robot_from_quest": C.tolist(),
-                                            "hand": args.hand}, indent=2))
-    print(f"saved {CALIBRATION_FILE}")
+    out = calibration_file(args.source)
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(json.dumps({"robot_from_quest": C.tolist(), "hand": args.hand}, indent=2))
+    print(f"saved {out}")
 
 
 if __name__ == "__main__":

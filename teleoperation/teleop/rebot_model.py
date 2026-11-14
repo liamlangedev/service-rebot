@@ -36,6 +36,18 @@ _SERVO_GAINS = {
     "joint6": (40.0, 3.0, 10.0),
 }
 
+# Soft limits [deg] of the real DM arm in LeRobot (rebot_b601_follower DM
+# profile, same as the team's follower.json). Sim joint ranges are clipped to
+# them so recorded actions are always valid on the real arm.
+REAL_SOFT_LIMITS_DEG = {
+    "joint1": (-150.0, 150.0),
+    "joint2": (-200.0, 1.0),
+    "joint3": (-200.0, 1.0),
+    "joint4": (-80.0, 90.0),
+    "joint5": (-90.0, 90.0),
+    "joint6": (-90.0, 90.0),
+}
+
 _MATERIAL_RGBA = {
     "anodized_grey_mat": [0.62, 0.64, 0.66, 1],
     "hardware_black_mat": [0.10, 0.10, 0.11, 1],
@@ -60,6 +72,10 @@ def build_spec(mjcf_path: Path = DM_MJCF) -> mujoco.MjSpec:
 
     for name, rgba in _MATERIAL_RGBA.items():
         spec.material(name).rgba = rgba
+
+    for joint, (lo, hi) in REAL_SOFT_LIMITS_DEG.items():
+        rng = spec.joint(joint).range
+        spec.joint(joint).range = [max(rng[0], np.radians(lo)), min(rng[1], np.radians(hi))]
 
     for joint, (kp, kv, tau) in _SERVO_GAINS.items():
         act = spec.add_actuator(name=f"{joint}_pos", target=joint,
@@ -98,7 +114,25 @@ def build_spec(mjcf_path: Path = DM_MJCF) -> mujoco.MjSpec:
         target.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, size=[0.003, 0, 0],
                         fromto=np.concatenate([np.zeros(3), 0.06 * axis]),
                         rgba=rgba, contype=0, conaffinity=0, group=2)
+
+    # Cameras for dataset recording (the MJCF already has `overhead_rgb`).
+    # end_link sits at the fingertips and the tool points along its +x.
+    spec.worldbody.add_camera(name="front", pos=[0.95, 0, 0.5], fovy=50,
+                              quat=_lookat_quat([0.95, 0, 0.5], [0.3, 0, 0.15], [0, 0, 1]))
+    spec.body("end_link").add_camera(name="wrist", pos=[-0.13, 0, 0.05], fovy=80,
+                                     quat=_lookat_quat([-0.13, 0, 0.05], [0.15, 0, 0], [0, 0, 1]))
     return spec
+
+
+def _lookat_quat(pos, target, up):
+    """Quaternion of a MuJoCo camera (looks along -z, y up) at pos facing target."""
+    z = np.asarray(pos, float) - np.asarray(target, float)
+    z /= np.linalg.norm(z)
+    x = np.cross(up, z)
+    x /= np.linalg.norm(x)
+    quat = np.empty(4)
+    mujoco.mju_mat2Quat(quat, np.column_stack([x, np.cross(z, x), z]).reshape(-1))
+    return quat
 
 
 class RebotSim:
@@ -113,6 +147,7 @@ class RebotSim:
         self.arm_dadr = np.array([m.joint(j).dofadr[0] for j in ARM_JOINTS])
         self.arm_act = np.array([m.actuator(f"{j}_pos").id for j in ARM_JOINTS])
         self.grip_act = m.actuator("gripper_pos").id
+        self.grip_qadr = m.joint("finger_left").qposadr[0]
         self.tcp_site = m.site(TCP_SITE).id
         self.target_mocap = m.body_mocapid[m.body(TARGET_BODY).id]
         self.reset()
@@ -129,6 +164,11 @@ class RebotSim:
     def q_arm(self) -> np.ndarray:
         return self.data.qpos[self.arm_qadr].copy()
 
+    @property
+    def gripper(self) -> float:
+        """Measured finger_left opening [m]."""
+        return float(self.data.qpos[self.grip_qadr])
+
     def tcp_pose(self):
         return (self.data.site_xpos[self.tcp_site].copy(),
                 self.data.site_xmat[self.tcp_site].reshape(3, 3).copy())
@@ -143,6 +183,14 @@ class RebotSim:
         rot = np.empty(9)
         mujoco.mju_quat2Mat(rot, self.data.mocap_quat[self.target_mocap])
         return self.data.mocap_pos[self.target_mocap].copy(), rot.reshape(3, 3)
+
+    def mirror(self, q_arm: np.ndarray, finger: float):
+        """Shows a measured (real-arm) pose: kinematics only, no physics."""
+        self.data.qpos[self.arm_qadr] = q_arm
+        self.data.qpos[self.grip_qadr] = finger
+        self.data.qpos[self.model.joint("finger_right").qposadr[0]] = -finger
+        self.data.qvel[:] = 0
+        mujoco.mj_forward(self.model, self.data)
 
     def command(self, q_arm: np.ndarray, gripper: float):
         self.data.ctrl[self.arm_act] = q_arm

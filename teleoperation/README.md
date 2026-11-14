@@ -1,97 +1,178 @@
-# reBot Arm teleoperation with a Meta Quest (MuJoCo first)
+# reBot Arm teleoperation with a Meta Quest (MuJoCo → real arm)
 
-Teleoperate the Seeed Studio **reBot Arm B601-DM** with a Meta Quest controller,
-in MuJoCo first, so the same pipeline can later drive the real arm with confidence.
+Teleoperate the Seeed Studio **reBot Arm B601-DM** with a Meta Quest controller (or the
+mouse), in MuJoCo first and then on the real arm, and record **LeRobot datasets** whose
+format matches the real robot's.
 
 ```
-Quest controller ──ADB──> OculusReader ──> frame calibration ──> clutch mapping
-     (APK on headset)       (pose+buttons)   (Quest -> robot axes)   (TCP target)
-                                                                        │
-              MuJoCo reBot B601  <── joint position targets <── differential IK
-              (Seeed's official MJCF)       (100 Hz, rate-limited)
+Quest browser (WebXR page) ──WebSocket──> vr-teleop-kit relay ─┐
+Quest APK (OculusReader)   ──ADB────────────────────────────────┤  controller pose + buttons
+Mouse drag in the viewer   ─────────────────────────────────────┘
+        │
+        ▼  frame calibration (Quest axes -> robot axes)
+        ▼  clutch mapping (hold grip = follow the hand) -> TCP target
+        ▼  differential IK (6-DoF, joint limits = real arm soft limits)
+        ▼
+  joint targets ──> MuJoCo reBot B601 (Seeed's official MJCF)      --robot sim
+               └──> real arm via LeRobot rebot_b601_follower       --robot real
+        │
+        └──> LeRobot dataset (shoulder_pan.pos … gripper.pos in degrees + camera videos)
 ```
 
 | File | What it does |
 |---|---|
-| `scripts/setup_assets.sh` | Fetches Seeed's official reBot MJCF/meshes and the OculusReader Quest 3 fork, plus its APK |
-| `teleop/rebot_model.py` | Loads Seeed's `rebotarm_b601_colored.xml` and adds position servos, the coupled gripper, gravity compensation and the target marker |
-| `teleop/ik.py` | Damped-least-squares IK on the `tcp` site, with joint-limit clipping, a posture bias and a joint-velocity limit |
-| `teleop/quest_input.py` | OculusReader wrapper, Quest-to-robot frame conversion, clutch teleop mapping, scripted demo source |
-| `sim_teleop.py` | Main app: Quest / mouse / demo input, MuJoCo viewer, optional `.npz` recording |
+| `sim_teleop.py` | Main app: input → IK → sim or real arm, viewer, recording |
+| `teleop/rebot_model.py` | Loads Seeed's `rebotarm_b601_colored.xml` and adds servos, the gripper, gravity compensation, cameras (`front`, `wrist`, `overhead_rgb`), the target marker and the real arm's joint limits |
+| `teleop/ik.py` | Damped-least-squares IK on the `tcp` site |
+| `teleop/quest_input.py` | `WebXRSource` (vr-teleop-kit relay), `OculusSource` (OculusReader), clutch mapping, demo source |
+| `teleop/mouse_input.py` | Turns a mouse drag on the arm into target motion |
+| `teleop/lerobot_mapping.py` | Sim ↔ LeRobot joint names and units |
+| `teleop/lerobot_recorder.py` | Writes LeRobot v3 datasets |
+| `teleop/real_robot.py` | Real-arm backend using LeRobot's `RebotB601Follower` |
 | `tools/quest_stream_check.py` | Checks that poses and buttons arrive from the headset |
-| `tools/calibrate_quest_axes.py` | Records forward/left/up moves and writes `config/quest_calibration.json` |
+| `tools/calibrate_quest_axes.py` | Records forward/left/up moves and writes `config/quest_calibration_<source>.json` |
+| `tools/check_setup.py` | One-command check that the setup is complete |
+| `TODO.md` | What is done, what needs the headset or the real arm, what is next |
+| `scripts/setup_assets.sh` | Fetches the reBot model and OculusReader (not committed) |
 
-## 1. Setup (PC)
-
-```bash
-sudo apt install android-tools-adb      # OculusReader talks to the Quest over ADB
-./scripts/setup_assets.sh               # robot model + OculusReader + APK (not committed)
-uv sync
-```
-
-## 2. Setup (Quest, once)
-
-1. Make a free developer organization at <https://developer.oculus.com/manage/organizations/create/>.
-2. In the Meta Horizon phone app, open the headset settings and turn on **Developer Mode**.
-3. Connect the Quest over USB-C, put it on, and accept **Allow USB debugging** (tick *Always allow*).
-4. Run `adb devices`. The headset should show as `device`, not `unauthorized`.
-
-The first OculusReader run installs and launches the APK on the headset automatically.
-
-**Wireless (optional):** with USB still plugged in, run `adb tcpip 5555` and
-`adb shell ip route` to get the headset's IP. Unplug, then pass `--ip <quest-ip>`
-to every command below.
-
-## 3. Workflow
+## 1. Setup
 
 ```bash
-# a) Check that data streams (expect ~60-70 Hz, values change as you move)
-uv run tools/quest_stream_check.py
-
-# b) Calibrate axes: stand behind the robot's position, facing its +x direction
-uv run tools/calibrate_quest_axes.py
-
-# c) Teleoperate the simulated arm
-uv run sim_teleop.py --input quest --no-rotation   # start position-only
-uv run sim_teleop.py --input quest                 # then with orientation
+./scripts/setup_assets.sh       # reBot MJCF + meshes, OculusReader (+ APK)
+uv sync                         # sim + Quest input
+uv sync --extra lerobot         # + LeRobot recording and the real-arm driver (CPU torch)
 ```
 
-No headset? Use `--input mouse` and drag the green target: double-click it, then
-Ctrl+right-drag to move it and Ctrl+left-drag to rotate it. Up/Down arrows open and
-close the gripper. `--input demo` runs a scripted controller motion instead.
+Recording uses CPU torch to keep the download small. Install CUDA torch on the
+machine you train on.
+
+### Check the setup
+
+```bash
+uv run --extra lerobot tools/check_setup.py     # or: uv run tools/check_setup.py
+```
+
+This needs no headset or robot. It checks the model assets, builds the model, tests
+the IK, runs 2 s of headless teleop, and reports on the Quest pieces (relay,
+OculusReader + APK, adb + connected devices, axis calibration), LeRobot,
+`motorbridge` and `follower.json`. **FAIL** means the simulator won't run. **WARN**
+marks something needed only for one mode (headset, recording, real arm). Expected
+on a fresh machine: `Quest axis calibration` stays WARN until you run
+`tools/calibrate_quest_axes.py` with the headset.
+
+## 2. Try it without a headset
+
+```bash
+uv run sim_teleop.py --input mouse
+```
+
+**Mouse:** double-click any part of the arm (the gripper is easiest) so it is highlighted.
+Then **Ctrl + right-drag** moves the gripper and **Ctrl + left-drag** rotates it. The
+arm follows through the IK. Plain dragging only moves the camera. Double-click empty
+space to deselect.
+
+**Keyboard:** Up/Down opens and closes the gripper, Home sends the arm home, End
+starts or saves an episode, and Delete discards the current episode. Avoid Backspace,
+which is the viewer's own reset.
+
+`--input demo` runs a scripted motion.
+
+## 3. Quest via WebXR (default, nothing to install on the headset)
+
+This uses the relay and web page from
+[vr-teleop-kit](https://github.com/Dream-Machines-Robotics/vr-teleop-kit)
+(installed by `uv sync`). Their IK is DK1-specific, so we use only the relay and
+page and feed the poses into our reBot IK.
+
+1. Turn on Developer Mode on the Quest (Meta Horizon phone app → Devices → headset),
+   plug in USB-C and accept "Allow USB debugging" in the headset.
+2. Run:
+   ```bash
+   uv run vr-teleop-relay                   # terminal 1, serves http://localhost:8443
+   adb reverse tcp:8443 tcp:8443            # forward the Quest's localhost over USB
+   ```
+3. In the Quest browser, open `http://localhost:8443/` and press **Start Teleop**.
+4. In terminal 2:
+   ```bash
+   uv run tools/quest_stream_check.py       # poses streaming? (~72 Hz)
+   uv run tools/calibrate_quest_axes.py     # once: map Quest axes to robot axes
+   uv run sim_teleop.py --input quest --no-rotation   # start position-only
+   uv run sim_teleop.py --input quest                 # then with orientation
+   ```
+
+For Wi-Fi instead of USB, see vr-teleop-kit's README (LAN HTTPS with a self-signed
+cert), then pass `--relay wss://<pc-ip>:8443/ws`.
+
+**OculusReader fallback:** run `sudo apt install android-tools-adb` first, then add
+`--input oculus` (and `--source oculus` for the tools). The first run installs the
+APK. Calibration is stored separately per source.
 
 ### Quest controls (right hand; `--hand l` uses X/Y)
 
 | Input | Action |
 |---|---|
-| **Grip (hold)** | Clutch. The arm follows your hand only while it is held. Release it to re-centre your hand, like lifting a mouse. |
+| **Grip (hold)** | Clutch: the arm follows your hand while held; release to re-centre |
 | **Trigger** | Close the gripper (proportional) |
 | **A** | Send the arm home |
 | **B** | Toggle orientation tracking |
+| **Thumbstick click** | Start / save a recording episode |
 
-Useful flags: `--scale 0.5` gives finer motion, `--max-joint-vel 1.0` is gentler,
-and `--record session.npz` logs the command and target streams.
+Useful flags: `--scale 0.5` for finer motion, `--max-joint-vel 1.0` for gentler motion.
 
-## 4. Sim-to-real notes
+## 4. Record LeRobot datasets
 
-- **Same commands as the real arm.** The loop outputs 6 joint position targets at
-  100 Hz, rate-limited to `--max-joint-vel`. The real arm takes exactly that through
-  Seeed's [reBotArm_control_py](https://github.com/Seeed-Projects/reBotArm_control_py)
-  (`RebotArm().groups["arm"].send_pos_vel(q, vlim)`). The plan is a `RealBackend`
-  that replaces `sim.command()`; nothing upstream of it needs to change.
-- **Joint names and limits** come from Seeed's model (`joint1`..`joint6`), so they
-  match the SDK's URDF.
-- **Gripper units differ.** The sim uses finger travel in metres (0–0.05). The
-  real SDK gripper motor takes radians, so a mapping is needed for the real arm.
-- **Gravity.** The sim uses actuator gravity compensation to mimic the stiff
-  POS_VEL loop on the Damiao motors. The real arm will have more lag and
-  compliance, so start it with `--max-joint-vel 0.5` and `--scale 0.5`.
-- **Model variant.** This uses the **DM** (Damiao) model. For the RS (RobStride)
-  variant, point `DM_MJCF` in `teleop/rebot_model.py` at `RS/mjcf/rs_arm.xml`;
-  its actuators would need a check.
+```bash
+uv run sim_teleop.py --input quest --record --task "pick up the red cube"
+```
+
+Each episode goes: start (thumbstick click or End) → do the task → save (same
+button). Save resets the scene for the next episode. Delete discards the current
+episode. Datasets go to `datasets/<name>_<timestamp>/` (`--dataset-root` overrides).
+
+The format matches what `lerobot-record` produces with the real arm
+(`robot_type = rebot_b601_follower`), so sim and real data can be mixed:
+
+| Feature | Content |
+|---|---|
+| `observation.state` | measured `shoulder_pan.pos`, `shoulder_lift.pos`, `elbow_flex.pos`, `wrist_flex.pos`, `wrist_yaw.pos`, `wrist_roll.pos`, `gripper.pos` (deg) |
+| `action` | the commanded values, same names and units |
+| `observation.images.{front,wrist,overhead_rgb}` | 640×480 videos (`--cameras` to choose) |
+
+25 fps by default (`--fps`; it must divide the 100 Hz control rate). Rename the
+cameras to match your real camera names before mixing datasets. Push to the Hub with
+`LeRobotDataset(repo_id, root=...).push_to_hub()`.
+
+## 5. Real arm (untested on hardware so far)
+
+```bash
+uv run sim_teleop.py --input quest --robot real --port /dev/ttyACM0
+```
+
+- Uses LeRobot's `rebot_b601_follower` driver with the team's `follower.json`
+  calibration (repo root, `--robot-id follower`). The MuJoCo window mirrors the
+  measured arm pose.
+- Starts from the measured pose, so nothing moves until you hold the grip.
+- Safety defaults: 50 Hz, joint speed ≤ 0.5 rad/s, and ≤ 5° change per command
+  (`--max-step-deg`).
+- **Torque is disabled on exit (LeRobot default). Support the arm before quitting.**
+- First check the joint mapping in `teleop/lerobot_mapping.py`: with the arm in a
+  few poses, the mirrored sim pose must match the real one. The gripper's 0 to −270°
+  mapping onto finger travel is an assumption.
+
+## Sim-to-real notes
+
+- Sim joint ranges are clipped to the real arm's LeRobot soft limits, so recorded
+  actions are valid on hardware.
+- Gravity: the sim uses actuator gravity compensation to mimic the stiff Damiao loop.
+- The model is the **DM** variant. For RS, point `DM_MJCF` at `RS/mjcf/rs_arm.xml`
+  and change `motor_family` in `teleop/real_robot.py`.
+- vr-teleop-kit's own IK assumes a near-spherical wrist. The reBot's joint 4 and 5
+  axes are 78 mm apart, which is why we use a full 6-DoF IK instead.
 
 ## Credits
 
 - Robot model: Seeed Studio [reBot-DevArm](https://github.com/Seeed-Projects/reBot-DevArm) (CERN-OHL-W)
-- Quest reader: [OculusReader](https://github.com/rail-berkeley/oculus_reader),
-  using the Quest 3 fork [jborbik/oculus_reader](https://github.com/jborbik/oculus_reader) (Apache-2.0)
+- WebXR relay and page: [vr-teleop-kit](https://github.com/Dream-Machines-Robotics/vr-teleop-kit) (Apache-2.0)
+- Quest reader: [OculusReader](https://github.com/rail-berkeley/oculus_reader), Quest 3 fork
+  [jborbik/oculus_reader](https://github.com/jborbik/oculus_reader) (Apache-2.0)
+- Real-arm driver and dataset format: [LeRobot](https://github.com/huggingface/lerobot) (Apache-2.0)

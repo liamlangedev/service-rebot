@@ -2,16 +2,31 @@
 name = "rebot-teleop"
 version = "0.1.0"
 description = "Meta Quest (OculusReader) teleoperation of the Seeed reBot Arm B601 in MuJoCo"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "mujoco>=3.2",
     "numpy",
     "pure-python-adb",
     "oculus-reader",
+    # WebXR relay + Quest web page (default Quest input).
+    "vr-teleop-kit[relay]",
 ]
+
+[project.optional-dependencies]
+# Records teleop sessions as LeRobot datasets (pulls in torch).
+lerobot = ["lerobot[dataset,rebot]>=0.7.0", "torch", "torchvision"]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
 oculus-reader = { path = "third_party/oculus_reader", editable = true }
+vr-teleop-kit = { git = "https://github.com/Dream-Machines-Robotics/vr-teleop-kit", rev = "8d37f3d" }
+# Recording only needs CPU torch (much smaller download); train on a GPU box.
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
