@@ -55,6 +55,7 @@ Right controller:
 
 Keyboard in the viewer: Home sends the arm home, Up/Down open/close the gripper.
 Tune with `--scale 0.5` (finer motion), `--grip-speed`, `--max-joint-vel`.
+Full setup and check steps: [QUEST_EE_TELEOP.md](QUEST_EE_TELEOP.md).
 
 ## 1. Setup
 
