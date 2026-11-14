@@ -1722,6 +1722,23 @@ wheels = [
 ]
 
 [[package]]
+name = "rebot-sim"
+version = "1.1.0"
+source = { editable = "../simulation" }
+dependencies = [
+    { name = "mujoco" },
+    { name = "numpy" },
+    { name = "pillow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mujoco", specifier = ">=3.2" },
+    { name = "numpy" },
+    { name = "pillow" },
+]
+
+[[package]]
 name = "rebot-teleop"
 version = "0.1.0"
 source = { virtual = "." }
@@ -1730,6 +1747,7 @@ dependencies = [
     { name = "numpy" },
     { name = "oculus-reader" },
     { name = "pure-python-adb" },
+    { name = "rebot-sim" },
     { name = "vr-teleop-kit", extra = ["relay"] },
 ]
 
@@ -1749,6 +1767,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "oculus-reader", editable = "third_party/oculus_reader" },
     { name = "pure-python-adb" },
+    { name = "rebot-sim", editable = "../simulation" },
     { name = "torch", marker = "extra == 'lerobot'", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'lerobot'", index = "https://download.pytorch.org/whl/cpu" },
     { name = "vr-teleop-kit", extras = ["relay"], git = "https://github.com/Dream-Machines-Robotics/vr-teleop-kit?rev=8d37f3d" },

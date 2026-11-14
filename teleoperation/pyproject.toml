@@ -10,6 +10,8 @@ dependencies = [
     "oculus-reader",
     # WebXR relay + Quest web page (default Quest input).
     "vr-teleop-kit[relay]",
+    # The real-setup scene (../simulation): editable, so `git pull` = latest model.
+    "rebot-sim",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,7 @@ package = false
 
 [tool.uv.sources]
 oculus-reader = { path = "third_party/oculus_reader", editable = true }
+rebot-sim = { path = "../simulation", editable = true }
 vr-teleop-kit = { git = "https://github.com/Dream-Machines-Robotics/vr-teleop-kit", rev = "8d37f3d" }
 # Recording only needs CPU torch (much smaller download); train on a GPU box.
 torch = { index = "pytorch-cpu" }

@@ -143,11 +143,37 @@ def _lookat_quat(pos, target, up):
     return quat
 
 
+SCENES = ("default", "real")  # or a path to a setup JSON (see simulation/rebot_sim)
+
+
+def apply_scene(spec: mujoco.MjSpec, scene="default"):
+    """Adds the workspace around the robot.
+
+    `default`: Seeed's demo table and cubes. `real`: the team's measured setup
+    (simulation/rebot_sim/real_setup.json). A `*.json` path: a setup in the same
+    format. A callable: called with the spec (returns the scene info)."""
+    if callable(scene):
+        return scene(spec)
+    if scene == "default":
+        return None
+    import sys
+    sim_dir = str(ROOT.parent / "simulation")
+    if sim_dir not in sys.path:
+        sys.path.insert(0, sim_dir)
+    from rebot_sim import apply_real_setup, load_config
+    if scene == "real":
+        return apply_real_setup(spec)
+    if str(scene).endswith(".json"):
+        return apply_real_setup(spec, load_config(scene))
+    raise ValueError(f"unknown scene {scene!r}: use one of {SCENES} or a setup .json")
+
+
 class RebotSim:
     """Compiled model plus handy indices."""
 
-    def __init__(self, mjcf_path: Path = DM_MJCF):
+    def __init__(self, mjcf_path: Path = DM_MJCF, scene="default"):
         self.spec = build_spec(mjcf_path)
+        self.scene_info = apply_scene(self.spec, scene)
         self.model = self.spec.compile()
         self.data = mujoco.MjData(self.model)
         m = self.model

@@ -86,6 +86,13 @@ marks something needed only for one mode (headset, recording, real arm). Expecte
 on a fresh machine: `Quest axis calibration` stays WARN until you run
 `tools/calibrate_quest_axes.py` with the headset.
 
+### Simulated real setup
+
+`--scene real` (on `sim_teleop.py` and `quest_ee_teleop.py`) swaps Seeed's demo table for
+the team's measured workspace: table, walls, foam bin (`bin_0`, `bin_1`), can, paper cup,
+and the real cameras `cam_corner`, `cam_far` and `wrist`. `--scene path/to/setup.json`
+takes a custom setup. See [../simulation/README.md](../simulation/README.md).
+
 ## 2. Try it without a headset
 
 ```bash

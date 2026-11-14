@@ -77,6 +77,9 @@ def parse_args():
                         "a little when your hand's orientation is out of reach, e.g. "
                         "holding it level close to the table)")
     p.add_argument("--demo", action="store_true", help="scripted controller, no headset")
+    p.add_argument("--scene", default="default",
+                   help="default = Seeed demo table, real = the team's measured workspace "
+                        "(simulation/rebot_sim), or a path to your own setup .json")
     p.add_argument("--vr", action="store_true",
                    help="show the simulation in the headset (WebXR page, USB) and read "
                         "the controllers from it instead of the OculusReader app")
@@ -193,7 +196,7 @@ def main():
         from teleop.real_teleop import run_real
         return run_real(args)
 
-    sim = RebotSim()
+    sim = RebotSim(scene=args.scene)
     m, d = sim.model, sim.data
 
     bridge = None

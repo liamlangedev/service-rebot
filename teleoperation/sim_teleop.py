@@ -58,6 +58,9 @@ def parse_args():
                    default="quest",
                    help="quest = WebXR relay, oculus = OculusReader, leap = Ultraleap")
     p.add_argument("--hand", choices=["r", "l"], default="r")
+    p.add_argument("--scene", default="default",
+                   help="default = Seeed demo table, real = the team's measured workspace "
+                        "(simulation/rebot_sim), or a path to your own setup .json")
     p.add_argument("--relay", default="ws://127.0.0.1:8443/ws", help="WebXR relay WebSocket")
     p.add_argument("--ip", default=None, help="Quest IP for wireless ADB (oculus only)")
     p.add_argument("--scale", type=float, default=1.0, help="hand-to-robot motion scale")
@@ -101,7 +104,7 @@ def main():
         sys.exit(f"--fps {args.fps} must divide --rate {args.rate}")
 
     start_q = READY_QPOS if args.input == "leap" else HOME_QPOS
-    sim = RebotSim()
+    sim = RebotSim(scene=args.scene)
     sim.reset(start_q)
     m, d = sim.model, sim.data
     ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=start_q,
