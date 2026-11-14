@@ -115,9 +115,16 @@ class VRBridge:
                 return resp
             return connection.respond(http.HTTPStatus.NOT_FOUND, "not found\n")
 
-        self._server = serve(self._handle, "0.0.0.0", self.port,
-                             process_request=process_request, max_size=2 ** 20,
-                             compression=None)
+        try:
+            self._server = serve(self._handle, "0.0.0.0", self.port,
+                                 process_request=process_request, max_size=2 ** 20,
+                                 compression=None)
+        except OSError as e:
+            raise SystemExit(
+                f"[vr] port {self.port} is busy ({e.strerror}): another quest_ee_teleop "
+                f"--vr/--passthrough is probably still running.\n"
+                f"  find it:  ss -ltnp | grep {self.port}   then kill <pid>, "
+                f"or use --vr-port {self.port + 1}") from None
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
         print(f"[vr] serving the VR view on http://localhost:{self.port}/ "
               f"({len(self.geoms)} geoms, {len(self._mesh_blob) / 1e6:.1f} MB of meshes)")
