@@ -202,3 +202,21 @@ uv run sim_teleop.py --input quest --robot real --port /dev/ttyACM0
 - Quest reader: [OculusReader](https://github.com/rail-berkeley/oculus_reader), Quest 3 fork
   [jborbik/oculus_reader](https://github.com/jborbik/oculus_reader) (Apache-2.0)
 - Real-arm driver and dataset format: [LeRobot](https://github.com/huggingface/lerobot) (Apache-2.0)
+
+## 5. Ultraleap + real arm (lerobot)
+
+Run these with the root `steel_team/.venv` (lerobot, leap, mujoco). Left fist or Space = clutch,
+right hand drives, thumb-index pinch = gripper.
+
+```bash
+python sim_teleop.py --input leap            # 1. try it in the simulator first
+python go_ready.py --port /dev/tty.usbmodem00000000050C1   # 2. MoveJ to gripper-down ready pose
+python record_rebot.py --robot.type=rebot_b601_follower \
+  --robot.port=/dev/tty.usbmodem00000000050C1 --robot.max_relative_target=3 \
+  --teleop.type=leap_ik --dataset.repo_id=<user>/rebot_leap \
+  --dataset.single_task="pick up the cube"  # 3. record
+```
+
+`teleop/rebot_real.py` holds the ready pose and the singularity guard (steps that reduce the
+Jacobian's smallest singular value below a threshold are refused). Check `GRIPPER_OPEN_DEG` /
+`GRIPPER_CLOSED_DEG` there against your gripper.

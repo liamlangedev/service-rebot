@@ -4,6 +4,7 @@
   uv run sim_teleop.py --input quest            # Quest via the WebXR relay (start it first)
   uv run sim_teleop.py --input oculus           # Quest via OculusReader (APK + ADB)
   uv run sim_teleop.py --input oculus --ip 192.168.1.42  # OculusReader over Wi-Fi ADB
+  uv run sim_teleop.py --input leap             # Ultraleap hand tracking
   uv run sim_teleop.py --input mouse            # no headset: drag the arm
   uv run sim_teleop.py --input demo             # scripted controller motion
 
@@ -43,6 +44,7 @@ import numpy as np
 from teleop.ik import DiffIK
 from teleop.mouse_input import MouseDragTeleop
 from teleop.quest_input import ClutchTeleop, DemoSource, make_quest_source
+from teleop.rebot_real import READY_QPOS, guarded_solve
 from teleop.rebot_model import ARM_JOINTS, GRIPPER_MAX, HOME_QPOS, TCP_SITE, RebotSim
 
 KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_DELETE = 265, 264, 268, 269, 261
@@ -52,8 +54,9 @@ VIEWER_HZ = 50.0
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--input", choices=["quest", "oculus", "mouse", "demo"], default="quest",
-                   help="quest = WebXR relay, oculus = OculusReader")
+    p.add_argument("--input", choices=["quest", "oculus", "leap", "mouse", "demo"],
+                   default="quest",
+                   help="quest = WebXR relay, oculus = OculusReader, leap = Ultraleap")
     p.add_argument("--hand", choices=["r", "l"], default="r")
     p.add_argument("--relay", default="ws://127.0.0.1:8443/ws", help="WebXR relay WebSocket")
     p.add_argument("--ip", default=None, help="Quest IP for wireless ADB (oculus only)")
@@ -97,9 +100,11 @@ def main():
     if args.record and args.rate % args.fps:
         sys.exit(f"--fps {args.fps} must divide --rate {args.rate}")
 
+    start_q = READY_QPOS if args.input == "leap" else HOME_QPOS
     sim = RebotSim()
+    sim.reset(start_q)
     m, d = sim.model, sim.data
-    ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=HOME_QPOS,
+    ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=start_q,
                 max_joint_vel=args.max_joint_vel)
     teleop = ClutchTeleop(pos_scale=args.scale, track_rotation=not args.no_rotation)
     mouse = MouseDragTeleop(m)
@@ -107,6 +112,9 @@ def main():
     if args.input in ("quest", "oculus"):
         source = make_quest_source("webxr" if args.input == "quest" else "oculus",
                                    args.hand, args.ip, args.relay)
+    elif args.input == "leap":
+        from teleop.leap_input import LeapSource
+        source = LeapSource()
     elif args.input == "demo":
         source = DemoSource()
     else:
@@ -126,9 +134,9 @@ def main():
     n_sub = max(1, round(dt / m.opt.timestep))
     record_every = args.rate // args.fps if recorder else 0
     sync_every = max(1, round(args.rate / VIEWER_HZ))
-    home_pos, home_rot = ik.fk(HOME_QPOS)
+    home_pos, home_rot = ik.fk(start_q)
 
-    state = dict(q_cmd=HOME_QPOS.copy(), gripper=GRIPPER_MAX,
+    state = dict(q_cmd=start_q.copy(), gripper=GRIPPER_MAX,
                  target=(home_pos, home_rot), go_home=False, episode_key=None,
                  prev_rec_button=False)
 
@@ -196,7 +204,7 @@ def main():
                     toggle_episode()
                 state["prev_rec_button"] = s.record
                 target_pos, target_rot = teleop.update(s, target_pos, target_rot)
-                if s.valid and args.input in ("quest", "oculus"):
+                if s.valid and args.input in ("quest", "oculus", "leap"):
                     state["gripper"] = GRIPPER_MAX * (1.0 - np.clip(s.trigger, 0, 1))
                 elif args.input == "demo":
                     state["gripper"] = GRIPPER_MAX * (1.0 - s.trigger)
@@ -217,8 +225,10 @@ def main():
             sim.set_target(target_pos, target_rot)
 
             # ---- 2. IK -> joint command -------------------------------------
-            track_rot = None if (args.no_rotation or not teleop.track_rotation) else target_rot
-            q_cmd, pos_err, rot_err = ik.solve(state["q_cmd"], target_pos, track_rot, dt)
+            # Leap always tracks rotation (dev/roboCrafy); others honour --no-rotation / B.
+            track_rot = None if ((args.no_rotation or not teleop.track_rotation)
+                                 and args.input != "leap") else target_rot
+            q_cmd, pos_err, rot_err, _ = guarded_solve(ik, state["q_cmd"], target_pos, track_rot, dt)
             state["q_cmd"] = q_cmd
             sim.command(q_cmd, state["gripper"])
 
