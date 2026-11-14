@@ -96,6 +96,13 @@ adb shell am start -n com.rail.oculus.teleop/com.rail.oculus.teleop.MainActivity
 uv run quest_ee_teleop.py               # add --scale 0.5 for finer motion
 ```
 
+The point you control is the **green dot between the fingertips** (the `grasp`
+site), not the palm, so to pick an object bring the green dot to the object's
+centre with the gripper open, then close it. If your hand's orientation can't be
+reached at that spot (e.g. gripper held level right above the table), the tool
+tilts a little so the fingertips still get there; `--strict-rotation` turns
+that off.
+
 The console prints `[quest] controller tracked`, then
 `press A to start mimicking ...`. Status lines show `FOLLOW`/`paused`, target vs.
 TCP position, IK error and gripper opening.
@@ -113,6 +120,8 @@ Stand behind the robot, facing the same way it faces (its +x). Then check:
 - [ ] **A again:** resumes from the arm's current pose, no jump.
 - [ ] **Home** key in the viewer sends the arm home.
 - [ ] `ik_err` stays at a few mm in the normal workspace.
+- [ ] **Pick:** open gripper, move the green dot onto the red cube (level or
+      pointing down both work), thumbstick left to close, lift: the cube comes up.
 
 ### If something is off
 
@@ -123,6 +132,7 @@ Stand behind the robot, facing the same way it faces (its +x). Then check:
 | Motion too large / too jumpy | `--scale 0.5`, `--max-joint-vel 1.0` |
 | Gripper too slow / fast | `--grip-speed 0.03` (default 0.06 m/s) |
 | `(controller not tracked)` in status | see step 5 |
+| Can't get low enough / gripper hits the cube | aim the green dot (fingertips) at the cube centre, gripper fully open; the palm is ~7 cm behind it |
 | `could not connect over ADB` | see step 3 |
 
 ## 7. Wireless (optional)
