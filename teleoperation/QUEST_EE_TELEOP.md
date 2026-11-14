@@ -140,7 +140,13 @@ Stand behind the robot, facing the same way it faces (its +x). Then check:
 ```bash
 uv run quest_ee_teleop.py --vr                 # desktop MuJoCo window too
 uv run quest_ee_teleop.py --vr --no-viewer     # headset only
+uv run quest_ee_teleop.py --passthrough        # see-through headset: watch the PC screen
 ```
+
+**Passthrough mode** (`--passthrough`): the headset page draws nothing. Press
+**Start AR** and the headset is fully see-through, so you watch the normal
+MuJoCo window on your monitor while the right controller drives the arm
+(A / B / thumbstick as usual).
 
 The script serves a WebXR page on port 8765, forwards it over USB
 (`adb reverse`) and opens `http://localhost:8765/` in the Quest browser. In

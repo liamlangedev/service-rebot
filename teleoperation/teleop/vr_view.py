@@ -207,7 +207,7 @@ def adb(*args, check=False) -> subprocess.CompletedProcess:
     return subprocess.run(["adb", *args], capture_output=True, text=True, timeout=15, check=check)
 
 
-def open_on_headset(port: int) -> bool:
+def open_on_headset(port: int, query: str = "") -> bool:
     """adb reverse the port and open the page in the Quest browser."""
     try:
         devices = adb("devices").stdout.split("\n")[1:]
@@ -221,7 +221,7 @@ def open_on_headset(port: int) -> bool:
     if r.returncode != 0:
         print(f"[vr] adb reverse failed: {r.stderr.strip()}")
         return False
-    url = f"http://localhost:{port}/"
+    url = f"http://localhost:{port}/" + (f"?{query}" if query else "")
     adb("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url,
         "com.oculus.browser")
     print(f"[vr] opened {url} in the Quest browser (port forwarded over USB)")

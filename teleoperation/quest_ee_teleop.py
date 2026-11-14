@@ -8,6 +8,7 @@ pick up the RIGHT controller, then:
   uv run quest_ee_teleop.py --ip 172.24.1.43   # Quest over Wi-Fi ADB
   uv run quest_ee_teleop.py --demo             # no headset: scripted controller
   uv run quest_ee_teleop.py --vr               # see the MuJoCo scene IN the headset
+  uv run quest_ee_teleop.py --passthrough      # see-through headset, watch the PC screen
 
 The script installs/launches the OculusReader app on the headset over ADB and
 opens the MuJoCo viewer. With --vr it instead opens a WebXR page in the Quest
@@ -61,6 +62,10 @@ def parse_args():
     p.add_argument("--vr", action="store_true",
                    help="show the simulation in the headset (WebXR page, USB) and read "
                         "the controllers from it instead of the OculusReader app")
+    p.add_argument("--passthrough", action="store_true",
+                   help="like --vr, but the headset draws nothing: it is see-through, so "
+                        "you watch the MuJoCo window on the PC screen while the "
+                        "controllers drive the sim")
     p.add_argument("--vr-port", type=int, default=8765, help="port of the VR page server")
     p.add_argument("--no-viewer", action="store_true",
                    help="skip the desktop MuJoCo window (e.g. with --vr)")
@@ -128,17 +133,19 @@ def main():
     m, d = sim.model, sim.data
 
     bridge = None
-    if args.vr:
+    if args.vr or args.passthrough:
         from teleop.vr_view import VRBridge, open_on_headset
         bridge = VRBridge(m, port=args.vr_port, extra_sites=[GRASP_SITE])
         bridge.start()
-        open_on_headset(args.vr_port)
+        open_on_headset(args.vr_port, "view=passthrough" if args.passthrough else "")
     if args.demo:
         source = DemoController()
     elif bridge is not None:
         # Don't block: the page needs the live scene before you can enter VR.
         source = bridge.source(args.hand)
-        print("[vr] on the headset page press 'Enter VR' (or 'Start AR' for passthrough)")
+        print("[vr] on the headset page press "
+              + ("'Start AR' (see-through)" if args.passthrough
+                 else "'Enter VR' (or 'Start AR' for passthrough)"))
     else:
         source = open_quest(args.hand, args.ip)
         wait_for_controller(source, args.hand)
