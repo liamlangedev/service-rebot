@@ -4,6 +4,25 @@ Prompt → Claude looks at the camera → picks a WRC skill → WRC plans the gr
 
 This folder ports the WRC pipeline (built for the B601-**RS**) to the B601-**DM**. Written 2026-11-14 at the Leukerbad hackathon. No upstream WRC file is modified; everything here is additive.
 
+## Latest version: 2026-11-15
+
+Changes since the first push, all found by testing in the physics simulation:
+
+- **Joint ranges.** WRC planned with Seeed's URDF ranges (wrist roll ±180°). The real arm, and the simulator that mirrors it, accept ±90°. Commands were clipped silently and the gripper arrived in the right place turned about 50° wrong. WRC's arm model is now clipped to the real ranges, every grasp is also offered turned half a turn, and the arm driver refuses to start if the two disagree.
+- **A pose the arm did not reach is now a failure**, not a silent success.
+- **Objects are put down with the gripper straight down.** WRC's default tilts the tool 21°, which left tall objects leaning 30°.
+- **"Pick X" with no destination puts the object on a free spot** chosen before each task and checked for reach, so objects no longer pile up on one place. (`--drop-zone x,y` fixes the spot.)
+- **Nothing is left in the gripper.** If a task ends while still holding an object, the robot sets it down on a free spot.
+- **Claude and detector names.** Claude is told that the detector's names can differ from the user's words (a cylinder seen from above is a "ball") and that "remembered" entries are old sightings, not extra objects.
+- **Every Claude decision is shown** in the dashboard and the terminal with its API request ID.
+- **The 3D window is display only.** Closing it no longer stops the simulator, and a key pressed in it that resets MuJoCo's scene is undone. Type tasks in the web page.
+- **Real-arm path** now follows the team's `teleoperation/go_ready.py` (measured gripper range, lag guard). Still untested on hardware.
+- New commands: `./START_WRC.sh dm-shuffle` (move the sim objects), `dm-trials` (randomized trials with a success rate), `dm-calibrate` (camera calibration).
+
+Measured before these fixes: 15 of 20 randomized Claude trials succeeded. The 5 failures were the joint-range bug (3) and the name mismatch (2); each failing case was re-run after the fix and now succeeds. The full 20-trial re-run after the fixes has not been completed, so there is no new success rate yet.
+
+**The reach figures further down were measured before the joint-range fix and the straight-down put-down. Treat them as approximate.**
+
 ## What is verified and what is not
 
 | Part | Status |

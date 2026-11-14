@@ -22,7 +22,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
-PORT = 9881
+PORT = int(os.environ.get("WRC_DM_BRIDGE_PORT") or 9881)   # set it to use a private simulator
 POSE = (0.39, 0.04, 35.0)          # sheet centre x, y [m], yaw [deg]
 TABLE_Z = 0.03
 
@@ -38,8 +38,8 @@ def main() -> int:
     from wrc_dm_plugin import BridgeClient
 
     if port_open():
-        print("A DM bridge is already running on port 9881. Stop it first (it has no calibration sheet): "
-              "pkill -f local_dm/dm_bridge_server.py")
+        print(f"A DM bridge is already running on port {PORT} (it has no calibration sheet). Stop it, or use "
+              "a private port:  WRC_DM_BRIDGE_PORT=9891 ./START_WRC.sh dm-calib-test")
         return 2
     teleop = Path(os.environ.get("STEEL_TEAM_TELEOP_DIR", REPO.parent / "steel_team" / "teleoperation"))
     py = teleop / ".venv" / "bin" / "python"
@@ -50,7 +50,7 @@ def main() -> int:
     sheet = tmp / "calib_sheet.png"
     cc.make_sheet(sheet)
     srv = subprocess.Popen([str(py), str(HERE / "dm_bridge_server.py"), "--headless", "--calib-sheet", str(sheet),
-                            "--sheet-pose", ",".join(str(v) for v in POSE)],
+                            "--sheet-pose", ",".join(str(v) for v in POSE), "--port", str(PORT)],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 40

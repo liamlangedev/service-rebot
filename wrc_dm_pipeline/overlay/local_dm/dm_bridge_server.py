@@ -19,13 +19,14 @@ Run it with the teleoperation venv (that env has mujoco; WRC's env does not):
 Wire protocol (one JSON object per line; replies are a JSON line optionally followed
 by raw binary blobs whose byte lengths are listed in reply["blobs"]):
 
-  {"op": "info"}                      -> home_q, finger_max, robot kind, camera names
+  {"op": "info"}                      -> home_q, finger_max, robot kind, camera names, joint_lo / joint_hi (rad)
   {"op": "state"}                     -> q[6] rad, dq[6], finger m, finger_vel, t  (+ sim object poses)
   {"op": "target", "q": [6]}          -> set the joint position targets (rad)
   {"op": "gripper", "f": 0.03}        -> set the finger opening target (m, 0 = closed .. 0.05 = open)
   {"op": "hold"}                      -> freeze at the measured pose
   {"op": "frame", "cam": "overhead_rgb"} -> BGR uint8 HxWx3 + depth float32 HxW (m) + K + T_base_cam   (sim only)
   {"op": "reset"}                     -> sim only: objects + arm back to the start layout
+  {"op": "set_objects", "objects": {name: {"pos": [x, y, z], "yaw": rad}}}  -> sim only, for tests
 """
 from __future__ import annotations
 
@@ -68,7 +69,7 @@ def parse_args():
     p.add_argument("--teleop-dir", default=str(DEFAULT_TELEOP),
                    help="steel_team/teleoperation folder (provides teleop.rebot_model, rebot_real, assets)")
     p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=9881)
+    p.add_argument("--port", type=int, default=int(os.environ.get("WRC_DM_BRIDGE_PORT") or 9881))
     p.add_argument("--headless", action="store_true", help="no 3D window")
     p.add_argument("--duration", type=float, default=None, help="exit after N seconds (tests)")
     p.add_argument("--width", type=int, default=640)
@@ -153,13 +154,30 @@ class SimBackend:
 
     def reset(self):
         mj, m, d = self.mj, self.m, self.d
+        t_keep = float(d.time)
         self.sim.reset(np.array(DM_HOME_Q, dtype=float), gripper=self.finger_max)
+        d.time = t_keep      # keep the clock running forward: the main loop treats a clock jump back as an accident
         d.mocap_pos[self.sim.target_mocap] = [0.0, 0.0, -5.0]   # hide teleop's IK target marker
         for name, pos in self.layout.items():
             adr = m.jnt_qposadr[m.body(name).jntadr[0]]
             d.qpos[adr:adr + 3] = pos
             d.qpos[adr + 3:adr + 7] = [1, 0, 0, 0]
             dadr = m.jnt_dofadr[m.body(name).jntadr[0]]
+            d.qvel[dadr:dadr + 6] = 0
+        mj.mj_forward(m, d)
+        self._frame_cache.clear()
+
+    def set_objects(self, objects: dict):
+        """Test helper: put sim objects at given poses. {name: {"pos": [x, y, z], "yaw": rad}}"""
+        mj, m, d = self.mj, self.m, self.d
+        for name, spec in objects.items():
+            if name not in SIM_LAYOUT:
+                raise ValueError(f"unknown sim object {name!r}")
+            j = m.body(name).jntadr[0]
+            adr, dadr = m.jnt_qposadr[j], m.jnt_dofadr[j]
+            yaw = float(spec.get("yaw", 0.0))
+            d.qpos[adr:adr + 3] = spec["pos"]
+            d.qpos[adr + 3:adr + 7] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
             d.qvel[dadr:dadr + 6] = 0
         mj.mj_forward(m, d)
         self._frame_cache.clear()
@@ -182,6 +200,9 @@ class SimBackend:
             "fault": None,
             # Ground truth for VERIFICATION ONLY (WRC never reads this; it uses the camera).
             "objects": {n: d.xpos[self.m.body(n).id].tolist() for n in SIM_LAYOUT},
+            # how far each object leans from upright, in degrees (0 = standing as it started, 90 = on its side)
+            "object_tilt_deg": {n: float(np.degrees(np.arccos(np.clip(d.xmat[self.m.body(n).id][8], -1, 1))))
+                                for n in SIM_LAYOUT},
         }
 
     def set_target(self, q):
@@ -327,6 +348,9 @@ class RealBackend:
     def reset(self):
         raise RuntimeError("reset is sim-only")
 
+    def set_objects(self, objects: dict):
+        raise RuntimeError("set_objects is sim-only")
+
     def cameras(self):
         return []
 
@@ -416,9 +440,17 @@ class Bridge:
         if op == "reset":
             b.reset()
             return {"header": {"ok": True}}
+        if op == "test_viewer_reset" and b.kind == "sim":   # test hook: what Backspace in the 3D window does
+            b.mj.mj_resetData(b.m, b.d)
+            return {"header": {"ok": True}}
+        if op == "set_objects":
+            b.set_objects(req["objects"])
+            return {"header": {"ok": True}}
         if op == "info":
+            lim = b.m.actuator_ctrlrange[b.sim.arm_act]      # the ranges the arm accepts (real soft limits)
             return {"header": {"ok": True, "robot": b.kind, "home_q": DM_HOME_Q, "finger_max": b.finger_max,
-                               "cameras": b.cameras()}}
+                               "cameras": b.cameras(), "joint_lo": lim[:, 0].tolist(),
+                               "joint_hi": lim[:, 1].tolist()}}
         return {"header": {"ok": False, "error": f"unknown op {op!r}"}}
 
 
@@ -459,21 +491,43 @@ def main() -> int:
     except ValueError:                      # not the main thread (mjpython): Ctrl+C / closing the window still work
         pass
 
+    def _check_window(v):
+        # Closing the 3D window must NOT stop the robot: keep serving without it (Ctrl+C stops the server).
+        if v is not None and not v.is_running():
+            print("[dm-bridge] 3D window closed; the simulator keeps running. Ctrl+C in this terminal stops it.",
+                  flush=True)
+            return None
+        return v
+
     t_start = time.perf_counter()
     next_sync = 0.0
     try:
         if backend.kind == "sim":
             t0, sim0 = time.perf_counter(), backend.d.time
-            while viewer is None or viewer.is_running():
+            snap = None
+            while True:
+                viewer = _check_window(viewer)
                 now = time.perf_counter()
                 if args.duration is not None and now - t_start > args.duration:
                     break
+                d = backend.d
                 bridge.pump()
+                if snap is not None and d.time + 1e-9 < snap[0]:
+                    # Time went backwards: a key pressed in the 3D window (Backspace = MuJoCo's own reset)
+                    # wiped the scene and the arm targets. Put everything back as it was.
+                    d.time = snap[0]
+                    d.qpos[:], d.qvel[:], d.ctrl[:] = snap[1], snap[2], snap[3]
+                    d.mocap_pos[:], d.mocap_quat[:] = snap[4], snap[5]
+                    backend.mj.mj_forward(backend.m, d)
+                    print("[dm-bridge] a key press in the 3D window reset the scene; restored it. "
+                          "Type tasks in the web page, not in the 3D window.", flush=True)
                 target = sim0 + (now - t0)
                 if target - backend.d.time > 0.2:        # fell behind (e.g. laptop sleep): resync
                     t0, sim0 = now, backend.d.time
                     target = sim0
                 backend.step_to(target)
+                if snap is None or d.time >= snap[0]:   # never snapshot a wiped state
+                    snap = (d.time, d.qpos.copy(), d.qvel.copy(), d.ctrl.copy(), d.mocap_pos.copy(), d.mocap_quat.copy())
                 if viewer is not None and now >= next_sync:
                     viewer.sync()
                     next_sync = now + 1 / 50
@@ -481,7 +535,8 @@ def main() -> int:
         else:
             period = 1 / 50
             next_tick = time.perf_counter()
-            while viewer is None or viewer.is_running():
+            while True:
+                viewer = _check_window(viewer)
                 now = time.perf_counter()
                 if args.duration is not None and now - t_start > args.duration:
                     break

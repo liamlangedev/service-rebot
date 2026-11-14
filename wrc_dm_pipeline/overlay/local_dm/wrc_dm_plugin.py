@@ -13,8 +13,11 @@ wrc_demo/perception and add a lazy-import branch to make_arm() / make_camera()
 """
 from __future__ import annotations
 
+import dataclasses
 import json
+import os
 import socket
+import sys
 import threading
 import time
 
@@ -32,11 +35,16 @@ GAP_MAX_M = 0.091
 GAP_OFFSET_M = 0.009
 
 
+def bridge_port(profile_port=None) -> int:
+    """$WRC_DM_BRIDGE_PORT wins over the profile, so tests can use a private simulator."""
+    return int(os.environ.get("WRC_DM_BRIDGE_PORT") or profile_port or 9881)
+
+
 class BridgeClient:
     """One blocking request/response connection to dm_bridge_server.py."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 9881, timeout_s: float = 5.0):
-        self._addr = (host, int(port))
+    def __init__(self, host: str = "127.0.0.1", port: int | None = None, timeout_s: float = 5.0):
+        self._addr = (host, bridge_port(port) if port is None else int(port))
         self._timeout = timeout_s
         self._lock = threading.Lock()
         self._sock = None
@@ -94,16 +102,32 @@ class DmBridgeArm(MockArm):
         super().__init__(cfg.arm, kinematics=kinematics)
         self.harness = SafetyHarness(SafetyLimits.from_config(cfg.safety), kinematics)
         b = cfg.arm.get("bridge") or {}
-        self._client = BridgeClient(str(b.get("host", "127.0.0.1")), int(b.get("port", 9881)))
+        self._client = BridgeClient(str(b.get("host", "127.0.0.1")), bridge_port(b.get("port")))
         self._vmax = 0.85 * float(cfg.safety.get("max_joint_vel", 1.2))
         self._dt = 0.02
         self._settle_tol = float(cfg.arm.get("settle_tol_rad", 0.02))
+        # A motion that ends further than this from its target did not work (blocked, or the
+        # arm clipped the command). Wide enough for contact compliance, far below a real miss.
+        self._reach_tol = float(cfg.arm.get("reach_tol_rad", 0.10))
+        self._arm_lo = self._arm_hi = None
         self.robot_kind = "?"
 
     # ── lifecycle / state ────────────────────────────────────────────────
     def connect(self) -> None:
         info, _ = self._client.call("info")
         self.robot_kind = str(info.get("robot", "?"))
+        lo_b, hi_b = np.asarray(info.get("joint_lo", []), float), np.asarray(info.get("joint_hi", []), float)
+        if lo_b.size == self.n_joints and self.kin is not None:
+            # WRC must not plan outside what the arm accepts: the arm clips such commands and
+            # the gripper then arrives in the right place but turned wrong.
+            lo_u, hi_u = self.kin.joint_limits
+            bad = [f"joint{i + 1}" for i in range(self.n_joints)
+                   if lo_u[i] < lo_b[i] - 0.01 or hi_u[i] > hi_b[i] + 0.01]
+            if bad:
+                raise RuntimeError(
+                    f"WRC's arm model lets {', '.join(bad)} move further than the arm accepts. "
+                    "Regenerate it: python local_dm/make_dm_urdf.py")
+            self._arm_lo, self._arm_hi = lo_b, hi_b
         super().connect()
         self._q = np.asarray(self._client.call("state")[0]["q"], dtype=float)
 
@@ -172,6 +196,8 @@ class DmBridgeArm(MockArm):
                     self._client.call("hold")
                     return False
                 q = a + (b - a) * _min_jerk(k / n)
+                if self._arm_lo is not None and (np.any(q < self._arm_lo - 1e-3) or np.any(q > self._arm_hi + 1e-3)):
+                    return self._abort("dm arm: target outside the arm's joint range")
                 try:
                     approved = bool(h.approve(prev, q, dt=self._dt))
                     why = "harness veto"
@@ -189,10 +215,16 @@ class DmBridgeArm(MockArm):
                 next_tick += self._dt
                 time.sleep(max(0.0, next_tick - time.monotonic()))
         deadline = time.monotonic() + 2.5      # let the servos settle on the last waypoint
+        err = float("inf")
         while time.monotonic() < deadline:
-            if float(np.abs(self.get_state().q - pts[-1]).max()) < self._settle_tol:
+            err = float(np.abs(self.get_state().q - pts[-1]).max())
+            if err < self._settle_tol:
                 break
             time.sleep(self._dt)
+        if err > self._reach_tol:               # never report a pose the arm did not reach
+            print(f"[dm-arm] the arm stopped {np.degrees(err):.0f} deg short of the commanded pose",
+                  file=sys.stderr, flush=True)
+            return False
         return True
 
     # ── gripper ──────────────────────────────────────────────────────────
@@ -253,7 +285,7 @@ class BridgeCamera(CameraBase):
         super().__init__()
         self._cfg = cfg
         b = cfg.get("bridge") or {}
-        self._client = BridgeClient(str(b.get("host", "127.0.0.1")), int(b.get("port", 9881)))
+        self._client = BridgeClient(str(b.get("host", "127.0.0.1")), bridge_port(b.get("port")))
         self._cam = str(cfg.get("camera", "overhead_rgb"))
         # rgb_only: true drops the rendered depth, to rehearse a plain RGB table camera
         # (WRC then casts pixels onto the table plane, `table_plane_cam` in the profile).
@@ -314,4 +346,21 @@ def register() -> None:
         return orig_make_camera(ccfg)
 
     demo.make_arm, demo.make_camera = make_arm, make_camera
+
+    # A parallel gripper turned half a turn about its own axis is the same grasp (WRC says so
+    # itself in camera_grasp.py). WRC plans only one of the two; with the real arm's wrist roll
+    # limited to +-90 deg, that one is often out of range while its twin is not. Offer both.
+    import wrc_demo.skills.runtime as rt
+
+    orig_select = rt.select_grasp
+    half_turn = np.diag([1.0, -1.0, -1.0])
+
+    def select_grasp_with_twins(grasps, kin, q_current, **kw):
+        both = []
+        for g in grasps:
+            both.append(g)
+            both.append(dataclasses.replace(g, rotation=np.asarray(g.rotation, dtype=float) @ half_turn))
+        return orig_select(both, kin, q_current, **kw)
+
+    rt.select_grasp = select_grasp_with_twins
     _registered = True

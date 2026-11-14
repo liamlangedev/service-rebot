@@ -4,6 +4,8 @@ You type what you want, for example *"put the red block on the blue block"*. An 
 
 It is built on [WRC](https://github.com/TheMoonAstronaut/wrc), an open-source robot pipeline made for the RS version of our arm. This folder adapts it to our **DM** arm.
 
+> **Latest version: 2026-11-15.** This push fixes problems found by testing in the simulator: the arm now plans inside the real arm's joint limits, sets objects down upright, puts each object on its own free spot, and never keeps an object in the gripper after a failed task. Details: [`overlay/local_dm/README.md`](overlay/local_dm/README.md), section "Latest version".
+
 ## How it works
 
 1. **You type a task** in a web page.
@@ -40,11 +42,13 @@ echo 'ANTHROPIC_API_KEY=your-key' > .env   # your own Claude API key (never comm
 ./START_WRC.sh dm                          # opens the 3D simulator and the web page
 ```
 
-Then open http://127.0.0.1:8090/ and type a task. Things to try:
+Then open http://127.0.0.1:8090/ and type a task **in that web page** (not in the 3D window, which is display only). Things to try:
 
 - `Take the red block and stack it on top of the blue one.`
 - `What objects can you see on the table right now?`
 - `Move the red block to the free spot`
+
+`./START_WRC.sh dm-shuffle` moves the objects to new random places, so you can see that the robot finds them with its camera.
 
 Without an API key it still runs, but only fixed commands work, like `pick and place the red block` or `go home`.
 

@@ -36,8 +36,10 @@ _MIN_MAX_TOKENS = 8192     # thinking counts toward max_tokens; WRC asks for as 
 class ClaudeLLM(LLMClient):
     supports_vision = True
 
-    def __init__(self, model: str | None = None, effort: str | None = None):
+    def __init__(self, model: str | None = None, effort: str | None = None, system_suffix: str = ""):
         import anthropic
+
+        self.system_suffix = system_suffix.strip()   # robot-specific notes added after WRC's own system prompt
 
         self._anthropic = anthropic
         self._client = anthropic.Anthropic()
@@ -46,6 +48,7 @@ class ClaudeLLM(LLMClient):
         self.use_fallbacks = (os.environ.get("WRC_CLAUDE_FALLBACKS", "1") != "0"
                               and self.model.startswith(_FALLBACK_MODELS))
         self.calls: list[dict] = []          # per-call latency + token usage (for the report)
+        self.on_call = None                  # optional callback(record) after every API response
 
     # ── WRC message list -> Messages API ─────────────────────────────────
     @staticmethod
@@ -78,6 +81,8 @@ class ClaudeLLM(LLMClient):
 
     def chat(self, system, messages, tools=None, max_tokens=1024) -> LLMResponse:
         anthropic = self._anthropic
+        if self.system_suffix:
+            system = f"{system}\n\n{self.system_suffix}"
         kwargs: dict[str, Any] = dict(
             model=self.model,
             system=system,
@@ -120,10 +125,18 @@ class ClaudeLLM(LLMClient):
                 calls.append(ToolCall(name=block.name, arguments=dict(block.input), id=block.id))
         usage = resp.usage
         rec = {"s": round(time.monotonic() - t0, 2), "in": usage.input_tokens, "out": usage.output_tokens,
-               "model": resp.model, "stop": resp.stop_reason, "tool": calls[0].name if calls else None}
+               "model": resp.model, "stop": resp.stop_reason, "tool": calls[0].name if calls else None,
+               "args": calls[0].arguments if calls else {},
+               # the API's own id for this request: look it up in the Anthropic Console to confirm the call
+               "request_id": getattr(resp, "_request_id", None)}
         self.calls.append(rec)
-        print(f"[claude] {rec['s']}s in={rec['in']} out={rec['out']} stop={rec['stop']} tool={rec['tool']}",
-              file=sys.stderr, flush=True)
+        print(f"[claude] {rec['s']}s in={rec['in']} out={rec['out']} stop={rec['stop']} tool={rec['tool']} "
+              f"request={rec['request_id']}", file=sys.stderr, flush=True)
+        if self.on_call is not None:
+            try:
+                self.on_call(rec)
+            except Exception:  # noqa: BLE001 -- a display hook must never break the robot loop
+                pass
         if resp.stop_reason == "refusal":
             details = getattr(resp, "stop_details", None)
             raise RuntimeError(f"Claude declined this request (category: {getattr(details, 'category', None)})")

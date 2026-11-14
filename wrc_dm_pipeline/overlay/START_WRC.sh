@@ -16,6 +16,9 @@
 #   ./START_WRC.sh dm              # reBot B601-DM: physics sim window + dashboard http://127.0.0.1:8090/
 #                                  #   (Claude plans if ANTHROPIC_API_KEY is set / in wrc/.env) — local_dm/README.md
 #   ./START_WRC.sh dm-task "put the red block on the blue block"   # one DM task, headless
+#   ./START_WRC.sh dm-shuffle      # while 'dm' is running: move the sim objects to new random places
+#   ./START_WRC.sh dm-trials       # 20 randomized pick-and-place trials in the sim -> success rate
+#                                  #   (--n 5, --seed 7, --no-llm for keyword commands without API calls)
 #   ./START_WRC.sh dm-calibrate    # camera calibration from the printed sheet (no arguments: shows the steps)
 #   ./START_WRC.sh dm-calib-test   # check the camera calibration helper against the sim's true camera
 #   ./START_WRC.sh 3d              # (older) mock RS arm mirrored in a 3D window
@@ -80,6 +83,14 @@ case "$mode" in
     # WRC's live web dashboard (chat box + narration + world model) on http://127.0.0.1:8090/
     require_free_ports
     exec python local_mock/dashboard_mock.py ;;
+  dm-trials)
+    # Randomized pick-and-place trials in the DM physics sim -> success rate (local_dm/sim_trials.py).
+    shift
+    [ -e mobileclip2_b.ts ] || [ ! -e models/mobileclip2_b.ts ] || ln -s models/mobileclip2_b.ts mobileclip2_b.ts
+    exec python local_dm/sim_trials.py "$@" ;;
+  dm-shuffle)
+    # Move the objects of the running DM simulator to new random places.
+    exec python local_dm/shuffle_sim.py ;;
   dm-calib-test)
     # Self-test of the camera calibration helper against the sim's known camera pose.
     exec python local_dm/calibration_selftest.py ;;
