@@ -12,7 +12,8 @@ class DiffIK:
     def __init__(self, model: mujoco.MjModel, site: str, joints: list[str],
                  q_rest: np.ndarray, damping: float = 0.05, rot_weight: float = 0.5,
                  posture_gain: float = 0.05, iters: int = 5,
-                 max_joint_vel: float = 2.0):
+                 max_joint_vel: float = 2.0, min_rot_weight: float | None = None,
+                 pos_tol: tuple[float, float] = (0.003, 0.015)):
         self.model = model
         self.data = mujoco.MjData(model)
         self.site = model.site(site).id
@@ -26,6 +27,13 @@ class DiffIK:
         self.posture_gain = posture_gain
         self.iters = iters
         self.max_joint_vel = max_joint_vel
+        # Adaptive orientation weight: when the full-weight solution misses the
+        # position by more than pos_tol[0] (the requested orientation is out of
+        # reach there, e.g. a level tool near the table), the rotation weight is
+        # lowered towards min_rot_weight (reached at pos_tol[1]) so the TCP
+        # still gets there and the tool tilts as little as needed.
+        self.min_rot_weight = min_rot_weight
+        self.pos_tol = pos_tol
         self._jacp = np.zeros((3, model.nv))
         self._jacr = np.zeros((3, model.nv))
 
@@ -43,7 +51,23 @@ class DiffIK:
         target_rot=None tracks position only (orientation is left free).
         The step from q_prev is clipped to max_joint_vel * dt.
         """
-        q = np.array(q_prev, dtype=float)
+        q = self._iterate(np.array(q_prev, dtype=float), target_pos, target_rot, self.rot_weight)
+        if target_rot is not None and self.min_rot_weight is not None:
+            miss = np.linalg.norm(target_pos - self._fk(q)[0])
+            lo, hi = self.pos_tol
+            if miss > lo:
+                a = min(1.0, (miss - lo) / (hi - lo))
+                w = (1 - a) * self.rot_weight + a * self.min_rot_weight
+                q = self._iterate(np.array(q_prev, dtype=float), target_pos, target_rot, w)
+
+        step = np.clip(q - q_prev, -self.max_joint_vel * dt, self.max_joint_vel * dt)
+        q = np.clip(q_prev + step, self.lo, self.hi)
+        pos, rot = self._fk(q)
+        rot_err = np.linalg.norm(_rot_error(target_rot, rot)) if target_rot is not None else 0.0
+        return q, float(np.linalg.norm(target_pos - pos)), float(rot_err)
+
+    def _iterate(self, q, target_pos, target_rot, rot_weight):
+        """self.iters damped-least-squares steps from q (no velocity limit)."""
         n = len(q)
         for _ in range(self.iters):
             pos, rot = self._fk(q)
@@ -52,8 +76,8 @@ class DiffIK:
             if target_rot is not None:
                 err_r = _rot_error(target_rot, rot)
                 J = np.vstack([self._jacp[:, self.dadr],
-                               self.rot_weight * self._jacr[:, self.dadr]])
-                err = np.concatenate([err_p, self.rot_weight * err_r])
+                               rot_weight * self._jacr[:, self.dadr]])
+                err = np.concatenate([err_p, rot_weight * err_r])
             else:
                 J = self._jacp[:, self.dadr]
                 err = err_p
@@ -63,12 +87,7 @@ class DiffIK:
             # Pull towards the rest posture in the Jacobian's null space.
             dq += (np.eye(n) - J_pinv @ J) @ (self.posture_gain * (self.q_rest - q))
             q = np.clip(q + dq, self.lo, self.hi)
-
-        step = np.clip(q - q_prev, -self.max_joint_vel * dt, self.max_joint_vel * dt)
-        q = np.clip(q_prev + step, self.lo, self.hi)
-        pos, rot = self._fk(q)
-        rot_err = np.linalg.norm(_rot_error(target_rot, rot)) if target_rot is not None else 0.0
-        return q, float(np.linalg.norm(target_pos - pos)), float(rot_err)
+        return q
 
     def fk(self, q):
         return self._fk(np.asarray(q, dtype=float))

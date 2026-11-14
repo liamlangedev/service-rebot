@@ -17,7 +17,10 @@ DESCRIPTION_DIR = ROOT / "assets" / "reBot-DevArm" / "Rebot_Arm_description"
 DM_MJCF = DESCRIPTION_DIR / "DM" / "mjcf" / "rebotarm_b601_colored.xml"
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 7)]
-TCP_SITE = "tcp"
+TCP_SITE = "tcp"  # Seeed's site: at the gripper palm, ~7 cm behind the fingertips
+# Added by build_spec: centre of the finger pads, where an object is held.
+# Control this point to place the fingers around an object.
+GRASP_SITE = "grasp"
 TARGET_BODY = "ik_target"
 
 # Elbow-up pose with the tool pointing forward, TCP ~(0.32, 0, 0.44) m.
@@ -114,6 +117,11 @@ def build_spec(mjcf_path: Path = DM_MJCF) -> mujoco.MjSpec:
         target.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, size=[0.003, 0, 0],
                         fromto=np.concatenate([np.zeros(3), 0.06 * axis]),
                         rgba=rgba, contype=0, conaffinity=0, group=2)
+
+    # Grasp point between the finger pads, 7 cm ahead of the palm `tcp` site
+    # (tcp is at end_link x = -0.105; the finger pads span about x = -0.06 .. 0).
+    spec.body("end_link").add_site(name=GRASP_SITE, pos=[-0.035, 0, 0], size=[0.006],
+                                   rgba=[0.2, 0.8, 0.3, 1])
 
     # Cameras for dataset recording (the MJCF already has `overhead_rgb`).
     # end_link sits at the fingertips and the tool points along its +x.

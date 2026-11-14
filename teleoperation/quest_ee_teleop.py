@@ -31,7 +31,7 @@ import numpy as np
 
 from teleop.ik import DiffIK
 from teleop.quest_input import ClutchTeleop, ControllerSample
-from teleop.rebot_model import ARM_JOINTS, GRIPPER_MAX, HOME_QPOS, TCP_SITE, RebotSim
+from teleop.rebot_model import ARM_JOINTS, GRASP_SITE, GRIPPER_MAX, HOME_QPOS, RebotSim
 
 KEY_UP, KEY_DOWN, KEY_HOME = 265, 264, 268
 VIEWER_HZ = 50.0
@@ -49,6 +49,10 @@ def parse_args():
     p.add_argument("--deadzone", type=float, default=0.3, help="thumbstick deadzone")
     p.add_argument("--rate", type=int, default=100, help="control rate [Hz]")
     p.add_argument("--max-joint-vel", type=float, default=2.0, help="[rad/s]")
+    p.add_argument("--strict-rotation", action="store_true",
+                   help="never trade orientation for position (by default the tool tilts "
+                        "a little when your hand's orientation is out of reach, e.g. "
+                        "holding it level close to the table)")
     p.add_argument("--demo", action="store_true", help="scripted controller, no headset")
     p.add_argument("--headless", action="store_true", help="no viewer (for tests)")
     p.add_argument("--duration", type=float, default=None, help="stop after N seconds")
@@ -116,7 +120,9 @@ def main():
 
     sim = RebotSim()
     m, d = sim.model, sim.data
-    ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=HOME_QPOS, max_joint_vel=args.max_joint_vel)
+    # Control the point between the fingertips, so the fingers go where your hand goes.
+    ik = DiffIK(m, GRASP_SITE, ARM_JOINTS, q_rest=HOME_QPOS, max_joint_vel=args.max_joint_vel,
+                min_rot_weight=None if args.strict_rotation else 0.05)
     # The ClutchTeleop "clutch" is driven by our latched A/B state, not the grip.
     mapper = ClutchTeleop(pos_scale=args.scale, track_rotation=True)
 
@@ -196,11 +202,11 @@ def main():
 
             if now - last_print > 0.5:
                 last_print = now
-                tcp, _ = sim.tcp_pose()
+                tcp = d.site_xpos[m.site(GRASP_SITE).id]
                 mode = "FOLLOW " if state["following"] else "paused "
                 track = "" if s.valid else " (controller not tracked)"
                 print(f"[{now:6.1f}s] {mode} target={np.round(target_pos, 3)} "
-                      f"tcp={np.round(tcp, 3)} ik_err={pos_err * 1000:5.1f}mm/"
+                      f"grasp={np.round(tcp, 3)} ik_err={pos_err * 1000:5.1f}mm/"
                       f"{np.degrees(rot_err):4.1f}deg grip={state['gripper'] * 1000:4.1f}mm"
                       f"{track}")
 
