@@ -103,7 +103,7 @@ def run_real(args):
     print("    before switching the power off)")
     print("=" * 72)
 
-    sim = RebotSim()
+    sim = RebotSim(scene=getattr(args, "scene", "default"))
     m, d = sim.model, sim.data
 
     # Controller first, so a missing headset fails before anything moves.

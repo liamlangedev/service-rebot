@@ -40,7 +40,7 @@ import numpy as np
 from teleop.arm_step import ArmStep
 from teleop.ee_control import EEConfig, rot_x
 from teleop.quest_input import ControllerSample
-from teleop.rebot_model import ARM_JOINTS, GRASP_SITE, GRIPPER_MAX, HOME_QPOS, RebotSim
+from teleop.rebot_model import ARM_JOINTS, GRASP_SITE, GRIPPER_MAX, HOME_QPOS, SCENES, RebotSim
 
 KEY_UP, KEY_DOWN, KEY_HOME = 265, 264, 268
 VIEWER_HZ = 50.0
@@ -77,6 +77,8 @@ def parse_args():
                         "a little when your hand's orientation is out of reach, e.g. "
                         "holding it level close to the table)")
     p.add_argument("--demo", action="store_true", help="scripted controller, no headset")
+    p.add_argument("--scene", choices=SCENES, default="default",
+                   help="default = Seeed demo table, real = the team's measured workspace")
     p.add_argument("--vr", action="store_true",
                    help="show the simulation in the headset (WebXR page, USB) and read "
                         "the controllers from it instead of the OculusReader app")
@@ -193,7 +195,7 @@ def main():
         from teleop.real_teleop import run_real
         return run_real(args)
 
-    sim = RebotSim()
+    sim = RebotSim(scene=args.scene)
     m, d = sim.model, sim.data
 
     bridge = None

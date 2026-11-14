@@ -45,7 +45,7 @@ from teleop.ik import DiffIK
 from teleop.mouse_input import MouseDragTeleop
 from teleop.quest_input import ClutchTeleop, DemoSource, make_quest_source
 from teleop.rebot_real import READY_QPOS, guarded_solve
-from teleop.rebot_model import ARM_JOINTS, GRIPPER_MAX, HOME_QPOS, TCP_SITE, RebotSim
+from teleop.rebot_model import ARM_JOINTS, GRIPPER_MAX, HOME_QPOS, SCENES, TCP_SITE, RebotSim
 
 KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_DELETE = 265, 264, 268, 269, 261
 VIEWER_HZ = 50.0
@@ -58,6 +58,8 @@ def parse_args():
                    default="quest",
                    help="quest = WebXR relay, oculus = OculusReader, leap = Ultraleap")
     p.add_argument("--hand", choices=["r", "l"], default="r")
+    p.add_argument("--scene", choices=SCENES, default="default",
+                   help="default = Seeed demo table, real = the team's measured workspace")
     p.add_argument("--relay", default="ws://127.0.0.1:8443/ws", help="WebXR relay WebSocket")
     p.add_argument("--ip", default=None, help="Quest IP for wireless ADB (oculus only)")
     p.add_argument("--scale", type=float, default=1.0, help="hand-to-robot motion scale")
@@ -101,7 +103,7 @@ def main():
         sys.exit(f"--fps {args.fps} must divide --rate {args.rate}")
 
     start_q = READY_QPOS if args.input == "leap" else HOME_QPOS
-    sim = RebotSim()
+    sim = RebotSim(scene=args.scene)
     sim.reset(start_q)
     m, d = sim.model, sim.data
     ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=start_q,

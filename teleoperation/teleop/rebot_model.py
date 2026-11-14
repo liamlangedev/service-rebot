@@ -143,11 +143,30 @@ def _lookat_quat(pos, target, up):
     return quat
 
 
+SCENES = ("default", "real")
+
+
+def apply_scene(spec: mujoco.MjSpec, scene: str):
+    """`default`: Seeed's demo table and cubes. `real`: the team's measured
+    workspace (simulation/real_setup.py, config/real_setup.json)."""
+    if scene == "default":
+        return None
+    if scene == "real":
+        import sys
+        sim_dir = str(ROOT.parent / "simulation")
+        if sim_dir not in sys.path:
+            sys.path.insert(0, sim_dir)
+        from real_setup import apply_real_setup
+        return apply_real_setup(spec)
+    raise ValueError(f"unknown scene {scene!r}, expected one of {SCENES}")
+
+
 class RebotSim:
     """Compiled model plus handy indices."""
 
-    def __init__(self, mjcf_path: Path = DM_MJCF):
+    def __init__(self, mjcf_path: Path = DM_MJCF, scene: str = "default"):
         self.spec = build_spec(mjcf_path)
+        self.scene_info = apply_scene(self.spec, scene)
         self.model = self.spec.compile()
         self.data = mujoco.MjData(self.model)
         m = self.model
