@@ -75,6 +75,24 @@ def load_calibration(source: str) -> np.ndarray:
     return DEFAULT_ROBOT_FROM_QUEST.copy()
 
 
+def rotvec(R: np.ndarray) -> np.ndarray:
+    """Axis-angle vector of a rotation matrix (MuJoCo, no scipy needed)."""
+    quat, vel = np.empty(4), np.empty(3)
+    mujoco.mju_mat2Quat(quat, np.ascontiguousarray(R, dtype=float).reshape(-1))
+    mujoco.mju_quat2Vel(vel, quat, 1.0)
+    return vel
+
+
+def rotvec_to_mat(v: np.ndarray) -> np.ndarray:
+    """Rotation matrix of an axis-angle vector (Rodrigues)."""
+    a = float(np.linalg.norm(v))
+    if a < 1e-12:
+        return np.eye(3)
+    k = np.asarray(v, dtype=float) / a
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
+
+
 def to_robot_frame(T_quest: np.ndarray, robot_from_quest: np.ndarray):
     """Converts a 4x4 Quest-frame pose to (pos, rot) in the robot frame.
 
@@ -260,6 +278,7 @@ class ClutchTeleop:
         self._ctrl0 = None
         self._target0 = None
         self._filtered = None
+        self._filtered_rot = None
 
     @property
     def engaged(self):
@@ -282,6 +301,7 @@ class ClutchTeleop:
             self._ctrl0 = (s.pos.copy(), s.rot.copy())
             self._target0 = (np.array(target_pos), np.array(target_rot))
             self._filtered = None
+            self._filtered_rot = None
 
         p0, R0 = self._ctrl0
         tp0, tR0 = self._target0
@@ -292,6 +312,13 @@ class ClutchTeleop:
             a = self.smoothing
             pos = a * self._filtered + (1 - a) * pos
         self._filtered = pos
+        if self.track_rotation and self.smoothing > 0:
+            # Same EMA as the position, applied to the rotation (hand orientation is noisy).
+            if self._filtered_rot is None:
+                self._filtered_rot = rot
+            delta = rotvec(rot @ self._filtered_rot.T)
+            rot = rotvec_to_mat((1 - self.smoothing) * delta) @ self._filtered_rot
+            self._filtered_rot = rot
         return self._clamp(pos), rot
 
     def clamp(self, pos):

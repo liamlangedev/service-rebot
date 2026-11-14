@@ -60,7 +60,14 @@ def parse_args():
     p.add_argument("--no-hand-rotation", action="store_true",
                    help="hand moves position only; orientation changes only via the stick roll")
     p.add_argument("--deadzone", type=float, default=0.3, help="thumbstick deadzone")
-    p.add_argument("--rate", type=int, default=100, help="control rate [Hz]")
+    p.add_argument("--rate", type=int, default=None,
+                   help="control rate [Hz] (default 100 servo, 200 mit like the real fast loop)")
+    p.add_argument("--control", choices=["servo", "mit"], default="servo",
+                   help="servo = stiff sim position servos; mit = the real arm's MIT controller "
+                        "(teleop/mit_ff.py: soft gains + velocity and gravity feed-forward), "
+                        "simulated by teleop/mit_sim.py")
+    p.add_argument("--no-velocity-ff", action="store_true",
+                   help="with --control mit: send dq_cmd = 0 (compare to see the lag it removes)")
     p.add_argument("--max-joint-vel", type=float, default=2.0, help="[rad/s]")
     p.add_argument("--strict-rotation", action="store_true",
                    help="never trade orientation for position (by default the tool tilts "
@@ -221,6 +228,15 @@ def main():
                 min_rot_weight=None if args.strict_rotation else 0.05)
     mapper = GripClutchMapper(ClutchTeleop(), track_rotation=not args.no_hand_rotation)
 
+    mit = None
+    if args.control == "mit":
+        from teleop.mit_sim import MitSim
+        mit = MitSim(sim, velocity_ff=not args.no_velocity_ff)
+        print(f"[control] MIT mode (real-arm gains), velocity feed-forward "
+              f"{'OFF' if args.no_velocity_ff else 'ON'}, gravity feed-forward ON")
+    if args.rate is None:
+        args.rate = 200 if mit is not None else 100
+
     dt = 1.0 / args.rate
     n_sub = max(1, round(dt / m.opt.timestep))
     sync_every = max(1, round(args.rate / VIEWER_HZ))
@@ -308,9 +324,18 @@ def main():
             # ---- 2. IK -> joints -> physics --------------------------------
             q_cmd, pos_err, rot_err = ik.solve(state["q_cmd"], target_pos, target_rot, dt)
             state["q_cmd"] = q_cmd
-            sim.command(q_cmd, state["gripper"])
-            for _ in range(n_sub):
-                mujoco.mj_step(m, d)
+            if mit is None:
+                sim.command(q_cmd, state["gripper"])
+                for _ in range(n_sub):
+                    mujoco.mj_step(m, d)
+            else:
+                # Like the real fast loop: build the MIT frame once per tick, the
+                # "motors" evaluate the torque law at every physics step.
+                d.ctrl[sim.grip_act] = np.clip(state["gripper"], 0.0, GRIPPER_MAX)
+                mit.set_command(q_cmd, dt)
+                for _ in range(n_sub):
+                    mit.apply()
+                    mujoco.mj_step(m, d)
             if viewer is not None and tick % sync_every == 0:
                 viewer.sync()
             if bridge is not None and tick % sync_every == 0:
@@ -328,6 +353,7 @@ def main():
                 print(f"[{now:6.1f}s] {mode} target={np.round(target_pos, 3)} "
                       f"grasp={np.round(tcp, 3)} ik_err={pos_err * 1000:5.1f}mm/"
                       f"{np.degrees(rot_err):4.1f}deg grip={state['gripper'] * 1000:4.1f}mm"
+                      f" lag={np.degrees(np.max(np.abs(q_cmd - sim.q_arm))):4.1f}deg"
                       f"{track}")
 
             tick += 1

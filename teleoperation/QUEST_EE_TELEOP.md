@@ -187,7 +187,41 @@ Checks:
 | Robot too high/low or far | left thumbstick, or open `http://localhost:8765/?h=0.7&d=0.4` (metres) |
 | Enter VR greyed out | the page must be opened as `localhost` (USB + adb reverse), not by the PC's IP |
 
-## 8. Wireless (optional)
+## 8. Velocity feed-forward (MIT) control in the sim (`--control mit`)
+
+The real arm (dev/roboCrafy, `teleop/mit_ff.py` + `teleop/fast_loop.py`) runs the
+Damiao motors in MIT mode at 200 Hz:
+
+```
+torque = kp (q_cmd - q) + kd (dq_cmd - dq) + tau_gravity(q)
+```
+
+`dq_cmd` is the commanded joint **velocity** (filtered finite difference of the
+low-passed IK output), so the motors move *with* the setpoint instead of only
+being pulled towards it. `teleop/mit_sim.py` simulates exactly that controller
+(same gains, filters, error clamp, gravity feed-forward, imported from
+`mit_ff.py`), with the torque law evaluated at every 1 ms physics step.
+
+```bash
+uv run quest_ee_teleop.py --vr --control mit                    # real-arm controller, in VR
+uv run quest_ee_teleop.py --vr --control mit --no-velocity-ff   # same, dq_cmd = 0 (to compare)
+uv run quest_ee_teleop.py --vr                                  # stiff sim servos (default)
+```
+
+The status line shows `lag=` (largest joint error between command and arm).
+Measured in the sim (8 cm circle at ~0.25 m/s, 200 Hz):
+
+| Controller | Joint lag (mean) | Fingertip error (mean) |
+|---|---|---|
+| sim position servos (`servo`) | 3.7 deg | 16.4 mm |
+| MIT + velocity feed-forward (`mit`) | 3.3 deg | 16.0 mm |
+| MIT without feed-forward (`--no-velocity-ff`) | 8.5 deg | 24.8 mm |
+
+Checks: the arm holds still without sagging before you arm it; moving fast with
+`--no-velocity-ff` visibly trails your hand more than with the feed-forward; the
+red-cube pick still works.
+
+## 9. Wireless (optional)
 
 With USB still plugged in:
 
