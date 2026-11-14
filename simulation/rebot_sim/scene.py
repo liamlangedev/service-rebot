@@ -133,7 +133,7 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
         cam.fovy = camera_fovy(wc)
         if "pos" in wc:
             cam.pos = wc["pos"]
-            cam.quat = _lookat_quat(wc["pos"], wc["look_at"], [0, 0, 1])
+            cam.quat = _camera_quat(wc["pos"], wc["look_at"], wc.get("roll_deg", 0.0))
     if with_objects:
         info.objects = [_add_object(spec, ws, o, cfg) for o in cfg.get("objects", [])]
     return info
@@ -295,22 +295,36 @@ def camera_fovy(cam: dict) -> float:
     return float(np.degrees(2 * np.arctan(half_diag * h / np.hypot(w, h))))
 
 
+def _camera_quat(pos, target, roll_deg: float = 0.0) -> np.ndarray:
+    """Looks from pos at target (image up = world up), then rolls the image by
+    roll_deg about the optical axis (positive = clockwise in the image)."""
+    quat = _lookat_quat(pos, target, [0, 0, 1])
+    if roll_deg:
+        q_roll, out = np.empty(4), np.empty(4)
+        mujoco.mju_axisAngle2Quat(q_roll, [0, 0, 1], np.radians(roll_deg))
+        mujoco.mju_mulQuat(out, quat, q_roll)
+        quat = out
+    return quat
+
+
 def _add_cameras(spec, ws: Workspace, cams) -> list[str]:
     mat = _material(spec, "camera_body_mat", _COLORS["camera"])
     names = []
     for cam in cams:
         pos = ws.world(cam["from_left"], cam["from_near"], cam["height"])
         target = ws.world(*cam["look_at"])
-        quat = _lookat_quat(pos, target, [0, 0, 1])
+        quat = _camera_quat(pos, target, cam.get("roll_deg", 0.0))
         spec.worldbody.add_camera(name=cam["name"], pos=pos, quat=quat, fovy=camera_fovy(cam))
         # Camera housing and its post down to the table (visual only).
         body = spec.worldbody.add_body(name=f"{cam['name']}_mount", pos=pos, quat=quat)
         _box(body, f"{cam['name']}_housing", [0, 0, 0.02], [0.045, 0.02, 0.02], mat,
              collide=False)
-        spec.worldbody.add_geom(name=f"{cam['name']}_post", type=mujoco.mjtGeom.mjGEOM_CAPSULE,
-                                fromto=np.concatenate([pos - [0, 0, 0.03],
-                                                       [pos[0], pos[1], ws.table_z]]),
-                                size=[0.008, 0, 0], material=mat, contype=0, conaffinity=0)
+        if cam.get("mount", "post") == "post":  # "none": e.g. a gooseneck from outside
+            spec.worldbody.add_geom(name=f"{cam['name']}_post",
+                                    type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                                    fromto=np.concatenate([pos - [0, 0, 0.03],
+                                                           [pos[0], pos[1], ws.table_z]]),
+                                    size=[0.008, 0, 0], material=mat, contype=0, conaffinity=0)
         names.append(cam["name"])
     return names
 

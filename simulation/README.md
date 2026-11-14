@@ -11,8 +11,9 @@ measurements and photos of the setup (`reference_photos/`):
   cardboard behind and right of the robot, a black board on the left.
 - **Bin:** the white foam bin, 25 × 40 × 12 cm, with two compartments. The drop targets
   are `bin_0` (nearer the robot) and `bin_1`.
-- **Cameras:** the same three as on the real setup. `cam_corner` is the Logitech C920 at
-  60 cm, `cam_far` is the LeRobot camera at 30 cm, and `wrist` is on the gripper.
+- **Cameras:** the same three as on the real setup, calibrated against real frames.
+  `cam_corner` is the Logitech C920 on a gooseneck, `cam_far` is the LeRobot camera at
+  about 30 cm, and `wrist` is on the gripper.
 - **Objects:** a can (13 × 4.5 cm, 15 g) and a hollow paper cup (11 × 9 cm, 8 g). Mesh
   assets can replace them.
 
@@ -28,7 +29,7 @@ run the tests and push. Everyone gets the new model with `git pull`; the package
 installed editable, so no re-install is needed.
 
 ![top-down: sim vs. photo](docs/topdown_sim_vs_photo.jpg)
-![cam_corner, cam_far, wrist](docs/cameras.jpg)
+![real frame | sim | sim + real edges, for cam_corner, cam_far, wrist](docs/camera_compare.jpg)
 
 ## Setup
 
@@ -108,7 +109,7 @@ The table top is at z = −1.2 cm, the base plate's thickness.
 
 ```
                  far edge (open)  84 cm from the near wall
-   cam_far ⊗ (36 cm from left, 30 cm high)            ⊗ cam_corner (60 cm high)
+   cam_far ⊗ (30 cm from left, 33 cm high)     (gooseneck base ⊗ far-right corner)
  ┌──────────────────────────────────────────────────────┐
  │                                                      │
  │ ┌──────┐                                             │
@@ -129,13 +130,13 @@ All measurements are in **`rebot_sim/real_setup.json`**, in workspace coordinate
 |---|---|---|
 | Workspace | 98 × 84 cm | measured |
 | Robot (joint-1 axis) | 38 cm from the right wall; plate flush with the near wall (axis 7.5 cm out) | measured |
-| Base plate | 19 × 15 × 1.2 cm, black, 2 green clamps | estimated from photo |
+| Base plate | 21.6 × 10.1 × 1.2 cm, flush with the near wall, 2 green clamps | fitted from the camera views |
 | Foam bin | 25 × 40 cm, 15 cm from the near wall, against the left wall | measured |
 | Bin height / divider | 12 cm, one divider in the middle → `bin_0`, `bin_1` | measured |
 | Bin wall / floor thickness | 2.5 cm / 2 cm | **estimated** |
-| `cam_far` | LeRobot camera, far edge, 36 cm from the left, 30 cm high, 100° FOV | measured; aim **estimated** |
-| `cam_corner` | Logitech C920 on a gooseneck, far-right corner, 60 cm high, ~75° FOV | measured; aim **estimated** |
-| `wrist` | on the gripper, 100° FOV, 8 cm behind and 6 cm above the fingertips | FOV measured; mount spot **estimated** |
+| `cam_far` | LeRobot camera, far edge: 30 cm from the left, 33 cm high; fovy 67° (16:9) | fitted to the real frame |
+| `cam_corner` | Logitech C920; the gooseneck puts the head over the right wall, 46 cm from the near wall, 56 cm high, rolled 26°; fovy 42° | pose fitted to the real frame, fovy from the C920 spec |
+| `wrist` | on the gripper, centred between the fingers, 9 cm behind and 3 cm above the fingertips; fovy 67° | matched by eye to the real frame |
 | Walls | 37 cm (cardboard near/right, black board left) | measured |
 | Can | 13 cm tall, 4.5 cm diameter, 15 g | measured |
 | Paper cup | 11 cm tall, 9 cm top diameter (6 cm bottom, estimated), 8 g | measured |
@@ -168,13 +169,36 @@ With the tool held straight down, `bin_1` (the far compartment) is at the edge o
 arm's reach at a 30 cm carry height: the IK tilts the tool about 10 cm short of the
 centre, and the object still falls in.
 
+## Camera calibration
+
+The camera poses come from real frames (`reference_photos/cameras/`, 1920×1080):
+
+- `tools/calibrate_cameras.py` fits each external camera's pose and focal length. It uses
+  hand-picked landmarks with known positions (base-plate corners, bin corners, the
+  table/wall edges) and their pixels in the photo. The C920's focal length is pinned to its
+  spec; the corner view's landmarks are nearly all on the table, so focal length and
+  distance would otherwise trade off. `--overlay DIR` draws the fit on the photos and
+  `--write` updates `real_setup.json`.
+- The gripper camera sees no fixed landmarks, so its mount was matched by rendering
+  candidates next to the real frame.
+- `tools/compare_cameras.py` renders the image above (real | sim | sim + real edges).
+- The test `test_cameras_match_real_frames` checks that every landmark projects through
+  the compiled sim cameras to within 30 px of the real frame.
+
+If a camera moves: take a new 1920×1080 frame, update its landmark pixels in
+`tools/calibrate_cameras.py`, run it with `--write`, check `compare_cameras.py`, and
+run the tests.
+
+Recording renders at 640×480. Because the config stores the vertical FOV, a 4:3 render
+is the 16:9 view with its sides cropped, which is roughly what these webcams do in 4:3
+modes.
+
 ## Not modelled yet
 
 - Arm-link collisions: only the gripper palm and fingers collide (that's how Seeed's
   model is set up). The upper arm can pass through the bin walls and the near wall.
-- Camera aim: the positions and FOVs are measured, but where each camera points
-  (`look_at`) and the wrist mount spot are guesses. Compare `python -m rebot_sim render` output with real
-  frames and adjust them. FOVs are read as spec-sheet **diagonal** angles and
-  converted to MuJoCo's vertical `fovy` for 4:3 frames (100° → 71°, 75° → 49°);
-  give `fovy` directly to override.
+- Lens distortion: MuJoCo cameras are ideal pinholes. The 100° LeRobot cameras have
+  visible barrel distortion, so straight edges near the frame borders sit up to about
+  25 px off. To train on sim images, undistort the real frames or add distortion as an
+  augmentation.
 - The foam bin's inner steps and inserts, cables, and the clutter beyond the far edge.

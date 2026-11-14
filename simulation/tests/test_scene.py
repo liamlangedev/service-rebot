@@ -50,16 +50,36 @@ def test_layout_matches_measurements():
     for w in ("near", "right", "left"):
         g = m.geom(f"wall_{w}")
         assert abs(g.pos[2] + g.size[2] - (ws.table_z + 0.37)) < 1e-6
-    # Camera heights above the table.
-    assert abs(m.camera("cam_corner").pos[2] - ws.table_z - 0.60) < 1e-6
-    assert abs(m.camera("cam_far").pos[2] - ws.table_z - 0.30) < 1e-6
+    # Base plate flush with the near wall.
+    plate = m.geom("base_plate_geom")
+    assert abs((plate.pos[0] - plate.size[0]) - (-ws.robot_from_near)) < 1e-6
 
 
 def test_camera_fov_from_diagonal():
-    m = env().model
-    assert abs(m.camera("cam_corner").fovy[0] - 49.4) < 0.2   # C920, 75 deg diagonal
-    assert abs(m.camera("cam_far").fovy[0] - 71.1) < 0.2      # 100 deg diagonal
-    assert abs(m.camera("wrist").fovy[0] - 71.1) < 0.2
+    from rebot_sim import camera_fovy
+    assert abs(camera_fovy({"fov_diagonal_deg": 75, "aspect": [4, 3]}) - 49.4) < 0.2
+    assert abs(camera_fovy({"fov_diagonal_deg": 100, "aspect": [4, 3]}) - 71.1) < 0.2
+    assert camera_fovy({"fovy": 42.0, "fov_diagonal_deg": 75}) == 42.0
+
+
+def test_cameras_match_real_frames():
+    """The calibration landmarks, projected through the compiled sim cameras,
+    land within 30 px of where they are in the real 1920x1080 frames."""
+    sys.path.insert(0, str(SIM / "tools"))
+    from calibrate_cameras import CAMERAS, H, W, plate
+    e = env()
+    cfg = e.cfg["base_plate"]
+    for cam, obs in CAMERAS.items():
+        c = e.data.cam(cam)
+        R, C = c.xmat.reshape(3, 3), c.xpos
+        f = H / 2 / np.tan(np.radians(e.model.cam_fovy[e.model.camera(cam).id]) / 2)
+        for label, P, px in obs["points"]:
+            if isinstance(P[0], str):
+                P = plate(cfg["size_left_right"], cfg["size_near_far"], P[1], P[2])
+            pc = R.T @ (e.ws.world(*P) - C)
+            uv = np.array([W / 2 + f * pc[0] / -pc[2], H / 2 - f * pc[1] / -pc[2]])
+            err = np.linalg.norm(uv - px)
+            assert err < 30, f"{cam} {label}: {err:.0f} px off"
 
 
 def test_objects_rest_upright_on_table():
