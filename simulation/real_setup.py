@@ -111,6 +111,12 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
     _add_walls(spec, ws, cfg["walls"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
     info.cameras = _add_cameras(spec, ws, cfg["cameras"])
+    if "wrist_camera" in cfg and spec.camera("wrist") is not None:
+        wc, cam = cfg["wrist_camera"], spec.camera("wrist")
+        cam.fovy = camera_fovy(wc)
+        if "pos" in wc:
+            cam.pos = wc["pos"]
+            cam.quat = _lookat_quat(wc["pos"], wc["look_at"], [0, 0, 1])
     if with_objects:
         info.objects = [_add_object(spec, ws, o) for o in cfg.get("objects", [])]
     return info
@@ -264,6 +270,15 @@ def _add_bin(spec, ws: Workspace, b) -> list[str]:
     return sites
 
 
+def camera_fovy(cam: dict) -> float:
+    """Vertical fov [deg] from `fovy`, or from a spec-sheet diagonal fov and the aspect."""
+    if "fovy" in cam:
+        return float(cam["fovy"])
+    w, h = cam.get("aspect", [4, 3])
+    half_diag = np.tan(np.radians(cam["fov_diagonal_deg"]) / 2)
+    return float(np.degrees(2 * np.arctan(half_diag * h / np.hypot(w, h))))
+
+
 def _add_cameras(spec, ws: Workspace, cams) -> list[str]:
     mat = _material(spec, "camera_body_mat", _COLORS["camera"])
     names = []
@@ -271,7 +286,7 @@ def _add_cameras(spec, ws: Workspace, cams) -> list[str]:
         pos = ws.world(cam["from_left"], cam["from_near"], cam["height"])
         target = ws.world(*cam["look_at"])
         quat = _lookat_quat(pos, target, [0, 0, 1])
-        spec.worldbody.add_camera(name=cam["name"], pos=pos, quat=quat, fovy=cam["fovy"])
+        spec.worldbody.add_camera(name=cam["name"], pos=pos, quat=quat, fovy=camera_fovy(cam))
         # Camera housing and its post down to the table (visual only).
         body = spec.worldbody.add_body(name=f"{cam['name']}_mount", pos=pos, quat=quat)
         _box(body, f"{cam['name']}_housing", [0, 0, 0.02], [0.045, 0.02, 0.02], mat,

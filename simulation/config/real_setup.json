@@ -9,8 +9,9 @@
     "Values marked in _assumed are guesses from the photos: measure and correct them here."
   ],
   "_assumed": [
-    "robot.from_near", "base_plate.*", "walls.*.height", "bin.height", "bin.wall",
-    "bin.floor", "bin.dividers", "cameras.*.look_at", "cameras.*.fovy", "objects.*"
+    "base_plate.*", "wrist_camera.pos", "wrist_camera.look_at", "bin.wall", "bin.floor", "cameras.*.look_at",
+    "cameras.*.fov_diagonal_deg is read as a DIAGONAL fov (spec-sheet style)",
+    "objects.cup.bottom_radius"
   ],
 
   "workspace": {"width": 0.98, "depth": 0.84},
@@ -25,34 +26,38 @@
 
   "walls": {
     "thickness": 0.006,
-    "near":  {"height": 0.30, "color": "cardboard"},
-    "right": {"height": 0.30, "color": "cardboard"},
-    "left":  {"height": 0.45, "color": "black"}
+    "near":  {"height": 0.37, "color": "cardboard"},
+    "right": {"height": 0.37, "color": "cardboard"},
+    "left":  {"height": 0.37, "color": "black"}
   },
 
   "bin": {
     "_comment": "White foam box against the left wall. Outer size 25 cm (left-right) x 40 cm (near-far).",
     "from_left": 0.0, "from_near": 0.15,
     "size_left_right": 0.25, "size_near_far": 0.40,
-    "height": 0.10, "wall": 0.025, "floor": 0.02,
+    "height": 0.12, "wall": 0.025, "floor": 0.02,
     "dividers": [0.5],
     "_dividers_comment": "fractions along near->far where an inner wall splits the box into compartments"
   },
 
+  "_cameras_comment": "fov_diagonal_deg + aspect are converted to MuJoCo's vertical fovy (or give fovy directly)",
   "cameras": [
-    {"name": "cam_far", "_comment": "camera on the far edge, 62 cm from the right corner, 30 cm high",
+    {"name": "cam_far", "_comment": "LeRobot camera (100 deg) on the far edge, 62 cm from the right corner, 30 cm high",
      "from_left": 0.36, "from_near": 0.84, "height": 0.30,
-     "look_at": [0.45, 0.30, 0.0], "fovy": 45},
-    {"name": "cam_corner", "_comment": "gooseneck webcam at the far-right corner, 60 cm high",
+     "look_at": [0.45, 0.30, 0.0], "fov_diagonal_deg": 100, "aspect": [4, 3]},
+    {"name": "cam_corner", "_comment": "Logitech C920 (~75 deg) on a gooseneck at the far-right corner, 60 cm high",
      "from_left": 0.98, "from_near": 0.84, "height": 0.60,
-     "look_at": [0.45, 0.30, 0.0], "fovy": 45}
+     "look_at": [0.45, 0.30, 0.0], "fov_diagonal_deg": 75, "aspect": [4, 3]}
   ],
+  "wrist_camera": {"_comment": "camera mounted on the reBot gripper (the teleop model's `wrist`). pos/look_at are in the end_link frame: +x = along the fingers (fingertips at x=0), +y = finger travel, +z = up when the tool is level. Mount spot estimated.",
+                   "pos": [-0.08, 0.0, 0.06], "look_at": [0.10, 0.0, -0.01],
+                   "fov_diagonal_deg": 100, "aspect": [4, 3]},
 
   "objects": [
     {"name": "can", "type": "can", "from_left": 0.42, "from_near": 0.40,
-     "radius": 0.033, "height": 0.115, "mass": 0.03, "rgba": [0.75, 0.05, 0.05, 1]},
+     "radius": 0.0225, "height": 0.13, "mass": 0.015, "rgba": [0.75, 0.05, 0.05, 1]},
     {"name": "cup", "type": "cup", "from_left": 0.70, "from_near": 0.45,
-     "top_radius": 0.040, "bottom_radius": 0.028, "height": 0.09, "wall": 0.002,
-     "mass": 0.01, "rgba": [0.95, 0.94, 0.90, 1]}
+     "top_radius": 0.045, "bottom_radius": 0.030, "height": 0.11, "wall": 0.002,
+     "mass": 0.008, "rgba": [0.95, 0.94, 0.90, 1]}
   ]
 }
