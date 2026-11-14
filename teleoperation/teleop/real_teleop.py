@@ -19,11 +19,8 @@ import mujoco
 import numpy as np
 
 from teleop import gripper_limits
-from teleop.ee_control import EEController
-from teleop.ik import DiffIK
-from teleop.rebot_model import ARM_JOINTS, GRASP_SITE, GRIPPER_MAX, RebotSim
-
-RUNAWAY_M = 0.05  # target further than this from the arm -> snap the target back
+from teleop.arm_step import ArmStep
+from teleop.rebot_model import GRASP_SITE, GRIPPER_MAX, RebotSim
 
 
 def finger_to_deg(finger_m: float) -> float:
@@ -37,45 +34,26 @@ def deg_to_finger(deg: float) -> float:
     return GRIPPER_MAX * (1.0 - float(np.clip(closing, 0.0, 1.0)))
 
 
-class RealArmStep:
-    """FastLoop step function: controller -> EEController -> guarded IK -> action (deg)."""
+class RealArmStep(ArmStep):
+    """FastLoop step function: controller -> ArmStep -> lerobot action (degrees)."""
 
     def __init__(self, source, ctrl_cfg, model, q_start, gripper_deg, args):
         from teleop.rebot_real import READY_QPOS
+        super().__init__(ctrl_cfg, model, q_start, deg_to_finger(gripper_deg), READY_QPOS, args)
         self.source = source
-        self.ik = DiffIK(model, GRASP_SITE, ARM_JOINTS, q_rest=READY_QPOS,
-                         max_joint_vel=args.max_joint_vel,
-                         min_rot_weight=None if args.strict_rotation else 0.05)
-        self.q = np.array(q_start, dtype=float)
-        pos, rot = self.ik.fk(self.q)
-        self.ctrl = EEController(ctrl_cfg, pos, rot, gripper=deg_to_finger(gripper_deg),
-                                 hand=args.hand)
-        self.blocked = False
         self.last_action = None
 
     def step(self, dt: float) -> dict:
-        from teleop.rebot_real import guarded_solve, q_to_action
-        s = self.source.read()
-        target_pos, target_rot, finger = self.ctrl.update(s, dt)
-        q, pos_err, _, blocked = guarded_solve(self.ik, self.q, target_pos, target_rot, dt)
-        if blocked and not self.blocked:
-            print("[real] IK step refused: it would move into a singularity (arm holds)")
-        self.blocked = blocked
-        self.q = q
-        # Safety brake: never let the target run away from what the arm can do.
-        arm_pos, arm_rot = self.ik.fk(q)
-        if np.linalg.norm(np.asarray(target_pos) - arm_pos) > RUNAWAY_M:
-            self.ctrl.resync(arm_pos, target_rot)
+        from teleop.rebot_real import q_to_action
+        q, finger = self.update(self.source.read(), dt)
         self.last_action = q_to_action(q, finger_to_deg(finger))
         return self.last_action
 
     def resync(self, joints_deg: dict) -> None:
         """Called by FastLoop after a stop / return-to-ready: re-anchor on the arm."""
         from teleop.rebot_real import JOINT_NAMES
-        self.q = np.radians([joints_deg[f"{n}.pos"] for n in JOINT_NAMES])
-        pos, rot = self.ik.fk(self.q)
-        self.ctrl.disarm(" (resync)")
-        self.ctrl.resync(pos, rot, deg_to_finger(joints_deg["gripper.pos"]))
+        self.reset_to(np.radians([joints_deg[f"{n}.pos"] for n in JOINT_NAMES]),
+                      deg_to_finger(joints_deg["gripper.pos"]))
 
 
 def connect_robot(args):
@@ -129,6 +107,10 @@ def run_real(args):
     m, d = sim.model, sim.data
 
     # Controller first, so a missing headset fails before anything moves.
+    woke = False
+    if not args.demo and not args.no_wake:
+        from teleop.vr_view import keep_headset_awake
+        woke = keep_headset_awake(True)
     bridge = None
     if args.demo:
         source = None  # created right before teleop starts (its script is timed)
@@ -213,5 +195,8 @@ def run_real(args):
         # (hold), save /tmp/fast_loop_log.npz, then close the bus with torque ON.
         robot.disconnect()
         print("[real] disconnected; the arm holds with torque ON. Support it before power-off.")
+        if woke:
+            from teleop.vr_view import keep_headset_awake
+            keep_headset_awake(False)  # headset sleeps normally again
         sys.stdout.flush()
         os._exit(0)

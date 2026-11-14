@@ -37,8 +37,8 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-from teleop.ik import DiffIK
-from teleop.ee_control import EEConfig, EEController, rot_x
+from teleop.arm_step import ArmStep
+from teleop.ee_control import EEConfig, rot_x
 from teleop.quest_input import ControllerSample
 from teleop.rebot_model import ARM_JOINTS, GRASP_SITE, GRIPPER_MAX, HOME_QPOS, RebotSim
 
@@ -106,6 +106,13 @@ def parse_args():
     r.add_argument("--kd-scale", type=float, default=1.0, help="MIT arm damping factor")
     r.add_argument("--ready-speed", type=float, default=0.6,
                    help="peak joint speed of the move to the ready pose [rad/s]")
+    r.add_argument("--no-wake", action="store_true",
+                   help="do not wake the headset / keep it awake off-head over adb")
+    r.add_argument("--no-wrist-guard", dest="wrist_guard", action="store_false",
+                   help="let the IK fold the shoulder/elbow when a wrist joint is at its limit")
+    r.add_argument("--fingertip-pivot", dest="wrist_pivot", action="store_false",
+                   help="rotate the gripper about the fingertips instead of with the wrist "
+                        "joints (moves the shoulder/elbow a lot on the reBot)")
     r.add_argument("--yes", action="store_true",
                    help="do not ask before the move to the ready pose (only with --fake-hardware)")
     args = p.parse_args()
@@ -206,9 +213,10 @@ def main():
     else:
         source = open_quest(args.hand, args.ip)
         wait_for_controller(source, args.hand)
-    # Control the point between the fingertips, so the fingers go where your hand goes.
-    ik = DiffIK(m, GRASP_SITE, ARM_JOINTS, q_rest=HOME_QPOS, max_joint_vel=args.max_joint_vel,
-                min_rot_weight=None if args.strict_rotation else 0.05)
+    # Same tick as the real arm (teleop/arm_step.py): controller -> wrist pivot ->
+    # wrist-limit guard -> guarded IK on the fingertip point -> runaway brake.
+    arm = ArmStep(ee_config(args), m, HOME_QPOS, GRIPPER_MAX, HOME_QPOS, args)
+    ik, ctrl = arm.ik, arm.ctrl
 
     mit = None
     if args.control == "mit":
@@ -223,8 +231,7 @@ def main():
     n_sub = max(1, round(dt / m.opt.timestep))
     sync_every = max(1, round(args.rate / VIEWER_HZ))
     home_pos, home_rot = ik.fk(HOME_QPOS)
-    ctrl = EEController(ee_config(args), home_pos, home_rot, hand=args.hand)
-    state = dict(q_cmd=HOME_QPOS.copy(), go_home=False)
+    state = dict(go_home=False)
 
     def key_callback(key):
         if key == KEY_UP:
@@ -252,17 +259,16 @@ def main():
 
             # ---- 1. controller -> arm state, TCP target, gripper ------------
             s = source.read()
-            target_pos, target_rot, _ = ctrl.update(s, dt)
             if state["go_home"]:
                 state["go_home"] = False
                 ctrl.disarm(" (going home)")
                 ctrl.resync(home_pos, home_rot)
-                target_pos, target_rot = home_pos.copy(), home_rot.copy()
-            sim.set_target(target_pos, target_rot)
 
-            # ---- 2. IK -> joints -> physics --------------------------------
-            q_cmd, pos_err, rot_err = ik.solve(state["q_cmd"], target_pos, target_rot, dt)
-            state["q_cmd"] = q_cmd
+            # ---- 2. controller + IK -> joints -> physics ----------------------
+            q_cmd, _ = arm.update(s, dt)
+            pos_err, rot_err = arm.pos_err, arm.rot_err
+            target_pos, target_rot = ctrl.target
+            sim.set_target(target_pos, target_rot)
             if mit is None:
                 sim.command(q_cmd, ctrl.gripper)
                 for _ in range(n_sub):

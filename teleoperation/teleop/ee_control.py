@@ -36,6 +36,16 @@ def rotvec(R):
     return vel
 
 
+def orthonormalize(R):
+    """Nearest rotation matrix (rotations composed every tick drift otherwise)."""
+    U, _, Vt = np.linalg.svd(np.asarray(R, float))
+    R = U @ Vt
+    if np.linalg.det(R) < 0:
+        U[:, -1] *= -1
+        R = U @ Vt
+    return R
+
+
 def rot_x(a):
     return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
 
@@ -86,6 +96,28 @@ class EEConfig:
     roll_speed: float = 1.5     # rad/s at full stick
     deadzone: float = 0.3
     track_rotation: bool = True
+    # Without a pivot function (see EEController.pivot_fn), rotations turn the
+    # gripper about this point: the offset from it to the controlled (fingertip)
+    # point in the tool frame. (0, 0, 0) = about the fingertips.
+    pivot_offset: tuple = (0.0, 0.0, 0.0)
+
+
+def wrist_pivot_shift(ik, q, rot_old, rot_new, damping: float = 0.05):
+    """Fingertip displacement if the wrist joints alone made rot_old -> rot_new.
+
+    Rotating the reBot's gripper about the fingertips needs the shoulder/elbow,
+    because the wrist axes sit 12-23 cm behind them. Moving the controlled point
+    by this amount instead makes a pure hand rotation a pure wrist motion.
+    """
+    w = rotvec(np.asarray(rot_new) @ np.asarray(rot_old).T)  # world-frame rotation
+    if not w.any():
+        return np.zeros(3)
+    ik._fk(np.asarray(q, float))
+    mujoco.mj_jacSite(ik.model, ik.data, ik._jacp, ik._jacr, ik.site)
+    cols = ik.dadr[3:6]  # wrist_flex, wrist_yaw, wrist_roll
+    Jp, Jr = ik._jacp[:, cols], ik._jacr[:, cols]
+    dq = Jr.T @ np.linalg.solve(Jr @ Jr.T + damping ** 2 * np.eye(3), w)
+    return Jp @ dq
 
 
 class EEController:
@@ -102,6 +134,9 @@ class EEController:
         self.armed = self.moving = self.precise = False
         self._prev_a = self._prev_b = False
         self.last_sample = ControllerSample()
+        # Optional (rot_old, rot_new) -> fingertip shift, e.g. wrist_pivot_shift
+        # bound to the arm's IK: rotations then happen in the wrist.
+        self.pivot_fn = None
 
     def _stick(self, v):
         dz = self.cfg.deadzone
@@ -160,5 +195,18 @@ class EEController:
             roll = self._stick(s.joystick[0]) * rate * self.cfg.roll_speed * dt
             if roll:
                 rot = np.asarray(rot) @ rot_x(roll)
+        rot = orthonormalize(rot)
+        pos = self.pivot_correct(pos, self.target[1], rot)
         self.target = (pos, rot)
         return pos, rot, self.gripper
+
+    def pivot_correct(self, pos, rot_old, rot_new):
+        """Moves `pos` so the rotation rot_old -> rot_new turns about the pivot."""
+        if self.pivot_fn is not None:
+            shift = self.pivot_fn(rot_old, rot_new)
+        else:
+            off = np.asarray(self.cfg.pivot_offset, float)
+            if not off.any():
+                return pos
+            shift = (np.asarray(rot_new) - np.asarray(rot_old)) @ off
+        return self.mapper.workspace.clamp(np.asarray(pos) + shift)

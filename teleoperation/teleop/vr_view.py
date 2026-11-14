@@ -214,6 +214,28 @@ def adb(*args, check=False) -> subprocess.CompletedProcess:
     return subprocess.run(["adb", *args], capture_output=True, text=True, timeout=15, check=check)
 
 
+def keep_headset_awake(enable: bool = True) -> bool:
+    """Wakes the Quest and keeps it awake off-head (or restores normal behaviour).
+
+    The controllers are tracked by the headset's cameras, so it must be awake;
+    without this it sleeps as soon as it is not on a face (proximity sensor).
+    """
+    try:
+        if enable:
+            adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
+            r = adb("shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close")
+        else:
+            r = adb("shell", "am", "broadcast", "-a",
+                    "com.oculus.vrpowermanager.automation_disable")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    ok = r.returncode == 0
+    if enable:
+        print("[quest] headset woken and kept awake (proximity sensor overridden)"
+              if ok else f"[quest] could not keep the headset awake: {r.stderr.strip()}")
+    return ok
+
+
 def open_on_headset(port: int, query: str = "") -> bool:
     """adb reverse the port and open the page in the Quest browser."""
     try:

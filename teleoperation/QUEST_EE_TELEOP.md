@@ -244,9 +244,24 @@ uv run quest_ee_teleop.py --real-robot --port /dev/ttyACM0 --passthrough   # see
 ```
 
 The controller comes from the OculusReader app (no VR scene). The headset must
-be awake for the controller to be tracked; `--passthrough` makes it see-through
-so you can watch the real arm while wearing it. The MuJoCo window mirrors the
-measured pose; the console prints `lag=` and the loop rate.
+be awake for the controller to be tracked: the script wakes it over adb and keeps
+it awake off-head (proximity sensor overridden), and restores normal sleep on
+exit (`--no-wake` to skip). Put it on a stand facing your hands, or wear it with
+`--passthrough` to see the real arm. The MuJoCo window mirrors the measured pose;
+the console prints `lag=` and the loop rate.
+
+**Rotation (sim and real):** the reBot's wrist axes sit 12-23 cm behind the
+fingertips, and `wrist_flex` is already at 78 deg (limit 90) in the ready pose.
+Rotating the gripper about the fingertips therefore folded the shoulder/elbow
+(real-arm log: `wrist_flex` pinned at +90 deg 45% of the time, elbow at -160
+deg). Now (`teleop/arm_step.py`):
+
+- hand rotations are turned into **wrist-joint** rotations (the fingertips
+  sweep with the wrist, the shoulder/elbow keep their shape);
+- at a wrist limit the rotation **waits** ("wrist_flex at its limit") until you
+  rotate your hand back, instead of contorting the arm.
+
+`--fingertip-pivot` and `--no-wrist-guard` restore the old behaviour.
 
 Safety:
 
