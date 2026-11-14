@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reBot VR View</title>
+<style>
+  :root { --bg: #15181d; --fg: #e8eaed; --muted: #9aa0a6; --ok: #4caf50; --warn: #ffb74d; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+               font: 15px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #info { position: absolute; top: 12px; left: 16px; right: 16px; pointer-events: none; }
+  #info h1 { font-size: 18px; margin: 0 0 4px; }
+  #info p { margin: 2px 0; color: var(--muted); }
+  #conn.ok { color: var(--ok); } #conn.bad { color: var(--warn); }
+  canvas { display: block; }
+  #xrButtons { position: absolute; bottom: 24px; left: 0; right: 0; display: flex;
+               justify-content: center; gap: 16px; }
+  #xrButtons > * { position: static !important; left: auto !important; bottom: auto !important;
+                   width: 170px !important; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="info">
+  <h1>reBot Arm: live MuJoCo view</h1>
+  <p id="conn" class="bad">connecting to the PC...</p>
+  <p>Press <b>Enter VR</b> (or <b>Start AR</b> for passthrough). Right controller: <b>A</b> start,
+     <b>B</b> stop, thumbstick left/right close/open. Left thumbstick: move the scene
+     up/down (Y) and nearer/further (X).</p>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const params = new URLSearchParams(location.search);
+// Robot base placement in the headset's floor frame (metres / degrees).
+const place = { h: +(params.get('h') ?? 0.75), d: +(params.get('d') ?? 0.30),
+                yaw: +(params.get('yaw') ?? 0) };
+
+const connEl = document.getElementById('conn');
+let ws = null;
+function log(text) {
+  console.log(text);
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'log', text: String(text) }));
+}
+window.addEventListener('error', e => log('page error: ' + e.message));
+
+// ---- renderer / scene ---------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const bgColor = new THREE.Color(0x20242b);
+scene.background = bgColor;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(1, 3, 2);
+scene.add(sun);
+
+// Desktop / 2D-window preview camera.
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.02, 50);
+camera.position.set(0.9, place.h + 0.55, -place.d + 0.55);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.target.set(0, place.h + 0.15, -place.d - 0.3);
+orbit.update();
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// root: MuJoCo world frame (x forward, y left, z up) placed in the WebXR
+// floor frame (x right, y up, -z forward) so the robot faces away from you.
+const root = new THREE.Group();
+root.matrixAutoUpdate = false;
+scene.add(root);
+function updateRoot() {
+  const robotToXr = new THREE.Matrix4().set(0, -1, 0, 0,  0, 0, 1, 0,  -1, 0, 0, 0,  0, 0, 0, 1);
+  const yaw = new THREE.Matrix4().makeRotationY(THREE.MathUtils.degToRad(place.yaw));
+  const at = new THREE.Matrix4().makeTranslation(0, place.h, -place.d);
+  root.matrix.copy(at.multiply(yaw).multiply(robotToXr));
+  root.matrixWorldNeedsUpdate = true;
+  hud.position.set(0, place.h + 0.75, -place.d - 0.35);
+}
+
+// ---- HUD ------------------------------------------------------------------------
+const hudCanvas = document.createElement('canvas');
+hudCanvas.width = 1024; hudCanvas.height = 160;
+const hudTex = new THREE.CanvasTexture(hudCanvas);
+hudTex.colorSpace = THREE.SRGBColorSpace;
+const hud = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.1),
+                           new THREE.MeshBasicMaterial({ map: hudTex, transparent: true }));
+scene.add(hud);
+function drawHud(text, following) {
+  const g = hudCanvas.getContext('2d');
+  g.clearRect(0, 0, 1024, 160);
+  g.fillStyle = 'rgba(20,24,30,0.78)';
+  g.beginPath(); g.roundRect(0, 0, 1024, 160, 28); g.fill();
+  g.fillStyle = following ? '#4caf50' : '#ffb74d';
+  g.beginPath(); g.arc(70, 80, 30, 0, 2 * Math.PI); g.fill();
+  g.fillStyle = '#e8eaed'; g.font = '600 52px system-ui, sans-serif';
+  g.fillText(text, 130, 98);
+  hudTex.needsUpdate = true;
+}
+drawHud('waiting for the PC...', false);
+updateRoot();
+
+// ---- controllers (drawn so you can see your hands) --------------------------------
+for (let i = 0; i < 2; i++) {
+  const grip = renderer.xr.getControllerGrip(i);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.1),
+                              new THREE.MeshLambertMaterial({ color: 0x8ab4f8 }));
+  body.position.z = 0.03;
+  grip.add(body);
+  grip.add(new THREE.AxesHelper(0.06));
+  scene.add(grip);
+}
+
+// ---- MuJoCo scene --------------------------------------------------------------
+const GEOM = { PLANE: 0, SPHERE: 2, CAPSULE: 3, ELLIPSOID: 4, CYLINDER: 5, BOX: 6, MESH: 7 };
+let objects = [];       // one THREE.Mesh per streamed geom, in wire order
+let floorObj = null;
+let pendingScene = null;
+
+function clearScene() {
+  for (const o of objects) { root.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  objects = []; floorObj = null;
+}
+
+function buildScene(desc, buf) {
+  clearScene();
+  const meshGeoms = [];
+  let vOff = 4, nvTotal = 0;
+  for (const m of desc.meshes) nvTotal += m.nv;
+  let fOff = 4 + nvTotal * 12;
+  for (const m of desc.meshes) {
+    const pos = new Float32Array(buf.slice(vOff, vOff + m.nv * 12));
+    const idx = new Uint32Array(buf.slice(fOff, fOff + m.nf * 12));
+    vOff += m.nv * 12; fOff += m.nf * 12;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+    meshGeoms.push(g);
+  }
+  let tris = 0;
+  for (const gd of desc.geoms) {
+    const s = gd.size;
+    let geom;
+    switch (gd.type) {
+      case GEOM.MESH: geom = meshGeoms[gd.mesh]; break;
+      case GEOM.BOX: geom = new THREE.BoxGeometry(2 * s[0], 2 * s[1], 2 * s[2]); break;
+      case GEOM.SPHERE: geom = new THREE.SphereGeometry(s[0], 20, 14); break;
+      case GEOM.ELLIPSOID: geom = new THREE.SphereGeometry(1, 20, 14).scale(s[0], s[1], s[2]); break;
+      case GEOM.CYLINDER: geom = new THREE.CylinderGeometry(s[0], s[0], 2 * s[1], 28).rotateX(Math.PI / 2); break;
+      case GEOM.CAPSULE: geom = new THREE.CapsuleGeometry(s[0], 2 * s[1], 4, 10).rotateX(Math.PI / 2); break;
+      case GEOM.PLANE: geom = new THREE.PlaneGeometry(s[0] > 0 ? 2 * s[0] : 4, s[1] > 0 ? 2 * s[1] : 4); break;
+      default: geom = new THREE.SphereGeometry(0.005);
+    }
+    const [r, g, b, a] = gd.rgba;
+    const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(r, g, b),
+                                                transparent: a < 1, opacity: a });
+    if (gd.type === GEOM.PLANE) mat.color.setRGB(0.35, 0.37, 0.4);
+    const obj = new THREE.Mesh(geom, mat);
+    obj.matrixAutoUpdate = false;
+    obj.visible = false;  // until the first pose arrives
+    root.add(obj);
+    objects.push(obj);
+    if (gd.type === GEOM.PLANE) floorObj = obj;
+    tris += geom.index ? geom.index.count / 3 : 0;
+  }
+  updateFloorVisibility();
+  log(`scene built: ${objects.length} geoms, ${Math.round(tris / 1000)}k triangles`);
+}
+
+function applyFrame(buf) {
+  const f = new Float32Array(buf, 4);
+  const n = Math.min(objects.length, f.length / 12);
+  for (let i = 0; i < n; i++) {
+    const k = i * 12, o = objects[i];
+    // MuJoCo: pos (3) then row-major rotation matrix (9).
+    o.matrix.set(f[k + 3], f[k + 4], f[k + 5], f[k],
+                 f[k + 6], f[k + 7], f[k + 8], f[k + 1],
+                 f[k + 9], f[k + 10], f[k + 11], f[k + 2],
+                 0, 0, 0, 1);
+    o.matrixWorldNeedsUpdate = true;
+    o.visible = true;
+  }
+  if (floorObj && isPassthrough()) floorObj.visible = false;
+}
+
+// ---- WebSocket to the PC ---------------------------------------------------------
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { connEl.textContent = 'connected to the PC, loading the scene...'; connEl.className = 'ok'; };
+  ws.onclose = () => {
+    connEl.textContent = 'PC not reachable, retrying...'; connEl.className = 'bad';
+    drawHud('PC disconnected', false);
+    setTimeout(connect, 1000);
+  };
+  ws.onmessage = ev => {
+    if (typeof ev.data === 'string') {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'scene') pendingScene = msg;
+      else if (msg.type === 'status') drawHud(msg.text, msg.following);
+      return;
+    }
+    const tag = new Uint32Array(ev.data, 0, 1)[0];
+    if (tag === 1 && pendingScene) {
+      buildScene(pendingScene, ev.data); pendingScene = null;
+      connEl.textContent = 'connected: live scene';
+    } else if (tag === 2) {
+      applyFrame(ev.data);
+    }
+  };
+}
+connect();
+
+// ---- XR session: passthrough, controller streaming, scene placement ----------------
+function isPassthrough() {
+  const s = renderer.xr.getSession();
+  return !!s && s.environmentBlendMode && s.environmentBlendMode !== 'opaque';
+}
+function updateFloorVisibility() {
+  scene.background = isPassthrough() ? null : bgColor;
+  if (floorObj) floorObj.visible = !isPassthrough() && floorObj.visible;
+}
+renderer.xr.addEventListener('sessionstart', () => { updateFloorVisibility(); log('XR session started'); });
+renderer.xr.addEventListener('sessionend', () => { scene.background = bgColor; log('XR session ended'); });
+
+let lastT = 0;
+function streamControllers(frame, dt) {
+  const session = renderer.xr.getSession();
+  const ref = renderer.xr.getReferenceSpace();
+  if (!session || !ref) return;
+  const ctrls = {};
+  for (const src of session.inputSources) {
+    if (!src.gripSpace || !src.handedness || src.handedness === 'none') continue;
+    const pose = frame.getPose(src.gripSpace, ref);
+    if (!pose) continue;
+    const p = pose.transform.position, o = pose.transform.orientation;
+    const gp = src.gamepad;
+    ctrls[src.handedness] = {
+      position: [p.x, p.y, p.z], orientation: [o.x, o.y, o.z, o.w],
+      buttons: gp ? Array.from(gp.buttons, b => ({ p: b.pressed, v: b.value })) : [],
+      axes: gp ? Array.from(gp.axes) : [],
+    };
+    // Left thumbstick moves the scene: Y = height, X = distance.
+    if (src.handedness === 'left' && gp && gp.axes.length >= 4) {
+      const ax = gp.axes[2], ay = gp.axes[3];
+      if (Math.abs(ay) > 0.3) place.h = Math.min(1.6, Math.max(0, place.h - ay * 0.4 * dt));
+      if (Math.abs(ax) > 0.3) place.d = Math.min(1.5, Math.max(-0.5, place.d + ax * 0.4 * dt));
+      if (Math.abs(ax) > 0.3 || Math.abs(ay) > 0.3) updateRoot();
+    }
+  }
+  if (ws && ws.readyState === 1 && ws.bufferedAmount < 65536)
+    ws.send(JSON.stringify({ type: 'xr_frame', controllers: ctrls }));
+}
+
+renderer.setAnimationLoop((t, frame) => {
+  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  if (frame) streamControllers(frame, dt);
+  renderer.render(scene, camera);
+});
+
+// Enter VR / Start AR buttons (three's helpers, placed side by side).
+const vrBtn = VRButton.createButton(renderer);
+const arBtn = ARButton.createButton(renderer, { optionalFeatures: ['local-floor'] });
+const xrButtons = document.createElement('div');
+xrButtons.id = 'xrButtons';
+xrButtons.append(vrBtn, arBtn);
+document.body.appendChild(xrButtons);
+</script>
+</body>
+</html>

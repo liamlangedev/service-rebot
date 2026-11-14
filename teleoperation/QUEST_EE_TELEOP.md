@@ -135,7 +135,43 @@ Stand behind the robot, facing the same way it faces (its +x). Then check:
 | Can't get low enough / gripper hits the cube | aim the green dot (fingertips) at the cube centre, gripper fully open; the palm is ~7 cm behind it |
 | `could not connect over ADB` | see step 3 |
 
-## 7. Wireless (optional)
+## 7. See the simulation inside the headset (`--vr`)
+
+```bash
+uv run quest_ee_teleop.py --vr                 # desktop MuJoCo window too
+uv run quest_ee_teleop.py --vr --no-viewer     # headset only
+```
+
+The script serves a WebXR page on port 8765, forwards it over USB
+(`adb reverse`) and opens `http://localhost:8765/` in the Quest browser. In
+this mode the controllers are read from that page, so the OculusReader app is
+not used.
+
+1. Put the headset on. The browser shows the robot, table and objects in a 2D
+   window (status line: *connected: live scene*).
+2. Press **Enter VR** for a full virtual scene, or **Start AR** to see the robot
+   on top of your real room (passthrough).
+3. The robot stands about 30 cm in front of you at table height, facing away
+   from you, so your hand motions and the gripper's match. The panel above
+   it shows *FOLLOWING* / *paused* and the gripper opening.
+4. Same controls: **A** start, **B** stop, right thumbstick close/open.
+   **Left thumbstick** moves the scene: up/down (Y), nearer/further (X).
+
+Checks:
+
+- [ ] The 2D page shows the robot before you enter VR.
+- [ ] In VR the arm, table and cubes are in front of you, controllers visible as blue boxes.
+- [ ] A / B / thumbstick work as in step 6; the robot in the headset moves live.
+- [ ] Start AR shows the robot over the real room (no grey floor).
+
+| Symptom | Fix |
+|---|---|
+| Page says *PC not reachable* | the script is not running, or `adb reverse tcp:8765 tcp:8765` failed (replug USB) |
+| Blank page / no robot | the headset needs internet once to load three.js from cdn.jsdelivr.net |
+| Robot too high/low or far | left thumbstick, or open `http://localhost:8765/?h=0.7&d=0.4` (metres) |
+| Enter VR greyed out | the page must be opened as `localhost` (USB + adb reverse), not by the PC's IP |
+
+## 8. Wireless (optional)
 
 With USB still plugged in:
 
