@@ -11,9 +11,13 @@ JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex",
 # unlike the folded start pose.
 READY_QPOS = np.array([0.0, -1.51, -1.30, 1.36, 0.0, 0.0])
 
-# Gripper joint, degrees in lerobot's public frame (range -270..0); verified on the arm.
-GRIPPER_OPEN_DEG = -270.0
-GRIPPER_CLOSED_DEG = 0.0
+# Gripper ends, degrees in lerobot's public frame, MEASURED with tools/measure_gripper.py.
+# The fallback values are placeholders for the simulator only; the real-arm
+# scripts refuse to run without the measured file.
+from teleop import gripper_limits
+
+_measured = gripper_limits.load()
+GRIPPER_OPEN_DEG, GRIPPER_CLOSED_DEG = _measured if _measured else (-270.0, 0.0)
 
 
 def q_to_action(q: np.ndarray, gripper_deg: float) -> dict[str, float]:

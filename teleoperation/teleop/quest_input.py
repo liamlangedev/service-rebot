@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 ROOT = Path(__file__).resolve().parents[1]
 CALIBRATION_FILE = ROOT / "config" / "quest_calibration.json"
@@ -145,6 +146,7 @@ class ClutchTeleop:
         self._ctrl0 = None
         self._target0 = None
         self._filtered = None
+        self._filtered_rot = None
 
     @property
     def engaged(self):
@@ -167,6 +169,7 @@ class ClutchTeleop:
             self._ctrl0 = (s.pos.copy(), s.rot.copy())
             self._target0 = (np.array(target_pos), np.array(target_rot))
             self._filtered = None
+            self._filtered_rot = None
 
         p0, R0 = self._ctrl0
         tp0, tR0 = self._target0
@@ -177,6 +180,13 @@ class ClutchTeleop:
             a = self.smoothing
             pos = a * self._filtered + (1 - a) * pos
         self._filtered = pos
+        if self.track_rotation and self.smoothing > 0:
+            # Same EMA as the position, applied to the rotation (hand orientation is noisy).
+            if self._filtered_rot is None:
+                self._filtered_rot = rot
+            delta = Rotation.from_matrix(rot @ self._filtered_rot.T).as_rotvec()
+            rot = Rotation.from_rotvec((1 - self.smoothing) * delta).as_matrix() @ self._filtered_rot
+            self._filtered_rot = rot
         return self._clamp(pos), rot
 
     def _clamp(self, pos):
