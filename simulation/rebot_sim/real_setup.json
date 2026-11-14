@@ -1,4 +1,6 @@
 {
+  "version": "1.1",
+  "_version_comment": "bump when the measured setup changes (rebot_sim.scene_version())",
   "_comment": [
     "Real hackathon setup of the reBot B601 (measured, see reference_photos/).",
     "All lengths in metres. Positions use WORKSPACE coordinates:",
@@ -52,6 +54,10 @@
   "wrist_camera": {"_comment": "camera mounted on the reBot gripper (the teleop model's `wrist`). pos/look_at are in the end_link frame: +x = along the fingers (fingertips at x=0), +y = finger travel, +z = up when the tool is level. Mount spot estimated.",
                    "pos": [-0.08, 0.0, 0.06], "look_at": [0.10, 0.0, -0.01],
                    "fov_diagonal_deg": 100, "aspect": [4, 3]},
+
+  "spawn_region": {"_comment": "where RealSetupEnv.randomize_objects() may put objects (workspace coords)",
+                   "from_left": [0.33, 0.90], "from_near": [0.22, 0.60],
+                   "min_robot_distance": 0.18, "min_spacing": 0.12},
 
   "objects": [
     {"name": "can", "type": "can", "from_left": 0.42, "from_near": 0.40,

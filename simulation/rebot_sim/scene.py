@@ -2,7 +2,7 @@
 
 Takes the teleop-ready reBot model (teleoperation/teleop/rebot_model.py) and
 replaces Seeed's demo table and cubes with the measured hackathon setup from
-config/real_setup.json:
+real_setup.json (next to this file):
 
   * the wood table (texture cropped from the photos) and the floor below it
   * the black base plate the arm is clamped to (plus the two green clamps)
@@ -25,15 +25,15 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-SIM_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SIM_DIR.parent
+PKG_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PKG_DIR.parents[1]
 TELEOP_DIR = REPO_ROOT / "teleoperation"
 if str(TELEOP_DIR) not in sys.path:
     sys.path.insert(0, str(TELEOP_DIR))
 
 from teleop.rebot_model import _lookat_quat, build_spec  # noqa: E402
 
-DEFAULT_CONFIG = SIM_DIR / "config" / "real_setup.json"
+DEFAULT_CONFIG = PKG_DIR / "real_setup.json"
 
 # Bodies and geoms of Seeed's demo scene that the real setup replaces.
 _DEMO_BODIES = ["task_table", "red_cube", "blue_block", "yellow_cylinder"]
@@ -57,8 +57,24 @@ _STATIC_CONTACT = dict(condim=3, friction=[1.0, 0.01, 0.001])
 
 
 def load_config(path: Path | str | None = None) -> dict:
-    with open(path or DEFAULT_CONFIG) as f:
-        return json.load(f)
+    """Reads a setup JSON. Relative file paths inside it (texture, meshes) are
+    resolved against the folder of that JSON."""
+    path = Path(path or DEFAULT_CONFIG).resolve()
+    with open(path) as f:
+        cfg = json.load(f)
+    cfg["_dir"] = str(path.parent)
+    cfg["_path"] = str(path)
+    return cfg
+
+
+def scene_version(cfg: dict | None = None) -> str:
+    return (cfg or load_config()).get("version", "unversioned")
+
+
+def _resolve(cfg_or_dir, rel: str) -> Path:
+    base = Path(cfg_or_dir.get("_dir", PKG_DIR)) if isinstance(cfg_or_dir, dict) else Path(cfg_or_dir)
+    p = Path(rel)
+    return p if p.is_absolute() else (base / p).resolve()
 
 
 @dataclass
@@ -84,6 +100,7 @@ class Workspace:
 class SceneInfo:
     """Names added to the model, handy for tasks and scripted policies."""
     workspace: Workspace
+    config: dict = field(default_factory=dict)
     bin_sites: list[str] = field(default_factory=list)
     cameras: list[str] = field(default_factory=list)
     objects: list[str] = field(default_factory=list)
@@ -98,7 +115,7 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
     plate = cfg["base_plate"]
     ws = Workspace(ws_cfg["width"], ws_cfg["depth"], rob["from_left"], rob["from_near"],
                    table_z=-plate["thickness"])
-    info = SceneInfo(ws)
+    info = SceneInfo(ws, cfg)
 
     if rob.get("yaw_deg"):
         q = np.empty(4)
@@ -106,7 +123,7 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
         spec.body("base_link").quat = q
 
     _add_visual_settings(spec)
-    _add_table(spec, ws, cfg["table"])
+    _add_table(spec, ws, cfg["table"], _resolve(cfg, cfg["table"]["texture"]))
     _add_base_plate(spec, ws, plate)
     _add_walls(spec, ws, cfg["walls"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
@@ -118,7 +135,7 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
             cam.pos = wc["pos"]
             cam.quat = _lookat_quat(wc["pos"], wc["look_at"], [0, 0, 1])
     if with_objects:
-        info.objects = [_add_object(spec, ws, o) for o in cfg.get("objects", [])]
+        info.objects = [_add_object(spec, ws, o, cfg) for o in cfg.get("objects", [])]
     return info
 
 
@@ -176,8 +193,7 @@ def _add_visual_settings(spec):
                                  castshadow=(i == 0))
 
 
-def _add_table(spec, ws: Workspace, t):
-    tex_path = SIM_DIR / t["texture"]
+def _add_table(spec, ws: Workspace, t, tex_path: Path):
     tex = spec.add_texture(name="table_wood", type=mujoco.mjtTexture.mjTEXTURE_2D,
                            file=str(tex_path))
     mat = spec.add_material(name="table_wood_mat")
@@ -299,7 +315,7 @@ def _add_cameras(spec, ws: Workspace, cams) -> list[str]:
     return names
 
 
-def _add_object(spec, ws: Workspace, o) -> str:
+def _add_object(spec, ws: Workspace, o, cfg) -> str:
     kind = o["type"]
     mat = _material(spec, f"{o['name']}_mat", o.get("rgba", [0.8, 0.8, 0.8, 1]))
     z_base = o.get("height_offset", 0.0) + 0.001
@@ -321,7 +337,7 @@ def _add_object(spec, ws: Workspace, o) -> str:
     elif kind == "cup":
         _add_cup_geoms(body, o, mat, contact)
     elif kind == "mesh":
-        mesh_path = (SIM_DIR / o["file"]).resolve()
+        mesh_path = _resolve(cfg, o["file"])
         spec.add_mesh(name=f"{o['name']}_mesh", file=str(mesh_path),
                       scale=[o.get("scale", 1.0)] * 3)
         contact(body.add_geom(name=f"{o['name']}_geom", type=mujoco.mjtGeom.mjGEOM_MESH,
