@@ -49,9 +49,13 @@ Right controller:
 
 | Input | Action |
 |---|---|
-| **A** | Start mimicking: the gripper follows your hand's position **and** rotation |
-| **B** | Stop mimicking: the arm holds its pose (A again resumes from your hand's new spot) |
-| **Thumbstick left / right** | Close / open the gripper (hold; further = faster) |
+| **A** | Arm robot control |
+| **B** | Stop and disarm |
+| **Hold grip** | Move the arm with your hand (position and rotation) |
+| **Release grip** | Hold the current pose (re-centre your hand, like lifting a mouse) |
+| **Thumbstick ↑ / ↓** | Open / close the gripper (further = faster) |
+| **Thumbstick ← / →** | Rotate (roll) the gripper left / right |
+| **Index trigger** | Precision mode: motion scaled to 25% |
 
 Keyboard in the viewer: Home sends the arm home, Up/Down open/close the gripper.
 Tune with `--scale 0.5` (finer motion), `--grip-speed`, `--max-joint-vel`.

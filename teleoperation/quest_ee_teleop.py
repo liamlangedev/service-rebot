@@ -16,12 +16,14 @@ browser (over USB, via adb reverse) that draws the live simulation around you
 and streams the controllers back; press "Enter VR" (or "Start AR" for
 passthrough) on that page. Controls (right controller):
 
-  A                 start mimicking: the gripper follows your hand position AND
-                    rotation, relative to where your hand was when you pressed A
-  B                 stop mimicking: the arm holds its pose (press A again to
-                    resume from where your hand is now, like lifting a mouse)
-  thumbstick left   close the gripper (hold; push further = faster)
-  thumbstick right  open the gripper
+  A                    arm robot control
+  B                    stop and disarm
+  hold grip            move the arm with your hand (position, and rotation unless
+                       --no-hand-rotation); release it and the arm holds its pose,
+                       so you can re-centre your hand, like lifting a mouse
+  thumbstick up/down   open / close the gripper (push further = faster)
+  thumbstick l/r       rotate (roll) the gripper left / right
+  index trigger        precision mode: hand motion and stick rates scaled down
 
 Keyboard in the viewer: Home = send the arm home, Up/Down = open/close gripper.
 """
@@ -47,10 +49,16 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ip", default=None, help="Quest IP for Wi-Fi ADB (default: USB)")
     p.add_argument("--hand", choices=["r", "l"], default="r",
-                   help="controller to use (l uses X = start, Y = stop)")
+                   help="controller to use (l uses X = arm, Y = disarm)")
     p.add_argument("--scale", type=float, default=1.0, help="hand-to-robot motion scale")
+    p.add_argument("--precision-scale", type=float, default=0.25,
+                   help="motion / stick-rate factor while the index trigger is held")
     p.add_argument("--grip-speed", type=float, default=0.06,
                    help="gripper speed at full thumbstick [m/s] (0.05 m = full travel)")
+    p.add_argument("--roll-speed", type=float, default=1.5,
+                   help="gripper roll speed at full thumbstick [rad/s]")
+    p.add_argument("--no-hand-rotation", action="store_true",
+                   help="hand moves position only; orientation changes only via the stick roll")
     p.add_argument("--deadzone", type=float, default=0.3, help="thumbstick deadzone")
     p.add_argument("--rate", type=int, default=100, help="control rate [Hz]")
     p.add_argument("--max-joint-vel", type=float, default=2.0, help="[rad/s]")
@@ -74,8 +82,66 @@ def parse_args():
     return p.parse_args()
 
 
+def _rodrigues(v):
+    """Rotation matrix of the axis-angle vector v."""
+    a = np.linalg.norm(v)
+    if a < 1e-12:
+        return np.eye(3)
+    k = v / a
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
+
+
+def _rotvec(R):
+    """Axis-angle vector of the rotation matrix R."""
+    quat, vel = np.empty(4), np.empty(3)
+    mujoco.mju_mat2Quat(quat, np.ascontiguousarray(R).reshape(-1))
+    mujoco.mju_quat2Vel(vel, quat, 1.0)
+    return vel
+
+
+def _rot_x(a):
+    return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
+
+
+class GripClutchMapper:
+    """Grip-clutched, incremental hand -> TCP-target mapping.
+
+    While moving, every tick adds the hand's motion since the previous tick
+    (times `gain`) to the target, so changing the gain (precision mode) or
+    releasing the grip never makes the target jump.
+    """
+
+    def __init__(self, workspace: ClutchTeleop, track_rotation: bool = True,
+                 smoothing: float = 0.3):
+        self.workspace = workspace
+        self.track_rotation = track_rotation
+        self.smoothing = smoothing
+        self._prev = None  # (filtered hand position, hand rotation) of the last tick
+
+    def update(self, s: ControllerSample, moving: bool, gain: float, target_pos, target_rot):
+        if not (s.valid and moving):
+            self._prev = None
+            return target_pos, target_rot
+        if self._prev is None:  # grip just pressed: anchor here, no motion yet
+            self._prev = (s.pos.copy(), s.rot.copy())
+            return target_pos, target_rot
+        p_prev, R_prev = self._prev
+        p_f = self.smoothing * p_prev + (1 - self.smoothing) * s.pos
+        pos = self.workspace.clamp(np.asarray(target_pos) + gain * (p_f - p_prev))
+        rot = np.asarray(target_rot)
+        if self.track_rotation:
+            dR = s.rot @ R_prev.T
+            if gain != 1.0:
+                dR = _rodrigues(gain * _rotvec(dR))
+            rot = dR @ rot
+        self._prev = (p_f, s.rot.copy())
+        return pos, rot
+
+
 class DemoController:
-    """Fake right controller: presses A, waves and twists, works the gripper, presses B."""
+    """Fake right controller: arms, moves with the grip held (part of it in
+    precision mode), works the gripper and the roll with the stick, disarms."""
 
     def __init__(self):
         self.t0 = time.time()
@@ -84,13 +150,14 @@ class DemoController:
         t = time.time() - self.t0
         w = 2 * np.pi / 6.0
         pos = np.array([0.05 * np.sin(w * t), 0.08 * np.sin(w * t), 0.06 * np.sin(2 * w * t)])
-        a = 0.4 * np.sin(w * t)  # roll about the forward axis
-        rot = np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
-        stick_x = -1.0 if 3.0 < t % 8 < 4.0 else (1.0 if 6.0 < t % 8 < 7.0 else 0.0)
-        return ControllerSample(valid=True, pos=pos, rot=rot,
-                                reset=0.5 < t < 0.6,                 # A
-                                toggle_rot=10.0 < t < 10.1,          # B
-                                joystick=(stick_x, 0.0), stamp=time.time())
+        stick_y = -1.0 if 3.0 < t < 4.0 else (1.0 if 6.0 < t < 7.0 else 0.0)  # close, open
+        stick_x = 1.0 if 8.0 < t < 8.5 else 0.0                                # roll right
+        return ControllerSample(valid=True, pos=pos, rot=_rot_x(0.3 * np.sin(w * t)),
+                                reset=0.5 < t < 0.6,          # A: arm
+                                toggle_rot=10.0 < t < 10.1,   # B: disarm
+                                clutch=1.0 < t < 9.5,         # grip held
+                                trigger=1.0 if 4.5 < t < 5.5 else 0.0,  # precision
+                                joystick=(stick_x, stick_y), stamp=time.time())
 
     def close(self):
         pass
@@ -152,15 +219,28 @@ def main():
     # Control the point between the fingertips, so the fingers go where your hand goes.
     ik = DiffIK(m, GRASP_SITE, ARM_JOINTS, q_rest=HOME_QPOS, max_joint_vel=args.max_joint_vel,
                 min_rot_weight=None if args.strict_rotation else 0.05)
-    # The ClutchTeleop "clutch" is driven by our latched A/B state, not the grip.
-    mapper = ClutchTeleop(pos_scale=args.scale, track_rotation=True)
+    mapper = GripClutchMapper(ClutchTeleop(), track_rotation=not args.no_hand_rotation)
 
     dt = 1.0 / args.rate
     n_sub = max(1, round(dt / m.opt.timestep))
     sync_every = max(1, round(args.rate / VIEWER_HZ))
     home_pos, home_rot = ik.fk(HOME_QPOS)
     state = dict(q_cmd=HOME_QPOS.copy(), gripper=GRIPPER_MAX, target=(home_pos, home_rot),
-                 following=False, go_home=False, prev_a=False, prev_b=False)
+                 armed=False, moving=False, precise=False, go_home=False,
+                 prev_a=False, prev_b=False)
+
+    def stick(v):
+        """Thumbstick value past the deadzone, rescaled to 0..1 with its sign."""
+        if abs(v) <= args.deadzone:
+            return 0.0
+        return float(np.sign(v) * (abs(v) - args.deadzone) / (1.0 - args.deadzone))
+
+    def status_text():
+        if not state["armed"]:
+            return f"DISARMED - press {start_btn}"
+        if not state["moving"]:
+            return "ARMED - hold grip to move"
+        return "MOVING" + (" (precision)" if state["precise"] else "")
 
     def key_callback(key):
         if key == KEY_UP:
@@ -176,8 +256,8 @@ def main():
         viewer.cam.lookat[:] = [0.25, 0.0, 0.3]
         viewer.cam.distance = 1.3
 
-    print(f"[teleop] ready: press {start_btn} to start mimicking, {stop_btn} to stop, "
-          "thumbstick left/right = close/open gripper")
+    print(f"[teleop] ready: {start_btn} = arm, {stop_btn} = disarm, hold grip = move, "
+          "trigger = precision, stick up/down = open/close, stick left/right = roll")
     t_start = time.perf_counter()
     next_tick, last_print, tick = t_start, 0.0, 0
     try:
@@ -186,37 +266,42 @@ def main():
             if args.duration is not None and now > args.duration:
                 break
 
-            # ---- 1. controller -> follow state, TCP target, gripper ---------
+            # ---- 1. controller -> arm state, TCP target, gripper ------------
             s = source.read()
             a_pressed, b_pressed = s.reset, s.toggle_rot  # A/B (X/Y on the left hand)
-            if a_pressed and not state["prev_a"] and not state["following"]:
-                state["following"] = True
-                print(f"[teleop] {start_btn}: mimicking ON")
-            if b_pressed and not state["prev_b"] and state["following"]:
-                state["following"] = False
-                print(f"[teleop] {stop_btn}: mimicking OFF (arm holds its pose)")
+            if a_pressed and not state["prev_a"] and not state["armed"]:
+                state["armed"] = True
+                print(f"[teleop] {start_btn}: ARMED (hold grip to move)")
+            if b_pressed and not state["prev_b"] and state["armed"]:
+                state["armed"] = False
+                print(f"[teleop] {stop_btn}: DISARMED (arm holds its pose)")
             state["prev_a"], state["prev_b"] = a_pressed, b_pressed
 
-            # Feed the mapper a sample whose clutch is our latched follow state;
-            # toggle_rot is cleared so B does not also flip rotation tracking.
-            follow_sample = ControllerSample(valid=s.valid, pos=s.pos, rot=s.rot,
-                                             clutch=state["following"], stamp=s.stamp)
-            target_pos, target_rot = mapper.update(follow_sample, *state["target"])
+            moving = state["armed"] and s.valid and s.clutch
+            precise = moving and s.trigger > 0.5
+            changed = moving != state["moving"] or precise != state["precise"]
+            state["moving"], state["precise"] = moving, precise
+            if changed and state["armed"]:
+                print(f"[teleop] {status_text()}")
+            gain = args.scale * (args.precision_scale if precise else 1.0)
+            target_pos, target_rot = mapper.update(s, moving, gain, *state["target"])
 
-            if s.valid:
-                x = s.joystick[0]
-                if abs(x) > args.deadzone:
-                    # left (x < 0) closes, right (x > 0) opens; speed grows with deflection
-                    mag = (abs(x) - args.deadzone) / (1.0 - args.deadzone)
-                    state["gripper"] = float(np.clip(
-                        state["gripper"] + np.sign(x) * mag * args.grip_speed * dt,
-                        0.0, GRIPPER_MAX))
+            if state["armed"] and s.valid:
+                rate = args.precision_scale if s.trigger > 0.5 else 1.0
+                # stick up (+y) opens, down closes; left/right rolls the gripper
+                # about its pointing axis (tool x), left = counter-clockwise from behind.
+                state["gripper"] = float(np.clip(
+                    state["gripper"] + stick(s.joystick[1]) * rate * args.grip_speed * dt,
+                    0.0, GRIPPER_MAX))
+                roll = stick(s.joystick[0]) * rate * args.roll_speed * dt
+                if roll:
+                    target_rot = np.asarray(target_rot) @ _rot_x(roll)
 
             if state["go_home"]:
                 state["go_home"] = False
-                state["following"] = False
+                state["armed"] = False
                 target_pos, target_rot = home_pos.copy(), home_rot.copy()
-                print("[teleop] going home (mimicking OFF)")
+                print("[teleop] going home (DISARMED)")
             state["target"] = (target_pos, target_rot)
             sim.set_target(target_pos, target_rot)
 
@@ -231,15 +316,14 @@ def main():
             if bridge is not None and tick % sync_every == 0:
                 bridge.publish(d)
                 if tick % (sync_every * 10) == 0:
-                    bridge.status(("FOLLOWING" if state["following"] else
-                                   f"paused - press {start_btn}")
-                                  + f"   grip {state['gripper'] * 1000:.0f} mm",
-                                  state["following"])
+                    bridge.status(status_text() + f"   grip {state['gripper'] * 1000:.0f} mm",
+                                  state["moving"])
 
             if now - last_print > 0.5:
                 last_print = now
                 tcp = d.site_xpos[m.site(GRASP_SITE).id]
-                mode = "FOLLOW " if state["following"] else "paused "
+                mode = ("MOVE*  " if state["precise"] else "MOVE   ") if state["moving"] else \
+                    ("armed  " if state["armed"] else "off    ")
                 track = "" if s.valid else " (controller not tracked)"
                 print(f"[{now:6.1f}s] {mode} target={np.round(target_pos, 3)} "
                       f"grasp={np.round(tcp, 3)} ik_err={pos_err * 1000:5.1f}mm/"

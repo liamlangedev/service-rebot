@@ -9,11 +9,14 @@ All commands run from `teleoperation/`.
 
 | Input (right controller) | Action |
 |---|---|
-| **A** | Start mimicking: gripper follows your hand position and rotation |
-| **B** | Stop mimicking: the arm holds its pose |
-| **Thumbstick left** | Close the gripper (hold; further = faster) |
-| **Thumbstick right** | Open the gripper |
-| **Home** key (viewer) | Send the arm home (also stops mimicking) |
+| **A** | Arm robot control |
+| **B** | Stop and disarm |
+| **Hold grip** | Move the arm with your hand (position and rotation; `--no-hand-rotation` = position only) |
+| **Release grip** | Hold the current pose |
+| **Thumbstick ↑ / ↓** | Open / close the gripper (further = faster) |
+| **Thumbstick ← / →** | Rotate (roll) the gripper left / right |
+| **Index trigger** (hold) | Precision mode: hand motion and stick rates × 0.25 (`--precision-scale`) |
+| **Home** key (viewer) | Send the arm home (also disarms) |
 
 ---
 
@@ -66,9 +69,10 @@ uv run quest_ee_teleop.py --demo
 ```
 
 - [ ] MuJoCo opens with the arm at home.
-- [ ] After ~0.5 s the console prints `A: mimicking ON` and the arm starts moving/twisting.
+- [ ] After ~0.5 s `A: ARMED`, at 1 s `MOVING` and the arm starts moving/twisting.
 - [ ] Around 3–4 s the gripper closes (`grip=` drops to 0 mm), around 6–7 s it opens.
-- [ ] At 10 s `B: mimicking OFF` and the arm holds still.
+- [ ] ~4.5–5.5 s `MOVING (precision)`: the motion gets small; at ~9.5 s grip released
+      (`ARMED - hold grip to move`), at 10 s `B: DISARMED` and the arm holds still.
 
 ## 5. Check the controller stream
 
@@ -104,31 +108,37 @@ tilts a little so the fingertips still get there; `--strict-rotation` turns
 that off.
 
 The console prints `[quest] controller tracked`, then
-`press A to start mimicking ...`. Status lines show `FOLLOW`/`paused`, target vs.
+`A = arm, B = disarm, hold grip = move ...`. Status lines show `off`/`armed`/`MOVE`
+(`MOVE*` = precision), target vs.
 TCP position, IK error and gripper opening.
 
 Stand behind the robot, facing the same way it faces (its +x). Then check:
 
 - [ ] **Idle:** before pressing A the arm does not move when you move your hand.
-- [ ] **A:** `mimicking ON`; the arm does not jump at the moment you press it.
+- [ ] **Grip before A:** nothing moves.
+- [ ] **A:** `ARMED`; nothing moves until you hold the grip.
+- [ ] **Hold grip:** the arm follows; it does not jump when you press the grip.
 - [ ] **Forward:** move hand away from you → gripper moves forward (+x).
 - [ ] **Left:** move hand left → gripper moves left (+y).
 - [ ] **Up:** raise hand → gripper rises (+z).
 - [ ] **Rotation:** roll / pitch / yaw your wrist → gripper rotates the same way.
-- [ ] **Thumbstick left** → gripper closes; **right** → opens; centre → stays.
-- [ ] **B:** `mimicking OFF`; the arm stays put while you move your hand.
+- [ ] **Release grip**, move your hand, grip again: the arm continues from where it was.
+- [ ] **Trigger held** while moving: the arm moves ~4x less, no jump on press/release.
+- [ ] **Thumbstick ↑** → gripper opens; **↓** → closes; centre → stays.
+- [ ] **Thumbstick → / ←** → gripper rolls right / left.
+- [ ] **B:** `DISARMED`; the arm stays put while you move your hand, even holding grip.
 - [ ] **A again:** resumes from the arm's current pose, no jump.
 - [ ] **Home** key in the viewer sends the arm home.
 - [ ] `ik_err` stays at a few mm in the normal workspace.
 - [ ] **Pick:** open gripper, move the green dot onto the red cube (level or
-      pointing down both work), thumbstick left to close, lift: the cube comes up.
+      pointing down both work), thumbstick down to close, lift: the cube comes up.
 
 ### If something is off
 
 | Symptom | Fix |
 |---|---|
 | Arm moves along the wrong axis or rotates the wrong way | `uv run tools/calibrate_quest_axes.py` (writes `config/quest_calibration_oculus.json`) |
-| Thumbstick left opens instead of closes | flip the sign of `np.sign(x)` in the gripper block of `quest_ee_teleop.py` |
+| Thumbstick up closes instead of opens (or roll is reversed) | flip the sign of `stick(s.joystick[1])` (or `[0]`) in `quest_ee_teleop.py` |
 | Motion too large / too jumpy | `--scale 0.5`, `--max-joint-vel 1.0` |
 | Gripper too slow / fast | `--grip-speed 0.03` (default 0.06 m/s) |
 | `(controller not tracked)` in status | see step 5 |
@@ -160,7 +170,7 @@ not used.
 3. The robot stands about 30 cm in front of you at table height, facing away
    from you, so your hand motions and the gripper's match. The panel above
    it shows *FOLLOWING* / *paused* and the gripper opening.
-4. Same controls: **A** start, **B** stop, right thumbstick close/open.
+4. Same controls as step 6 (A arm, B disarm, hold grip to move, stick, trigger).
    **Left thumbstick** moves the scene: up/down (Y), nearer/further (X).
 
 Checks:
