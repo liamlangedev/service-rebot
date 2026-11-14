@@ -35,6 +35,28 @@ Mouse drag in the viewer   ─────────────────�
 | `TODO.md` | What is done, what needs the headset or the real arm, what is next |
 | `scripts/setup_assets.sh` | Fetches the reBot model and OculusReader (not committed) |
 
+## Quick start: one-script Quest end-effector control
+
+With the Quest plugged in over USB (`adb devices` shows it as `device`):
+
+```bash
+uv run quest_ee_teleop.py                    # launches the headset app + MuJoCo
+uv run quest_ee_teleop.py --ip <quest-ip>    # over Wi-Fi ADB
+uv run quest_ee_teleop.py --demo             # no headset: scripted controller
+```
+
+Right controller:
+
+| Input | Action |
+|---|---|
+| **A** | Start mimicking: the gripper follows your hand's position **and** rotation |
+| **B** | Stop mimicking: the arm holds its pose (A again resumes from your hand's new spot) |
+| **Thumbstick left / right** | Close / open the gripper (hold; further = faster) |
+
+Keyboard in the viewer: Home sends the arm home, Up/Down open/close the gripper.
+Tune with `--scale 0.5` (finer motion), `--grip-speed`, `--max-joint-vel`.
+Full setup and check steps: [QUEST_EE_TELEOP.md](QUEST_EE_TELEOP.md).
+
 ## 1. Setup
 
 ```bash

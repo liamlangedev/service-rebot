@@ -37,8 +37,10 @@ HANDS = {"r": "right", "l": "left"}
 
 # OculusReader button keys per hand.
 OCULUS_KEYS = {
-    "r": dict(clutch="RG", trigger="rightTrig", reset="A", toggle_rot="B", record="RJ"),
-    "l": dict(clutch="LG", trigger="leftTrig", reset="X", toggle_rot="Y", record="LJ"),
+    "r": dict(clutch="RG", trigger="rightTrig", reset="A", toggle_rot="B", record="RJ",
+              joystick="rightJS"),
+    "l": dict(clutch="LG", trigger="leftTrig", reset="X", toggle_rot="Y", record="LJ",
+              joystick="leftJS"),
 }
 
 # WebXR "xr-standard" gamepad button indices (same on both hands).
@@ -57,6 +59,7 @@ class ControllerSample:
     reset: bool = False       # A / X -> go home
     toggle_rot: bool = False  # B / Y -> toggle orientation tracking
     record: bool = False      # joystick click -> start / save an episode
+    joystick: tuple = (0.0, 0.0)  # thumbstick (x right, y up), each in -1..1
     raw: np.ndarray | None = None  # 4x4 pose in the Quest's own frame
     stamp: float = 0.0
 
@@ -158,10 +161,12 @@ class WebXRSource(_QuestSource):
         def pressed(i):
             return bool(btn[i]["p"]) if len(btn) > i else False
 
+        axes = ctrl.get("axes") or []  # xr-standard: thumbstick is axes 2, 3 (y down)
+        stick = (float(axes[2]), -float(axes[3])) if len(axes) >= 4 else (0.0, 0.0)
         return T, dict(clutch=pressed(XR_GRIP),
                        trigger=float(btn[XR_TRIGGER]["v"]) if btn else 0.0,
                        reset=pressed(XR_A_X), toggle_rot=pressed(XR_B_Y),
-                       record=pressed(XR_STICK))
+                       record=pressed(XR_STICK), joystick=stick)
 
     def close(self):
         self._running = False
@@ -185,7 +190,9 @@ class OculusSource(_QuestSource):
         T = (transforms or {}).get(self.hand)
         buttons = buttons or {}
         trig = buttons.get(self.keys["trigger"], (0.0,))
+        stick = buttons.get(self.keys["joystick"], (0.0, 0.0))
         return T, dict(
+            joystick=(float(stick[0]), float(stick[1])) if len(stick) >= 2 else (0.0, 0.0),
             clutch=bool(buttons.get(self.keys["clutch"], False)),
             trigger=float(trig[0]) if isinstance(trig, tuple) else float(trig),
             reset=bool(buttons.get(self.keys["reset"], False)),
