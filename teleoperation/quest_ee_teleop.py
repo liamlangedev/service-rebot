@@ -31,13 +31,15 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 import mujoco
 import mujoco.viewer
 import numpy as np
 
-from teleop.ik import DiffIK
-from teleop.quest_input import ClutchTeleop, ControllerSample
+from teleop.arm_step import ArmStep
+from teleop.ee_control import EEConfig, rot_x
+from teleop.quest_input import ControllerSample
 from teleop.rebot_model import ARM_JOINTS, GRASP_SITE, GRIPPER_MAX, HOME_QPOS, RebotSim
 
 KEY_UP, KEY_DOWN, KEY_HOME = 265, 264, 268
@@ -68,7 +70,8 @@ def parse_args():
                         "simulated by teleop/mit_sim.py")
     p.add_argument("--no-velocity-ff", action="store_true",
                    help="with --control mit: send dq_cmd = 0 (compare to see the lag it removes)")
-    p.add_argument("--max-joint-vel", type=float, default=2.0, help="[rad/s]")
+    p.add_argument("--max-joint-vel", type=float, default=None,
+                   help="IK joint speed limit [rad/s] (default 2.0 sim, 1.0 real robot)")
     p.add_argument("--strict-rotation", action="store_true",
                    help="never trade orientation for position (by default the tool tilts "
                         "a little when your hand's orientation is out of reach, e.g. "
@@ -86,64 +89,43 @@ def parse_args():
                    help="skip the desktop MuJoCo window (e.g. with --vr)")
     p.add_argument("--headless", action="store_true", help="no viewer (for tests)")
     p.add_argument("--duration", type=float, default=None, help="stop after N seconds")
-    return p.parse_args()
-
-
-def _rodrigues(v):
-    """Rotation matrix of the axis-angle vector v."""
-    a = np.linalg.norm(v)
-    if a < 1e-12:
-        return np.eye(3)
-    k = v / a
-    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
-    return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
-
-
-def _rotvec(R):
-    """Axis-angle vector of the rotation matrix R."""
-    quat, vel = np.empty(4), np.empty(3)
-    mujoco.mju_mat2Quat(quat, np.ascontiguousarray(R).reshape(-1))
-    mujoco.mju_quat2Vel(vel, quat, 1.0)
-    return vel
-
-
-def _rot_x(a):
-    return np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]])
-
-
-class GripClutchMapper:
-    """Grip-clutched, incremental hand -> TCP-target mapping.
-
-    While moving, every tick adds the hand's motion since the previous tick
-    (times `gain`) to the target, so changing the gain (precision mode) or
-    releasing the grip never makes the target jump.
-    """
-
-    def __init__(self, workspace: ClutchTeleop, track_rotation: bool = True,
-                 smoothing: float = 0.3):
-        self.workspace = workspace
-        self.track_rotation = track_rotation
-        self.smoothing = smoothing
-        self._prev = None  # (filtered hand position, hand rotation) of the last tick
-
-    def update(self, s: ControllerSample, moving: bool, gain: float, target_pos, target_rot):
-        if not (s.valid and moving):
-            self._prev = None
-            return target_pos, target_rot
-        if self._prev is None:  # grip just pressed: anchor here, no motion yet
-            self._prev = (s.pos.copy(), s.rot.copy())
-            return target_pos, target_rot
-        p_prev, R_prev = self._prev
-        p_f = self.smoothing * p_prev + (1 - self.smoothing) * s.pos
-        pos = self.workspace.clamp(np.asarray(target_pos) + gain * (p_f - p_prev))
-        rot = np.asarray(target_rot)
-        if self.track_rotation:
-            dR = s.rot @ R_prev.T
-            if gain != 1.0:
-                dR = _rodrigues(gain * _rotvec(dR))
-            rot = dR @ rot
-        self._prev = (p_f, s.rot.copy())
-        return pos, rot
+    r = p.add_argument_group(
+        "real robot (reBot B601-DM via lerobot, dev/roboCrafy's 200 Hz MIT loop)")
+    r.add_argument("--real-robot", action="store_true",
+                   help="drive the REAL arm with the controller (no VR; the MuJoCo window "
+                        "mirrors the measured pose). Asks before every motion of its own.")
+    r.add_argument("--port", default="/dev/ttyACM0", help="Damiao USB-CAN serial port")
+    r.add_argument("--robot-id", default="follower",
+                   help="calibration file <calibration-dir>/<robot-id>.json")
+    r.add_argument("--calibration-dir", default=str(Path(__file__).resolve().parents[1]),
+                   help="folder with the calibration json (default: repo root, follower.json)")
+    r.add_argument("--fake-hardware", action="store_true",
+                   help="with --real-robot: a simulated stand-in for the arm that answers "
+                        "the same driver calls (rehearse the whole real path, no hardware)")
+    r.add_argument("--kp-scale", type=float, default=1.0, help="MIT arm stiffness factor")
+    r.add_argument("--kd-scale", type=float, default=1.0, help="MIT arm damping factor")
+    r.add_argument("--ready-speed", type=float, default=0.6,
+                   help="peak joint speed of the move to the ready pose [rad/s]")
+    r.add_argument("--no-wake", action="store_true",
+                   help="do not wake the headset / keep it awake off-head over adb")
+    r.add_argument("--no-wrist-guard", dest="wrist_guard", action="store_false",
+                   help="let the IK fold the shoulder/elbow when a wrist joint is at its limit")
+    r.add_argument("--fingertip-pivot", dest="wrist_pivot", action="store_false",
+                   help="rotate the gripper about the fingertips instead of with the wrist "
+                        "joints (moves the shoulder/elbow a lot on the reBot)")
+    r.add_argument("--yes", action="store_true",
+                   help="do not ask before the move to the ready pose (only with --fake-hardware)")
+    args = p.parse_args()
+    if args.max_joint_vel is None:
+        args.max_joint_vel = 1.0 if args.real_robot else 2.0
+    if args.real_robot and args.vr:
+        p.error("--real-robot does not use the VR scene; use the controller alone "
+                "(default) or --passthrough to see the real arm through the headset")
+    if args.fake_hardware and not args.real_robot:
+        p.error("--fake-hardware only makes sense with --real-robot")
+    if args.yes and not args.fake_hardware:
+        p.error("--yes is only allowed with --fake-hardware")
+    return args
 
 
 class DemoController:
@@ -159,7 +141,7 @@ class DemoController:
         pos = np.array([0.05 * np.sin(w * t), 0.08 * np.sin(w * t), 0.06 * np.sin(2 * w * t)])
         stick_y = -1.0 if 3.0 < t < 4.0 else (1.0 if 6.0 < t < 7.0 else 0.0)  # close, open
         stick_x = 1.0 if 8.0 < t < 8.5 else 0.0                                # roll right
-        return ControllerSample(valid=True, pos=pos, rot=_rot_x(0.3 * np.sin(w * t)),
+        return ControllerSample(valid=True, pos=pos, rot=rot_x(0.3 * np.sin(w * t)),
                                 reset=0.5 < t < 0.6,          # A: arm
                                 toggle_rot=10.0 < t < 10.1,   # B: disarm
                                 clutch=1.0 < t < 9.5,         # grip held
@@ -168,6 +150,12 @@ class DemoController:
 
     def close(self):
         pass
+
+
+def ee_config(args) -> EEConfig:
+    return EEConfig(scale=args.scale, precision_scale=args.precision_scale,
+                    grip_speed=args.grip_speed, roll_speed=args.roll_speed,
+                    deadzone=args.deadzone, track_rotation=not args.no_hand_rotation)
 
 
 def open_quest(hand: str, ip: str | None):
@@ -201,7 +189,9 @@ def wait_for_controller(src, hand: str, timeout: float = 30.0, hint: str | None 
 
 def main():
     args = parse_args()
-    start_btn, stop_btn = ("A", "B") if args.hand == "r" else ("X", "Y")
+    if args.real_robot:
+        from teleop.real_teleop import run_real
+        return run_real(args)
 
     sim = RebotSim()
     m, d = sim.model, sim.data
@@ -223,10 +213,10 @@ def main():
     else:
         source = open_quest(args.hand, args.ip)
         wait_for_controller(source, args.hand)
-    # Control the point between the fingertips, so the fingers go where your hand goes.
-    ik = DiffIK(m, GRASP_SITE, ARM_JOINTS, q_rest=HOME_QPOS, max_joint_vel=args.max_joint_vel,
-                min_rot_weight=None if args.strict_rotation else 0.05)
-    mapper = GripClutchMapper(ClutchTeleop(), track_rotation=not args.no_hand_rotation)
+    # Same tick as the real arm (teleop/arm_step.py): controller -> wrist pivot ->
+    # wrist-limit guard -> guarded IK on the fingertip point -> runaway brake.
+    arm = ArmStep(ee_config(args), m, HOME_QPOS, GRIPPER_MAX, HOME_QPOS, args)
+    ik, ctrl = arm.ik, arm.ctrl
 
     mit = None
     if args.control == "mit":
@@ -241,28 +231,13 @@ def main():
     n_sub = max(1, round(dt / m.opt.timestep))
     sync_every = max(1, round(args.rate / VIEWER_HZ))
     home_pos, home_rot = ik.fk(HOME_QPOS)
-    state = dict(q_cmd=HOME_QPOS.copy(), gripper=GRIPPER_MAX, target=(home_pos, home_rot),
-                 armed=False, moving=False, precise=False, go_home=False,
-                 prev_a=False, prev_b=False)
-
-    def stick(v):
-        """Thumbstick value past the deadzone, rescaled to 0..1 with its sign."""
-        if abs(v) <= args.deadzone:
-            return 0.0
-        return float(np.sign(v) * (abs(v) - args.deadzone) / (1.0 - args.deadzone))
-
-    def status_text():
-        if not state["armed"]:
-            return f"DISARMED - press {start_btn}"
-        if not state["moving"]:
-            return "ARMED - hold grip to move"
-        return "MOVING" + (" (precision)" if state["precise"] else "")
+    state = dict(go_home=False)
 
     def key_callback(key):
         if key == KEY_UP:
-            state["gripper"] = min(GRIPPER_MAX, state["gripper"] + 0.005)
+            ctrl.gripper = min(GRIPPER_MAX, ctrl.gripper + 0.005)
         elif key == KEY_DOWN:
-            state["gripper"] = max(0.0, state["gripper"] - 0.005)
+            ctrl.gripper = max(0.0, ctrl.gripper - 0.005)
         elif key == KEY_HOME:
             state["go_home"] = True
 
@@ -272,7 +247,7 @@ def main():
         viewer.cam.lookat[:] = [0.25, 0.0, 0.3]
         viewer.cam.distance = 1.3
 
-    print(f"[teleop] ready: {start_btn} = arm, {stop_btn} = disarm, hold grip = move, "
+    print(f"[teleop] ready: {ctrl.start_btn} = arm, {ctrl.stop_btn} = disarm, hold grip = move, "
           "trigger = precision, stick up/down = open/close, stick left/right = roll")
     t_start = time.perf_counter()
     next_tick, last_print, tick = t_start, 0.0, 0
@@ -284,54 +259,24 @@ def main():
 
             # ---- 1. controller -> arm state, TCP target, gripper ------------
             s = source.read()
-            a_pressed, b_pressed = s.reset, s.toggle_rot  # A/B (X/Y on the left hand)
-            if a_pressed and not state["prev_a"] and not state["armed"]:
-                state["armed"] = True
-                print(f"[teleop] {start_btn}: ARMED (hold grip to move)")
-            if b_pressed and not state["prev_b"] and state["armed"]:
-                state["armed"] = False
-                print(f"[teleop] {stop_btn}: DISARMED (arm holds its pose)")
-            state["prev_a"], state["prev_b"] = a_pressed, b_pressed
-
-            moving = state["armed"] and s.valid and s.clutch
-            precise = moving and s.trigger > 0.5
-            changed = moving != state["moving"] or precise != state["precise"]
-            state["moving"], state["precise"] = moving, precise
-            if changed and state["armed"]:
-                print(f"[teleop] {status_text()}")
-            gain = args.scale * (args.precision_scale if precise else 1.0)
-            target_pos, target_rot = mapper.update(s, moving, gain, *state["target"])
-
-            if state["armed"] and s.valid:
-                rate = args.precision_scale if s.trigger > 0.5 else 1.0
-                # stick up (+y) opens, down closes; left/right rolls the gripper
-                # about its pointing axis (tool x), left = counter-clockwise from behind.
-                state["gripper"] = float(np.clip(
-                    state["gripper"] + stick(s.joystick[1]) * rate * args.grip_speed * dt,
-                    0.0, GRIPPER_MAX))
-                roll = stick(s.joystick[0]) * rate * args.roll_speed * dt
-                if roll:
-                    target_rot = np.asarray(target_rot) @ _rot_x(roll)
-
             if state["go_home"]:
                 state["go_home"] = False
-                state["armed"] = False
-                target_pos, target_rot = home_pos.copy(), home_rot.copy()
-                print("[teleop] going home (DISARMED)")
-            state["target"] = (target_pos, target_rot)
-            sim.set_target(target_pos, target_rot)
+                ctrl.disarm(" (going home)")
+                ctrl.resync(home_pos, home_rot)
 
-            # ---- 2. IK -> joints -> physics --------------------------------
-            q_cmd, pos_err, rot_err = ik.solve(state["q_cmd"], target_pos, target_rot, dt)
-            state["q_cmd"] = q_cmd
+            # ---- 2. controller + IK -> joints -> physics ----------------------
+            q_cmd, _ = arm.update(s, dt)
+            pos_err, rot_err = arm.pos_err, arm.rot_err
+            target_pos, target_rot = ctrl.target
+            sim.set_target(target_pos, target_rot)
             if mit is None:
-                sim.command(q_cmd, state["gripper"])
+                sim.command(q_cmd, ctrl.gripper)
                 for _ in range(n_sub):
                     mujoco.mj_step(m, d)
             else:
                 # Like the real fast loop: build the MIT frame once per tick, the
                 # "motors" evaluate the torque law at every physics step.
-                d.ctrl[sim.grip_act] = np.clip(state["gripper"], 0.0, GRIPPER_MAX)
+                d.ctrl[sim.grip_act] = np.clip(ctrl.gripper, 0.0, GRIPPER_MAX)
                 mit.set_command(q_cmd, dt)
                 for _ in range(n_sub):
                     mit.apply()
@@ -341,18 +286,18 @@ def main():
             if bridge is not None and tick % sync_every == 0:
                 bridge.publish(d)
                 if tick % (sync_every * 10) == 0:
-                    bridge.status(status_text() + f"   grip {state['gripper'] * 1000:.0f} mm",
-                                  state["moving"])
+                    bridge.status(ctrl.status_text() + f"   grip {ctrl.gripper * 1000:.0f} mm",
+                                  ctrl.moving)
 
             if now - last_print > 0.5:
                 last_print = now
                 tcp = d.site_xpos[m.site(GRASP_SITE).id]
-                mode = ("MOVE*  " if state["precise"] else "MOVE   ") if state["moving"] else \
-                    ("armed  " if state["armed"] else "off    ")
+                mode = ("MOVE*  " if ctrl.precise else "MOVE   ") if ctrl.moving else \
+                    ("armed  " if ctrl.armed else "off    ")
                 track = "" if s.valid else " (controller not tracked)"
                 print(f"[{now:6.1f}s] {mode} target={np.round(target_pos, 3)} "
                       f"grasp={np.round(tcp, 3)} ik_err={pos_err * 1000:5.1f}mm/"
-                      f"{np.degrees(rot_err):4.1f}deg grip={state['gripper'] * 1000:4.1f}mm"
+                      f"{np.degrees(rot_err):4.1f}deg grip={ctrl.gripper * 1000:4.1f}mm"
                       f" lag={np.degrees(np.max(np.abs(q_cmd - sim.q_arm))):4.1f}deg"
                       f"{track}")
 

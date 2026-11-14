@@ -221,7 +221,72 @@ Checks: the arm holds still without sagging before you arm it; moving fast with
 `--no-velocity-ff` visibly trails your hand more than with the feed-forward; the
 red-cube pick still works.
 
-## 9. Wireless (optional)
+## 9. Real robot (`--real-robot`)
+
+Same controller, same controls, but it drives the real reBot B601-DM. It uses
+dev/roboCrafy's hardware path (`teleop/real_teleop.py`):
+
+1. connects through lerobot's `rebot_b601_follower` with the measured gripper
+   range (`config/gripper_limits.json`), MIT arm mode, force-limited gripper and
+   the team calibration (`../follower.json`); it never re-zeroes the motors;
+2. starts the 200 Hz `FastLoop` with `MitFF` (velocity + gravity feed-forward);
+3. runs `gravity_check` (the arm holds still while the gravity feed-forward ramps in);
+4. moves to the ready pose (gripper pointing down), **after you press Enter**;
+5. teleop: controller -> shared controller logic (`teleop/ee_control.py`) ->
+   singularity-guarded IK on the fingertip point -> joint targets at 200 Hz.
+
+```bash
+# 0. rehearse the whole real path without hardware (simulated stand-in arm)
+uv run quest_ee_teleop.py --real-robot --fake-hardware
+# 1. the real arm (find the port with: ls /dev/ttyACM* /dev/serial/by-id/)
+uv run quest_ee_teleop.py --real-robot --port /dev/ttyACM0
+uv run quest_ee_teleop.py --real-robot --port /dev/ttyACM0 --passthrough   # see the arm through the headset
+```
+
+The controller comes from the OculusReader app (no VR scene). The headset must
+be awake for the controller to be tracked: the script wakes it over adb and keeps
+it awake off-head (proximity sensor overridden), and restores normal sleep on
+exit (`--no-wake` to skip). Put it on a stand facing your hands, or wear it with
+`--passthrough` to see the real arm. The MuJoCo window mirrors the measured pose;
+the console prints `lag=` and the loop rate.
+
+**Rotation (sim and real):** the reBot's wrist axes sit 12-23 cm behind the
+fingertips, and `wrist_flex` is already at 78 deg (limit 90) in the ready pose.
+Rotating the gripper about the fingertips therefore folded the shoulder/elbow
+(real-arm log: `wrist_flex` pinned at +90 deg 45% of the time, elbow at -160
+deg). Now (`teleop/arm_step.py`):
+
+- hand rotations are turned into **wrist-joint** rotations (the fingertips
+  sweep with the wrist, the shoulder/elbow keep their shape);
+- at a wrist limit the rotation **waits** ("wrist_flex at its limit") until you
+  rotate your hand back, instead of contorting the arm.
+
+`--fingertip-pivot` and `--no-wrist-guard` restore the old behaviour.
+
+Safety:
+
+- Nothing moves until you press Enter for the ready move, then **A** and **hold grip**.
+- Release the grip or press **B** and the arm holds where it is.
+- The IK joint speed is limited to 1.0 rad/s on the real arm (`--max-joint-vel`).
+- If the arm cannot follow (singularity guard, joint limit) the target is
+  pulled back to within 5 cm of the arm instead of running away.
+- **Ctrl-C** stops the loop and commands a hold. Torque stays ON after exit
+  (so the arm does not drop): **support the arm before switching the power off.**
+- The motors' MIT error clamp (`MAX_ERR_DEG` in `teleop/mit_ff.py`) bounds the
+  force when the arm is blocked, e.g. against the table.
+- The fast loop saves commanded vs measured joints to `/tmp/fast_loop_log.npz`
+  and prints a lag summary on exit.
+
+First run checklist:
+
+- [ ] `--fake-hardware` run: gravity check passes, ready move, A / grip / stick work.
+- [ ] Gripper range measured on this arm: `uv run tools/measure_gripper.py --port <port>`
+      (the committed file comes from the arm dev/roboCrafy was tested on).
+- [ ] `../follower.json` is this arm's calibration.
+- [ ] First real run with `--precision-scale 0.25` and small motions, trigger held.
+- [ ] Gentle tuning if needed: `--kp-scale` / `--kd-scale` (MIT gains), `--ready-speed`.
+
+## 10. Wireless (optional)
 
 With USB still plugged in:
 
