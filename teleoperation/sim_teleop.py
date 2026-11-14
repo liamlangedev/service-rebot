@@ -3,6 +3,7 @@
 
   uv run sim_teleop.py --input quest            # Quest over USB
   uv run sim_teleop.py --input quest --ip 192.168.1.42   # Quest over Wi-Fi ADB
+  uv run sim_teleop.py --input leap             # Ultraleap hand tracking
   uv run sim_teleop.py --input mouse            # no headset: drag the green target
   uv run sim_teleop.py --input demo             # scripted controller motion
 
@@ -25,6 +26,7 @@ import mujoco.viewer
 import numpy as np
 
 from teleop.ik import DiffIK
+from teleop.rebot_real import READY_QPOS, guarded_solve
 from teleop.quest_input import ClutchTeleop, DemoSource, QuestSource
 from teleop.rebot_model import ARM_JOINTS, GRIPPER_MAX, HOME_QPOS, TCP_SITE, RebotSim
 
@@ -34,7 +36,7 @@ KEY_UP, KEY_DOWN, KEY_HOME = 265, 264, 268
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--input", choices=["quest", "mouse", "demo"], default="quest")
+    p.add_argument("--input", choices=["quest", "leap", "mouse", "demo"], default="quest")
     p.add_argument("--hand", choices=["r", "l"], default="r")
     p.add_argument("--ip", default=None, help="Quest IP for wireless ADB (default: USB)")
     p.add_argument("--scale", type=float, default=1.0, help="hand-to-robot motion scale")
@@ -49,14 +51,19 @@ def parse_args():
 
 def main():
     args = parse_args()
+    start_q = READY_QPOS if args.input == "leap" else HOME_QPOS
     sim = RebotSim()
+    sim.reset(start_q)
     m, d = sim.model, sim.data
-    ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=HOME_QPOS,
+    ik = DiffIK(m, TCP_SITE, ARM_JOINTS, q_rest=start_q,
                 max_joint_vel=args.max_joint_vel)
     teleop = ClutchTeleop(pos_scale=args.scale, track_rotation=not args.no_rotation)
 
     if args.input == "quest":
         source = QuestSource(hand=args.hand, ip_address=args.ip)
+    elif args.input == "leap":
+        from teleop.leap_input import LeapSource
+        source = LeapSource()
     elif args.input == "demo":
         source = DemoSource()
     else:
@@ -64,9 +71,9 @@ def main():
 
     dt = 1.0 / args.rate
     n_sub = max(1, round(dt / m.opt.timestep))
-    home_pos, home_rot = ik.fk(HOME_QPOS)
+    home_pos, home_rot = ik.fk(start_q)
 
-    state = dict(q_cmd=HOME_QPOS.copy(), gripper=GRIPPER_MAX,
+    state = dict(q_cmd=start_q.copy(), gripper=GRIPPER_MAX,
                  target=(home_pos, home_rot), go_home=False)
     log = {k: [] for k in ["t", "q_cmd", "q_meas", "target_pos", "target_rot", "gripper"]}
 
@@ -100,7 +107,7 @@ def main():
                 if s.reset:
                     state["go_home"] = True
                 target_pos, target_rot = teleop.update(s, target_pos, target_rot)
-                if s.valid and args.input == "quest":
+                if s.valid and args.input in ("quest", "leap"):
                     state["gripper"] = GRIPPER_MAX * (1.0 - np.clip(s.trigger, 0, 1))
                 elif args.input == "demo":
                     state["gripper"] = GRIPPER_MAX * (1.0 - s.trigger)
@@ -114,8 +121,8 @@ def main():
             state["target"] = (target_pos, target_rot)
 
             # ---- 2. IK -> joint command -------------------------------------
-            track_rot = None if (args.no_rotation or not teleop.track_rotation) else target_rot
-            q_cmd, pos_err, rot_err = ik.solve(state["q_cmd"], target_pos, track_rot, dt)
+            track_rot = None if (args.no_rotation and args.input != "leap") else target_rot
+            q_cmd, pos_err, rot_err, _ = guarded_solve(ik, state["q_cmd"], target_pos, track_rot, dt)
             state["q_cmd"] = q_cmd
             sim.command(q_cmd, state["gripper"])
 
