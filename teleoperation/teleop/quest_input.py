@@ -294,6 +294,10 @@ class ClutchTeleop:
         self._filtered = pos
         return self._clamp(pos), rot
 
+    def clamp(self, pos):
+        """Keeps a TCP target inside the box workspace and the arm's reach."""
+        return self._clamp(pos)
+
     def _clamp(self, pos):
         pos = np.clip(pos, self.lo, self.hi)
         shoulder = np.array([0.0, 0.0, 0.14])  # approx. joint2 height
