@@ -1,0 +1,17 @@
+[project]
+name = "rebot-teleop"
+version = "0.1.0"
+description = "Meta Quest (OculusReader) teleoperation of the Seeed reBot Arm B601 in MuJoCo"
+requires-python = ">=3.10"
+dependencies = [
+    "mujoco>=3.2",
+    "numpy",
+    "pure-python-adb",
+    "oculus-reader",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+oculus-reader = { path = "third_party/oculus_reader", editable = true }
