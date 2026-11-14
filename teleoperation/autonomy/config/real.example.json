@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to real.json and edit. Camera devices: run `python -m autonomy.calibrate list-cameras`.",
+  "robot": "real",
+  "port": "/dev/ttyACM0",
+  "robot_id": "follower",
+  "calibration_dir": "..",
+  "cameras": [
+    {"name": "top",   "role": "scene", "device": 0, "width": 1280, "height": 720},
+    {"name": "side",  "role": "scene", "device": 2, "width": 1280, "height": 720},
+    {"name": "wrist", "role": "wrist", "device": 4, "width": 640,  "height": 480}
+  ],
+  "calibration": "autonomy/config/calibration.json",
+  "world": {
+    "table_z": 0.0,
+    "table_region": [0.12, -0.30, 0.55, 0.30],
+    "default_height": 0.06
+  },
+  "zones": [
+    {"name": "yellow bin", "center": [0.25, 0.28], "size": [0.14, 0.14], "drop_height": 0.08},
+    {"name": "blue bin",   "center": [0.40, 0.28], "size": [0.14, 0.14], "drop_height": 0.08}
+  ],
+  "safety": {"max_joint_vel": 0.6, "min_tip_height": 0.006},
+  "grasp": {"hover": 0.10, "wrist_iters": 3}
+}

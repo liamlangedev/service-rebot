@@ -4,3 +4,5 @@ assets/
 third_party/
 *.egg-info/
 datasets/
+runs/
+aruco_sheet.png
