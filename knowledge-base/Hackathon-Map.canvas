@@ -1,0 +1,591 @@
+{
+ "nodes": [
+  {
+   "id": "g-T01",
+   "type": "group",
+   "x": 0,
+   "y": 0,
+   "width": 500,
+   "height": 3670,
+   "label": "T01 Autonomous Urban Services"
+  },
+  {
+   "id": "h-T01",
+   "type": "text",
+   "x": 30,
+   "y": 30,
+   "width": 440,
+   "height": 200,
+   "color": "6",
+   "text": "## 🏙️ T01 Autonomous Urban Services\nRobots that move, deliver and maintain the city.\n\n[[T01-0-Track-Overview|Overview]] · [[T01-1-Solution-Patterns|Patterns]] · [[T01-2-Hardware-Shortlist|Shortlist]] · [[T01-3-Cross-Vendor-Solutions|Combos]]"
+  },
+  {
+   "id": "c-T01-AGIBOT",
+   "type": "text",
+   "x": 30,
+   "y": 260,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[AGIBOT-T01-1-Brief|AGIBOT]] — 4/5**\nReal guiding, retail and cleaning deployments plus a documented ROS 2 SDK on the X2 give a clear 48-hour path for indoor service demos; outdoor / alpine delivery is unpr…\n\n[[AGIBOT-T01-3-Playbook|Playbook]] · [[AGIBOT-T01-2-Products-and-Solutions|Products]] · [[AGIBOT|Profile]]"
+  },
+  {
+   "id": "c-T01-Galaxea",
+   "type": "text",
+   "x": 30,
+   "y": 470,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Galaxea-T01-1-Brief|Galaxea]] — 4/5**\nStrong for *indoor* service work (pick, pack, carry, hand over, tidy) in hotels, shops and clinics; no role on streets, snow or stairs.\n\n[[Galaxea-T01-3-Playbook|Playbook]] · [[Galaxea-T01-2-Products-and-Solutions|Products]] · [[Galaxea|Profile]]"
+  },
+  {
+   "id": "c-T01-Galbot",
+   "type": "text",
+   "x": 30,
+   "y": 680,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Galbot-T01-1-Brief|Galbot]] — 4/5**\nProven 24/7 robot shopkeeper and pharmacy picker with a real SDK; strong for indoor \"fetch, vend, hand over, guide\" services, not for streets, snow or stairs.\n\n[[Galbot-T01-3-Playbook|Playbook]] · [[Galbot-T01-2-Products-and-Solutions|Products]] · [[Galbot|Profile]]"
+  },
+  {
+   "id": "c-T01-Genisom-AI",
+   "type": "text",
+   "x": 30,
+   "y": 890,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Genisom-AI-T01-1-Brief|Genisom AI]] — 4/5**\nRugged legged carriers plus an open ROS 2 navigation stack and simulator: strong for \"carry, follow, guide\" over stairs, slopes and snow; no arm by default and no proven…\n\n[[Genisom-AI-T01-3-Playbook|Playbook]] · [[Genisom-AI-T01-2-Products-and-Solutions|Products]] · [[Genisom-AI|Profile]]"
+  },
+  {
+   "id": "c-T01-Magiclab",
+   "type": "text",
+   "x": 30,
+   "y": 1100,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Magiclab-T01-1-Brief|Magiclab Robotics]] — 4/5**\nA small quadruped whose open SDK already ships SLAM, goal navigation, person-following and speech gives a direct 48-hour path to a delivery or guide robot; real but comp…\n\n[[Magiclab-T01-3-Playbook|Playbook]] · [[Magiclab-T01-2-Products-and-Solutions|Products]] · [[Magiclab|Profile]]"
+  },
+  {
+   "id": "c-T01-Unitree",
+   "type": "text",
+   "x": 30,
+   "y": 1310,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Unitree-T01-1-Brief|Unitree Robotics]] — 4/5**\nBest mobility base on site for stairs, slopes and snow, with a mature SDK; but navigation and delivery logic are yours to build, and Unitree has no confirmed delivery or…\n\n[[Unitree-T01-3-Playbook|Playbook]] · [[Unitree-T01-2-Products-and-Solutions|Products]] · [[Unitree|Profile]]"
+  },
+  {
+   "id": "c-T01-UniX-AI",
+   "type": "text",
+   "x": 30,
+   "y": 1520,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[UniX-AI-T01-1-Brief|UniX AI]] — 4/5**\nBuilt and marketed for exactly the indoor service jobs in this track (hotel, reception / guiding, retail, in-building delivery), but **indoor-only** and with **no public…\n\n[[UniX-AI-T01-3-Playbook|Playbook]] · [[UniX-AI-T01-2-Products-and-Solutions|Products]] · [[UniX-AI|Profile]]"
+  },
+  {
+   "id": "c-T01-Binabik-AI",
+   "type": "text",
+   "x": 30,
+   "y": 1730,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Binabik-AI-T01-1-Brief|Binabik AI]] — 3/5**\nA software-only \"teach it once\" skill layer for someone else's wheeled dual-arm robot: useful for the handling half of a delivery or upkeep demo, but only if the Binabik…\n\n[[Binabik-AI-T01-3-Playbook|Playbook]] · [[Binabik-AI-T01-2-Products-and-Solutions|Products]] · [[Binabik-AI|Profile]]"
+  },
+  {
+   "id": "c-T01-D-Robotics",
+   "type": "text",
+   "x": 30,
+   "y": 1940,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[D-Robotics-T01-1-Brief|D-Robotics]] — 3/5**\nGood on-board \"brain\" (vision, depth, voice, Nav2 host) for a delivery, guide or cleaning robot, but D-Robotics brings **no robot**: you need another vendor's base.\n\n[[D-Robotics-T01-3-Playbook|Playbook]] · [[D-Robotics-T01-2-Products-and-Solutions|Products]] · [[D-Robotics|Profile]]"
+  },
+  {
+   "id": "c-T01-Dobot",
+   "type": "text",
+   "x": 30,
+   "y": 2150,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Dobot-T01-1-Brief|Dobot Robotics]] — 3/5**\nStrong for the \"serve and hand over\" half of urban services (kiosk, pick-up point, loading cell); weak for the \"move through the city\" half, which needs another vendor's…\n\n[[Dobot-T01-3-Playbook|Playbook]] · [[Dobot-T01-2-Products-and-Solutions|Products]] · [[Dobot|Profile]]"
+  },
+  {
+   "id": "c-T01-Flexiv",
+   "type": "text",
+   "x": 30,
+   "y": 2360,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Flexiv-T01-1-Brief|Flexiv Robotics]] — 3/5**\nExcellent *hands*, no *legs*: use Flexiv as the contact-rich manipulation station (load, plug in, wipe, hand over) inside a multi-vendor urban-service system, not as the…\n\n[[Flexiv-T01-3-Playbook|Playbook]] · [[Flexiv-T01-2-Products-and-Solutions|Products]] · [[Flexiv|Profile]]"
+  },
+  {
+   "id": "c-T01-Leadshine",
+   "type": "text",
+   "x": 30,
+   "y": 2570,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Leadshine-T01-1-Brief|Leadshine Technology]] — 3/5**\nAn add-on, not a platform: a Leadshine dexterous hand gives another vendor's arm or mobile manipulator the \"open the door, press the button, hand over the parcel\" skill;…\n\n[[Leadshine-T01-3-Playbook|Playbook]] · [[Leadshine-T01-2-Products-and-Solutions|Products]] · [[Leadshine|Profile]]"
+  },
+  {
+   "id": "c-T01-Omnicor-AI",
+   "type": "text",
+   "x": 30,
+   "y": 2780,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Omnicor-AI-T01-1-Brief|Omnicor AI]] — 3/5**\nNot a robot: an on-device inference enabler that makes another vendor's delivery or service robot work without cloud; useful as one part of a multi-vendor build, and onl…\n\n[[Omnicor-AI-T01-3-Playbook|Playbook]] · [[Omnicor-AI-T01-2-Products-and-Solutions|Products]] · [[Omnicor-AI|Profile]]"
+  },
+  {
+   "id": "c-T01-ROKAE",
+   "type": "text",
+   "x": 30,
+   "y": 2990,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[ROKAE-T01-1-Brief|ROKAE Robotics]] — 3/5**\nStrong force-controlled *manipulation* half of a service robot with an open SDK; the \"moves through the city\" half must come from Helios / CMR (if on site) or another ve…\n\n[[ROKAE-T01-3-Playbook|Playbook]] · [[ROKAE-T01-2-Products-and-Solutions|Products]] · [[ROKAE|Profile]]"
+  },
+  {
+   "id": "c-T01-SKYLANDX",
+   "type": "text",
+   "x": 30,
+   "y": 3200,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[SKYLANDX-T01-1-Brief|SKYLANDX]] — 3/5**\nNot a robot: it is the map, localization and digital-twin layer that makes someone else's delivery or maintenance robot find its way; strong as one part of a multi-vendo…\n\n[[SKYLANDX-T01-3-Playbook|Playbook]] · [[SKYLANDX-T01-2-Products-and-Solutions|Products]] · [[SKYLANDX|Profile]]"
+  },
+  {
+   "id": "c-T01-Spirit-AI",
+   "type": "text",
+   "x": 30,
+   "y": 3410,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Spirit-AI-T01-1-Brief|Spirit AI]] — 3/5**\nA capable **indoor** fetch-deliver-tidy mobile manipulator (Moz1) with a documented LiDAR navigation stack and Python SDK; strictly indoor (IP40, no rain or snow), and t…\n\n[[Spirit-AI-T01-3-Playbook|Playbook]] · [[Spirit-AI-T01-2-Products-and-Solutions|Products]] · [[Spirit-AI|Profile]]"
+  },
+  {
+   "id": "g-T02",
+   "type": "group",
+   "x": 570,
+   "y": 0,
+   "width": 500,
+   "height": 2410,
+   "label": "T02 Resilient & Safe City"
+  },
+  {
+   "id": "h-T02",
+   "type": "text",
+   "x": 600,
+   "y": 30,
+   "width": 440,
+   "height": 200,
+   "color": "6",
+   "text": "## 🛡️ T02 Resilient & Safe City\nSystems that respond, protect and keep infrastructure running.\n\n[[T02-0-Track-Overview|Overview]] · [[T02-1-Solution-Patterns|Patterns]] · [[T02-2-Hardware-Shortlist|Shortlist]] · [[T02-3-Cross-Vendor-Solutions|Combos]]"
+  },
+  {
+   "id": "c-T02-Unitree",
+   "type": "text",
+   "x": 600,
+   "y": 260,
+   "width": 440,
+   "height": 190,
+   "color": "4",
+   "text": "**[[Unitree-T02-1-Brief|Unitree Robotics]] — 5/5**\nInspection and fire rescue are Unitree's two official industry solution lines, and its quadrupeds are the fastest way on site to get a sensor platform over stairs, slope…\n\n[[Unitree-T02-3-Playbook|Playbook]] · [[Unitree-T02-2-Products-and-Solutions|Products]] · [[Unitree|Profile]]"
+  },
+  {
+   "id": "c-T02-Genisom-AI",
+   "type": "text",
+   "x": 600,
+   "y": 470,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Genisom-AI-T02-1-Brief|Genisom AI]] — 4/5**\nPatrol, inspection and emergency response are the company's core markets and the robots are built for rain, slopes and cold; held below 5 because the on-site model is un…\n\n[[Genisom-AI-T02-3-Playbook|Playbook]] · [[Genisom-AI-T02-2-Products-and-Solutions|Products]] · [[Genisom-AI|Profile]]"
+  },
+  {
+   "id": "c-T02-Magiclab",
+   "type": "text",
+   "x": 600,
+   "y": 680,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Magiclab-T02-1-Brief|Magiclab Robotics]] — 4/5**\nPatrol and inspection is what Magiclab's quadrupeds are sold for, and the MagicDog ROS 2 SDK already ships SLAM and goal navigation; the catch is that the rugged models…\n\n[[Magiclab-T02-3-Playbook|Playbook]] · [[Magiclab-T02-2-Products-and-Solutions|Products]] · [[Magiclab|Profile]]"
+  },
+  {
+   "id": "c-T02-SKYLANDX",
+   "type": "text",
+   "x": 600,
+   "y": 890,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[SKYLANDX-T02-1-Brief|SKYLANDX]] — 4/5**\nBest mapping / situational-awareness sensor on site for this track (GPS-denied SLAM, cm-level scans, digital twins), but it is a sensor, not a robot, and its live API is…\n\n[[SKYLANDX-T02-3-Playbook|Playbook]] · [[SKYLANDX-T02-2-Products-and-Solutions|Products]] · [[SKYLANDX|Profile]]"
+  },
+  {
+   "id": "c-T02-AGIBOT",
+   "type": "text",
+   "x": 600,
+   "y": 1100,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[AGIBOT-T02-1-Brief|AGIBOT]] — 3/5**\nCapable quadruped line (D1 family) that AGIBOT itself positions for patrol, inspection and rescue, with an open C++ / Python SDK; but no public named safety deployment a…\n\n[[AGIBOT-T02-3-Playbook|Playbook]] · [[AGIBOT-T02-2-Products-and-Solutions|Products]] · [[AGIBOT|Profile]]"
+  },
+  {
+   "id": "c-T02-D-Robotics",
+   "type": "text",
+   "x": 600,
+   "y": 1310,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[D-Robotics-T02-1-Brief|D-Robotics]] — 3/5**\nGood, cheap on-device perception \"brain\" for a hazard-watch node or a patrol / rescue robot, but it is a board, not a robot, and has no public safety-domain deployments…\n\n[[D-Robotics-T02-3-Playbook|Playbook]] · [[D-Robotics-T02-2-Products-and-Solutions|Products]] · [[D-Robotics|Profile]]"
+  },
+  {
+   "id": "c-T02-Omnicor-AI",
+   "type": "text",
+   "x": 600,
+   "y": 1520,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Omnicor-AI-T02-1-Brief|Omnicor AI]] — 3/5**\nNot a robot and no public safety track record, but \"the model keeps running on the robot when the network is gone\" is exactly the resilience argument; usable only as the…\n\n[[Omnicor-AI-T02-3-Playbook|Playbook]] · [[Omnicor-AI-T02-2-Products-and-Solutions|Products]] · [[Omnicor-AI|Profile]]"
+  },
+  {
+   "id": "c-T02-UniX-AI",
+   "type": "text",
+   "x": 600,
+   "y": 1730,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[UniX-AI-T02-1-Brief|UniX AI]] — 3/5**\nA credible **indoor building-safety** robot (patrol, fire-equipment and fire-door checks, teleoperated intervention), but no outdoor or hazard-terrain capability and an…\n\n[[UniX-AI-T02-3-Playbook|Playbook]] · [[UniX-AI-T02-2-Products-and-Solutions|Products]] · [[UniX-AI|Profile]]"
+  },
+  {
+   "id": "c-T02-WUJI",
+   "type": "text",
+   "x": 600,
+   "y": 1940,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[WUJI-T02-1-Brief|WUJI]] — 3/5**\nGood \"remote hands\" for a multi-vendor hazard-response robot (glove-driven dexterous teleoperation), but no arm, no mobility, no outdoor rating and no public safety-doma…\n\n[[WUJI-T02-3-Playbook|Playbook]] · [[WUJI-T02-2-Products-and-Solutions|Products]] · [[WUJI|Profile]]"
+  },
+  {
+   "id": "c-T02-XREAL",
+   "type": "text",
+   "x": 600,
+   "y": 2150,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[XREAL-T02-1-Brief|XREAL]] — 3/5**\nA good hands-free operator interface (HUD, head-pose input, first-person video link) for someone else's robot; XREAL has no robot, no rugged device and no public safety…\n\n[[XREAL-T02-3-Playbook|Playbook]] · [[XREAL-T02-2-Products-and-Solutions|Products]] · [[XREAL|Profile]]"
+  },
+  {
+   "id": "g-T03",
+   "type": "group",
+   "x": 1140,
+   "y": 0,
+   "width": 500,
+   "height": 1990,
+   "label": "T03 Sustainable City"
+  },
+  {
+   "id": "h-T03",
+   "type": "text",
+   "x": 1170,
+   "y": 30,
+   "width": 440,
+   "height": 200,
+   "color": "6",
+   "text": "## 🌱 T03 Sustainable City\nAutomation for lower emissions, less waste, smarter resources.\n\n[[T03-0-Track-Overview|Overview]] · [[T03-1-Solution-Patterns|Patterns]] · [[T03-2-Hardware-Shortlist|Shortlist]] · [[T03-3-Cross-Vendor-Solutions|Combos]]"
+  },
+  {
+   "id": "c-T03-Dobot",
+   "type": "text",
+   "x": 1170,
+   "y": 260,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Dobot-T03-1-Brief|Dobot Robotics]] — 3/5**\nEasy, low-power arms for a sorting / grading / reuse cell, but nothing purpose-built for sustainability: you bring the perception and the story.\n\n[[Dobot-T03-3-Playbook|Playbook]] · [[Dobot-T03-2-Products-and-Solutions|Products]] · [[Dobot|Profile]]"
+  },
+  {
+   "id": "c-T03-Flexiv",
+   "type": "text",
+   "x": 1170,
+   "y": 470,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Flexiv-T03-1-Brief|Flexiv Robotics]] — 3/5**\nExcellent \"hands\" for sorting, repair, disassembly or plug-in tasks, but Flexiv has **no confirmed sustainability deployments** and you must bring your own perception an…\n\n[[Flexiv-T03-3-Playbook|Playbook]] · [[Flexiv-T03-2-Products-and-Solutions|Products]] · [[Flexiv|Profile]]"
+  },
+  {
+   "id": "c-T03-Galaxea",
+   "type": "text",
+   "x": 1170,
+   "y": 680,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Galaxea-T03-1-Brief|Galaxea]] — 3/5**\nGood tool for learned dual-arm sorting, table clearing and disassembly demos indoors; no sustainability deployments of its own, and nothing for outdoor or sensing-heavy…\n\n[[Galaxea-T03-3-Playbook|Playbook]] · [[Galaxea-T03-2-Products-and-Solutions|Products]] · [[Galaxea|Profile]]"
+  },
+  {
+   "id": "c-T03-Galbot",
+   "type": "text",
+   "x": 1170,
+   "y": 890,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Galbot-T03-1-Brief|Galbot]] — 3/5**\nStrong pick-sort-restock robot with no sustainability deployments of its own; usable for indoor sorting, reuse and waste-reduction builds if you do the integration yours…\n\n[[Galbot-T03-3-Playbook|Playbook]] · [[Galbot-T03-2-Products-and-Solutions|Products]] · [[Galbot|Profile]]"
+  },
+  {
+   "id": "c-T03-Genisom-AI",
+   "type": "text",
+   "x": 1170,
+   "y": 1100,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Genisom-AI-T03-1-Brief|Genisom AI]] — 3/5**\nA rugged, programmable **mobile sensing platform** for energy, water and waste audits; it cannot pick, sort or repair anything on its own, so the sustainability logic an…\n\n[[Genisom-AI-T03-3-Playbook|Playbook]] · [[Genisom-AI-T03-2-Products-and-Solutions|Products]] · [[Genisom-AI|Profile]]"
+  },
+  {
+   "id": "c-T03-ROKAE",
+   "type": "text",
+   "x": 1170,
+   "y": 1310,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[ROKAE-T03-1-Brief|ROKAE Robotics]] — 3/5**\nA solid force-controlled arm for sorting, disassembly or picking cells, but ROKAE has no sustainability-specific product, model or dataset; you bring the perception and…\n\n[[ROKAE-T03-3-Playbook|Playbook]] · [[ROKAE-T03-2-Products-and-Solutions|Products]] · [[ROKAE|Profile]]"
+  },
+  {
+   "id": "c-T03-SKYLANDX",
+   "type": "text",
+   "x": 1170,
+   "y": 1520,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[SKYLANDX-T03-1-Brief|SKYLANDX]] — 3/5**\nA measuring instrument, not a robot: excellent for turning buildings, stockpiles, snow and forest into centimetre-accurate 3D numbers, but the sustainability logic and a…\n\n[[SKYLANDX-T03-3-Playbook|Playbook]] · [[SKYLANDX-T03-2-Products-and-Solutions|Products]] · [[SKYLANDX|Profile]]"
+  },
+  {
+   "id": "c-T03-Unitree",
+   "type": "text",
+   "x": 1170,
+   "y": 1730,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Unitree-T03-1-Brief|Unitree Robotics]] — 3/5**\nA very good *mobile sensing platform* for energy, water and litter monitoring on stairs, slopes and snow, but nothing purpose-built for waste, recycling or resource mana…\n\n[[Unitree-T03-3-Playbook|Playbook]] · [[Unitree-T03-2-Products-and-Solutions|Products]] · [[Unitree|Profile]]"
+  },
+  {
+   "id": "g-T04",
+   "type": "group",
+   "x": 1710,
+   "y": 0,
+   "width": 500,
+   "height": 3880,
+   "label": "T04 Elderly Care & Rehabilitation"
+  },
+  {
+   "id": "h-T04",
+   "type": "text",
+   "x": 1740,
+   "y": 30,
+   "width": 440,
+   "height": 200,
+   "color": "6",
+   "text": "## ❤️ T04 Elderly Care & Rehabilitation\nAssistive robotics for independence, recovery and care.\n\n[[T04-0-Track-Overview|Overview]] · [[T04-1-Solution-Patterns|Patterns]] · [[T04-2-Hardware-Shortlist|Shortlist]] · [[T04-3-Cross-Vendor-Solutions|Combos]]"
+  },
+  {
+   "id": "c-T04-Dobot",
+   "type": "text",
+   "x": 1740,
+   "y": 260,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Dobot-T04-1-Brief|Dobot Robotics]] — 4/5**\nLight, low-voltage, drag-teachable cobots with a simple Python API give a clear 48-hour path to a bedside or therapy-table demo; the fit drops to 3 if only desktop arms…\n\n[[Dobot-T04-3-Playbook|Playbook]] · [[Dobot-T04-2-Products-and-Solutions|Products]] · [[Dobot|Profile]]"
+  },
+  {
+   "id": "c-T04-Flexiv",
+   "type": "text",
+   "x": 1740,
+   "y": 470,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Flexiv-T04-1-Brief|Flexiv Robotics]] — 4/5**\nBest hardware on site for safe, finely dosed physical contact with a body (massage, guided exercise, handover); no mobility, no care-specific software, no clinical deplo…\n\n[[Flexiv-T04-3-Playbook|Playbook]] · [[Flexiv-T04-2-Products-and-Solutions|Products]] · [[Flexiv|Profile]]"
+  },
+  {
+   "id": "c-T04-Galaxea",
+   "type": "text",
+   "x": 1740,
+   "y": 680,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[Galaxea-T04-1-Brief|Galaxea]] — 4/5**\nStrong platform for assistive home manipulation (fetch, floor pick-up, hand-over, tidy, laundry) with a real teleop-to-policy path in 48 hours; zero care-sector track re…\n\n[[Galaxea-T04-3-Playbook|Playbook]] · [[Galaxea-T04-2-Products-and-Solutions|Products]] · [[Galaxea|Profile]]"
+  },
+  {
+   "id": "c-T04-ROKAE",
+   "type": "text",
+   "x": 1740,
+   "y": 890,
+   "width": 440,
+   "height": 190,
+   "color": "5",
+   "text": "**[[ROKAE-T04-1-Brief|ROKAE Robotics]] — 4/5**\nBest pick if your idea involves a robot arm *touching or being held by a person* (rehab exercise, massage, tele-examination); weak if you need mobility, companionship or…\n\n[[ROKAE-T04-3-Playbook|Playbook]] · [[ROKAE-T04-2-Products-and-Solutions|Products]] · [[ROKAE|Profile]]"
+  },
+  {
+   "id": "c-T04-AGIBOT",
+   "type": "text",
+   "x": 1740,
+   "y": 1100,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[AGIBOT-T04-1-Brief|AGIBOT]] — 3/5**\nGood for a talking, gesturing companion / exercise coach / clinic guide; not for physical assistance, and no care deployment to point to.\n\n[[AGIBOT-T04-3-Playbook|Playbook]] · [[AGIBOT-T04-2-Products-and-Solutions|Products]] · [[AGIBOT|Profile]]"
+  },
+  {
+   "id": "c-T04-Binabik-AI",
+   "type": "text",
+   "x": 1740,
+   "y": 1310,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Binabik-AI-T04-1-Brief|Binabik AI]] — 3/5**\nA software-only \"teach it once\" skill layer for someone else's wheeled dual-arm robot: credible for carer-taught fetch-and-carry, but it has no care deployment and nothi…\n\n[[Binabik-AI-T04-3-Playbook|Playbook]] · [[Binabik-AI-T04-2-Products-and-Solutions|Products]] · [[Binabik-AI|Profile]]"
+  },
+  {
+   "id": "c-T04-D-Robotics",
+   "type": "text",
+   "x": 1740,
+   "y": 1520,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[D-Robotics-T04-1-Brief|D-Robotics]] — 3/5**\nNot a care robot, but the cheapest way to add private, on-device fall / pose / voice sensing to someone else's robot or to a fixed room sensor.\n\n[[D-Robotics-T04-3-Playbook|Playbook]] · [[D-Robotics-T04-2-Products-and-Solutions|Products]] · [[D-Robotics|Profile]]"
+  },
+  {
+   "id": "c-T04-Galbot",
+   "type": "text",
+   "x": 1740,
+   "y": 1730,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Galbot-T04-1-Brief|Galbot]] — 3/5**\nBest robot on site for \"find the right medication or item, bring it, hand it over\"; not built for physical support, rehab contact or outdoor use, and it has no documente…\n\n[[Galbot-T04-3-Playbook|Playbook]] · [[Galbot-T04-2-Products-and-Solutions|Products]] · [[Galbot|Profile]]"
+  },
+  {
+   "id": "c-T04-Leadshine",
+   "type": "text",
+   "x": 1740,
+   "y": 1940,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Leadshine-T04-1-Brief|Leadshine Technology]] — 3/5**\nA good *add-on* (human-like five-finger hand with SDK and optional touch sensing), not a platform: Leadshine has no robot, no care software and no care deployments.\n\n[[Leadshine-T04-3-Playbook|Playbook]] · [[Leadshine-T04-2-Products-and-Solutions|Products]] · [[Leadshine|Profile]]"
+  },
+  {
+   "id": "c-T04-Magiclab",
+   "type": "text",
+   "x": 1740,
+   "y": 2150,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Magiclab-T04-1-Brief|Magiclab Robotics]] — 3/5**\nGood programmable *bodies* for companion, escort, delivery and exercise-coach demos, plus a declared non-clinical healthcare vertical and an **RMB 150M** home-health ord…\n\n[[Magiclab-T04-3-Playbook|Playbook]] · [[Magiclab-T04-2-Products-and-Solutions|Products]] · [[Magiclab|Profile]]"
+  },
+  {
+   "id": "c-T04-Omnicor-AI",
+   "type": "text",
+   "x": 1740,
+   "y": 2360,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Omnicor-AI-T04-1-Brief|Omnicor AI]] — 3/5**\nNot a care robot and no care track record, but a credible **privacy layer**: language and vision models running on the device, so no patient audio or video leaves the ro…\n\n[[Omnicor-AI-T04-3-Playbook|Playbook]] · [[Omnicor-AI-T04-2-Products-and-Solutions|Products]] · [[Omnicor-AI|Profile]]"
+  },
+  {
+   "id": "c-T04-OriginFlow",
+   "type": "text",
+   "x": 1740,
+   "y": 2570,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[OriginFlow-T04-1-Brief|OriginFlow]] — 3/5**\nThe only vendor on site that senses muscle activity, which is a real rehab signal, but it is a sensor and data company with no robot, no public SDK and no care deploymen…\n\n[[OriginFlow-T04-3-Playbook|Playbook]] · [[OriginFlow-T04-2-Products-and-Solutions|Products]] · [[OriginFlow|Profile]]"
+  },
+  {
+   "id": "c-T04-Spirit-AI",
+   "type": "text",
+   "x": 1740,
+   "y": 2780,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Spirit-AI-T04-1-Brief|Spirit AI]] — 3/5**\nA capable indoor dual-arm \"care chores\" robot (fetch, tidy, medication logistics, tele-care), but no care deployment, no documented force API, and its own manual keeps v…\n\n[[Spirit-AI-T04-3-Playbook|Playbook]] · [[Spirit-AI-T04-2-Products-and-Solutions|Products]] · [[Spirit-AI|Profile]]"
+  },
+  {
+   "id": "c-T04-Unitree",
+   "type": "text",
+   "x": 1740,
+   "y": 2990,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[Unitree-T04-1-Brief|Unitree Robotics]] — 3/5**\nGood general-purpose robots and the best open tooling on site, but nothing care-specific: build **no-contact** care demos (coach, night rounds, fetch, tele-care), not ph…\n\n[[Unitree-T04-3-Playbook|Playbook]] · [[Unitree-T04-2-Products-and-Solutions|Products]] · [[Unitree|Profile]]"
+  },
+  {
+   "id": "c-T04-UniX-AI",
+   "type": "text",
+   "x": 1740,
+   "y": 3200,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[UniX-AI-T04-1-Brief|UniX AI]] — 3/5**\nThe right body for assisted-living chores (fetch, serve, tidy, floor pick-up), but elder care is only a marketing label so far and there is no public SDK; rises to **4**…\n\n[[UniX-AI-T04-3-Playbook|Playbook]] · [[UniX-AI-T04-2-Products-and-Solutions|Products]] · [[UniX-AI|Profile]]"
+  },
+  {
+   "id": "c-T04-WUJI",
+   "type": "text",
+   "x": 1740,
+   "y": 3410,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[WUJI-T04-1-Brief|WUJI]] — 3/5**\nUseful sensing and dexterity building block for hand rehab and assistive manipulation, but no care track record, no robot of its own, nothing medically certified.\n\n[[WUJI-T04-3-Playbook|Playbook]] · [[WUJI-T04-2-Products-and-Solutions|Products]] · [[WUJI|Profile]]"
+  },
+  {
+   "id": "c-T04-XREAL",
+   "type": "text",
+   "x": 1740,
+   "y": 3620,
+   "width": 440,
+   "height": 190,
+   "color": "3",
+   "text": "**[[XREAL-T04-1-Brief|XREAL]] — 3/5**\nUseful human-interface add-on (therapist HUD, patient cueing, captions, tele-care view) for another vendor's robot; not a care robot and no care deployments of its own.\n\n[[XREAL-T04-3-Playbook|Playbook]] · [[XREAL-T04-2-Products-and-Solutions|Products]] · [[XREAL|Profile]]"
+  }
+ ],
+ "edges": []
+}

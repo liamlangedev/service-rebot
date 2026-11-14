@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Leukerbad Hackathon Knowledge Base</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout concept: a field guide you operate, not read — sticky search bar, a folder tree on the left
+   (tracks, then companies with their four track folders), one reading column on the right. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --surface-2: #e9eef3; --fg: #16202a; --muted: #586675; --line: #d5dde5;
+  --accent: #c8102e; --link: #0b5cad;
+  --fit-hi: #17794a; --fit-mid: #8f6400; --fit-low: #b0500d; --fit-min: #a52a2a;
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --bar-h: 54px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #172029; --surface-2: #1f2b36; --fg: #e5ebf1; --muted: #9aa8b6; --line: #2a3743;
+    --accent: #ff5d73; --link: #7fb8f6;
+    --fit-hi: #4fc790; --fit-mid: #e2b54d; --fit-low: #f0955c; --fit-min: #f08080;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #172029; --surface-2: #1f2b36; --fg: #e5ebf1; --muted: #9aa8b6; --line: #2a3743;
+  --accent: #ff5d73; --link: #7fb8f6;
+  --fit-hi: #4fc790; --fit-mid: #e2b54d; --fit-low: #f0955c; --fit-min: #f08080;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--surface); }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 4px; }
+
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; height: var(--bar-h); display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.menu { display: none; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; white-space: nowrap; color: var(--fg); display: flex; align-items: center; gap: 8px; }
+.brand:hover { text-decoration: none; }
+.mark { width: 22px; height: 14px; border-radius: 2px; flex: none; background: linear-gradient(to bottom, var(--surface) 0 33%, var(--accent) 33% 67%, var(--surface) 67%); border: 1px solid var(--line); }
+.brand small { font-family: var(--font-body); font-weight: 500; font-size: 12px; color: var(--muted); }
+.search { flex: 1; min-width: 0; max-width: 460px; margin-left: auto; position: relative; }
+.search input { width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 7px 12px; }
+.search input::placeholder { color: var(--muted); }
+
+.wrap { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+.side { position: sticky; top: calc(var(--bar-h) + env(safe-area-inset-top, 0px)); max-height: calc(100dvh - var(--bar-h) - env(safe-area-inset-top, 0px)); overflow: auto;
+  border-right: 1px solid var(--line); padding: 14px 10px 40px max(14px, env(safe-area-inset-left, 0px)); font-size: 14px; }
+.side h2 { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); margin: 16px 8px 6px; font-weight: 600; }
+.side a, .side summary { display: block; padding: 4px 8px; border-radius: 6px; color: var(--fg); cursor: pointer; }
+.side a:hover, .side summary:hover { background: var(--surface-2); text-decoration: none; }
+.side a.on { background: var(--surface-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.side details > :not(summary) { margin-left: 12px; }
+.side summary { list-style: none; display: flex; align-items: center; gap: 6px; }
+.side summary::-webkit-details-marker { display: none; }
+.side summary::before { content: "▸"; color: var(--muted); font-size: 11px; width: 10px; flex: none; }
+.side details[open] > summary::before { content: "▾"; }
+.side .sub { color: var(--muted); font-size: 12px; margin: 6px 8px 2px; }
+.dots { margin-left: auto; display: inline-flex; gap: 3px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+
+main { min-width: 0; padding-block: 22px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.col { max-width: 920px; margin: 0 auto; min-width: 0; }
+.col.wide { max-width: 1180px; }
+
+.ctx { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.ctx .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ctx .who { font-family: var(--font-display); font-weight: 600; margin-right: 6px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 11px; font-size: 13px; color: var(--fg); cursor: pointer; }
+.pill:hover { text-decoration: none; border-color: var(--muted); }
+.pill.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.pill.off { opacity: 0.45; cursor: default; }
+
+.fit { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 1px 8px; border-radius: 6px; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 13px;
+  color: var(--f, var(--muted)); background: color-mix(in srgb, var(--f, var(--muted)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--f, var(--muted)) 35%, transparent); }
+.fit.f5, .fit.f4 { --f: var(--fit-hi); } .fit.f3 { --f: var(--fit-mid); } .fit.f2 { --f: var(--fit-low); } .fit.f1, .fit.f0 { --f: var(--fit-min); }
+a.fit:hover { text-decoration: none; filter: brightness(1.1); }
+.dot.f5, .dot.f4 { background: var(--fit-hi); } .dot.f3 { background: var(--fit-mid); } .dot.f2 { background: var(--fit-low); } .dot.f1, .dot.f0 { background: var(--fit-min); }
+
+h1, h2, h3, h4 { font-family: var(--font-display); line-height: 1.2; text-wrap: balance; letter-spacing: -0.01em; }
+.doc h1 { font-size: 28px; margin: 0 0 14px; }
+.doc h2 { font-size: 20px; margin: 34px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.doc h3 { font-size: 16.5px; margin: 24px 0 8px; }
+.doc h4 { font-size: 15px; margin: 18px 0 6px; }
+.doc p, .doc ul, .doc ol { margin: 0 0 12px; }
+.doc ul, .doc ol { padding-left: 22px; }
+.doc li { margin: 3px 0; }
+.doc blockquote { margin: 0 0 14px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; color: var(--fg); }
+.doc blockquote p:last-child { margin-bottom: 0; }
+.doc code { font-family: var(--font-mono); font-size: 0.88em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.doc pre { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.45; }
+.doc pre code { background: none; padding: 0; }
+.doc img { display: block; max-width: min(100%, 560px); max-height: 380px; width: auto; height: auto; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); margin: 8px 0 12px; }
+.doc hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.tw { overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.tw table { border-collapse: collapse; width: 100%; font-size: 13.5px; line-height: 1.45; }
+.tw th, .tw td { padding: 7px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); min-width: 90px; }
+.tw th { font-family: var(--font-display); font-weight: 600; font-size: 12.5px; background: var(--surface-2); white-space: nowrap; }
+.tw tr:last-child td { border-bottom: 0; }
+.tw td img { max-height: 120px; margin: 0; }
+.doc a.missing { color: var(--muted); text-decoration: line-through dotted; cursor: help; }
+.doc a.ext::after { content: "↗"; font-size: 0.8em; margin-left: 2px; color: var(--muted); }
+.props { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.tag { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; background: var(--surface); }
+.path { font-size: 12px; color: var(--muted); margin: 0 0 6px; font-family: var(--font-mono); overflow-wrap: anywhere; }
+pre.mermaid { white-space: pre-wrap; }
+
+.lede { font-size: 16px; color: var(--muted); max-width: 70ch; margin: 0 0 18px; }
+.home h1 { font-size: 30px; margin: 0 0 8px; }
+.home h2 { font-size: 19px; margin: 30px 0 12px; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; counter-reset: s; }
+.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 14px; }
+.steps li::before { content: counter(s); font-family: var(--font-display); font-weight: 700; color: var(--accent); margin-right: 8px; }
+.tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.track { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.track h3 { margin: 0; font-size: 16px; }
+.track p { margin: 0; color: var(--muted); font-size: 13.5px; }
+.track ol { margin: 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.track .links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.matrix th button { all: unset; cursor: pointer; font: inherit; display: inline-flex; gap: 4px; align-items: center; }
+.matrix th button:hover { color: var(--link); }
+.matrix td.n { text-align: center; }
+.matrix td .one { color: var(--muted); font-size: 12.5px; display: block; max-width: 46ch; }
+.matrix td.name a { font-weight: 600; color: var(--fg); }
+.note { color: var(--muted); font-size: 13px; }
+.results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.results li { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.results a { font-weight: 600; }
+.results .crumb { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.results p { margin: 4px 0 0; font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
+mark { background: color-mix(in srgb, var(--fit-mid) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; }
+.scrim { display: none; }
+
+@media (max-width: 900px) {
+  .menu { display: inline-flex; }
+  .brand small { display: none; }
+  .wrap { grid-template-columns: minmax(0, 1fr); }
+  .side { position: fixed; z-index: 25; top: calc(var(--bar-h) + env(safe-area-inset-top, 0px)); bottom: 0; left: 0; width: min(320px, 86vw); max-height: none;
+    background: var(--surface); transform: translateX(-102%); transition: transform 0.18s ease; }
+  body.nav .side { transform: none; box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--fg) 30%, transparent); }
+  body.nav .scrim { display: block; position: fixed; inset: 0; z-index: 22; }
+  .doc h1, .home h1 { font-size: 23px; }
+}
+@media (max-width: 560px) { .brand .bt { display: none; } .search { max-width: none; } }
+@media (prefers-reduced-motion: reduce) { .side { transition: none; } }
+</style>
+
+<header class="top">
+  <button class="menu" id="menu" type="button" aria-label="Open navigation">☰</button>
+  <a class="brand" href="#home" aria-label="Leukerbad Hackathon knowledge base — start page"><span class="mark" aria-hidden="true"></span><span class="bt">Leukerbad Hackathon KB</span> <small>unofficial team knowledge base</small></a>
+  <div class="search"><input id="q" type="search" placeholder="Search all docs — product, direction, SDK, paper…" autocomplete="off" aria-label="Search all docs"></div>
+</header>
+<div class="scrim" id="scrim"></div>
+<div class="wrap">
+  <nav class="side" id="side" aria-label="Knowledge base navigation"></nav>
+  <main id="main"><div class="col"><p class="note">Loading the knowledge base…</p></div></main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var S = { meta: null, content: {}, parts: {}, loading: {}, waiting: {}, lower: {}, sort: null, cat: null, view: null, indexed: 0 };
+  var main = $('#main'), side = $('#side'), q = $('#q');
+
+  /* ---------- data parts: kb/<name>.js, each a call __kbPart({name, meta?, content}) ---------- */
+  window.__kbPart = function (p) {
+    S.parts[p.name] = true;
+    if (p.meta) S.meta = p.meta;
+    var c = p.content || {};
+    for (var k in c) { S.content[k] = c[k]; }
+    if (S.waiting[p.name]) { S.waiting[p.name](); delete S.waiting[p.name]; }
+  };
+  function viaScript(name) {
+    return new Promise(function (res, rej) {
+      S.waiting[name] = res;
+      var s = document.createElement('script');
+      s.src = 'kb/' + name + '.js';
+      s.onerror = function () { rej(new Error('Could not load kb/' + name + '.js')); };
+      document.head.appendChild(s);
+    });
+  }
+  function loadPart(name) {
+    if (S.parts[name]) return Promise.resolve();
+    if (S.loading[name]) return S.loading[name];
+    var p;
+    if (location.protocol === 'file:') {
+      p = viaScript(name);
+    } else {
+      p = fetch('kb/' + name + '.js').then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      }).then(function (t) {
+        window.__kbPart(JSON.parse(t.slice(t.indexOf('(') + 1, t.lastIndexOf(')'))));
+      }).catch(function () { return viaScript(name); });
+    }
+    S.loading[name] = p;
+    return p;
+  }
+  function ensureLibs() {
+    var need = [];
+    if (!window.marked) need.push('_pipeline/vendor/marked.min.js');
+    if (!window.DOMPurify) need.push('_pipeline/vendor/purify.min.js');
+    return Promise.all(need.map(function (u) {
+      return new Promise(function (res) {
+        var s = document.createElement('script'); s.src = u; s.onload = res; s.onerror = res; document.head.appendChild(s);
+      });
+    }));
+  }
+
+  /* ---------- helpers ---------- */
+  function fitClass(n) { return n == null ? '' : ' f' + Math.max(0, Math.min(5, Math.round(n))); }
+  function fitChip(n, id, title) {
+    var label = n == null ? '–' : String(n);
+    var t = title ? ' title="' + esc(title) + '"' : '';
+    return id ? '<a class="fit' + fitClass(n) + '" href="#' + id + '"' + t + '>' + label + '</a>' : '<span class="fit' + fitClass(n) + '"' + t + '>' + label + '</span>';
+  }
+  function docInfo(id) { return S.meta.docs[id]; }
+  function company(slug) { for (var i = 0; i < S.meta.companies.length; i++) if (S.meta.companies[i].slug === slug) return S.meta.companies[i]; return null; }
+  function track(code) { for (var i = 0; i < S.meta.tracks.length; i++) if (S.meta.tracks[i].code === code) return S.meta.tracks[i]; return null; }
+  function resolvePath(base, rel) {
+    var st = base.split('/'); st.pop();
+    rel.split('/').forEach(function (seg) { if (seg === '..') st.pop(); else if (seg !== '.' && seg !== '') st.push(seg); });
+    return st.join('/');
+  }
+  function pill(label, id, on) {
+    if (!id) return '<span class="pill off">' + esc(label) + '</span>';
+    return '<a class="pill' + (on ? ' on' : '') + '" href="#' + id + '">' + esc(label) + '</a>';
+  }
+
+  /* ---------- sidebar ---------- */
+  function buildSide() {
+    var m = S.meta, h = [];
+    h.push('<a href="#home" data-id="home">Start — tracks and fit matrix</a>');
+    m.core.forEach(function (d) { h.push('<a href="#' + d.id + '" data-id="' + d.id + '">' + esc(d.label) + '</a>'); });
+    h.push('<h2>Tracks</h2>');
+    m.tracks.forEach(function (t) {
+      h.push('<details data-track="' + t.code + '"><summary>' + esc(t.emoji + ' ' + t.code + ' ' + t.title) + '</summary>');
+      t.docs.forEach(function (d) { h.push('<a href="#' + d.id + '" data-id="' + d.id + '">' + esc(d.label) + '</a>'); });
+      h.push('</details>');
+    });
+    h.push('<h2>Companies</h2>');
+    m.companies.forEach(function (c) {
+      var dots = m.tracks.map(function (t) { return '<span class="dot' + fitClass(c.fits[t.code]) + '" title="' + t.code + ': ' + (c.fits[t.code] == null ? '–' : c.fits[t.code]) + '/5"></span>'; }).join('');
+      h.push('<details data-company="' + c.slug + '"><summary>' + esc(c.name) + '<span class="dots">' + dots + '</span></summary>');
+      c.docs.forEach(function (d) { h.push('<a href="#' + d.id + '" data-id="' + d.id + '">' + esc(d.label) + '</a>'); });
+      m.tracks.forEach(function (t) {
+        var list = c.tracks[t.code] || [];
+        if (!list.length) return;
+        h.push('<div class="sub">' + t.code + ' ' + esc(t.title) + '</div>');
+        list.forEach(function (d) { h.push('<a href="#' + d.id + '" data-id="' + d.id + '">' + esc(d.label) + '</a>'); });
+      });
+      h.push('</details>');
+    });
+    side.innerHTML = h.join('');
+  }
+  function markSide(id) {
+    side.querySelectorAll('a.on').forEach(function (a) { a.classList.remove('on'); });
+    var a = side.querySelector('a[data-id="' + id + '"]');
+    if (!a) return;
+    a.classList.add('on');
+    var d = a.closest('details');
+    if (d) d.open = true;
+    if (window.matchMedia('(min-width: 901px)').matches) a.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ---------- home ---------- */
+  function renderHome() {
+    var m = S.meta, h = [];
+    h.push('<div class="col wide home">');
+    h.push('<h1>Leukerbad Robotics Hackathon 2026</h1>');
+    h.push('<p class="lede">Unofficial team knowledge base: ' + m.companies.length + ' hardware and platform companies across the four tracks. Nov 14–16, Sportarena Leukerbad. Built ' + esc(m.built) + ' — ' + m.counts.docs + ' docs, ' + m.counts.pictures + ' pictures.</p>');
+    h.push('<ol class="steps"><li>Pick a track and open <b>Directions</b> to see which company covers each of the seven official directions.</li><li>Open the top companies\' <b>Brief</b> (one screen), then the <b>Playbook</b> (build concepts with 48-hour plans).</li><li>Before committing to hardware, read the company\'s <b>Developer guide</b> — first 60 minutes checklist.</li></ol>');
+    h.push('<h2>Tracks</h2><div class="tracks">');
+    m.tracks.forEach(function (t) {
+      h.push('<section class="track"><h3>' + esc(t.emoji + ' ' + t.code + ' ' + t.title) + '</h3><p>' + esc(t.official || t.tagline) + '</p><ol>');
+      t.dirs.forEach(function (d) { h.push('<li>' + esc(d) + '</li>'); });
+      h.push('</ol><div class="links">');
+      t.docs.forEach(function (d) { h.push(pill(d.label, d.id)); });
+      h.push('</div></section>');
+    });
+    h.push('</div>');
+    h.push('<h2>Companies × tracks — fit 0 to 5</h2>');
+    var cats = [];
+    m.companies.forEach(function (c) { (c.categories || []).forEach(function (k) { if (cats.indexOf(k) < 0) cats.push(k); }); });
+    h.push('<div class="filters"><button type="button" class="pill' + (S.cat ? '' : ' on') + '" data-cat="">All</button>');
+    cats.forEach(function (k) { h.push('<button type="button" class="pill' + (S.cat === k ? ' on' : '') + '" data-cat="' + esc(k) + '">' + esc(k) + '</button>'); });
+    h.push('</div>');
+    var rows = m.companies.filter(function (c) { return !S.cat || (c.categories || []).indexOf(S.cat) >= 0; });
+    if (S.sort) rows = rows.slice().sort(function (a, b) { return (b.fits[S.sort] == null ? -1 : b.fits[S.sort]) - (a.fits[S.sort] == null ? -1 : a.fits[S.sort]) || a.name.localeCompare(b.name); });
+    h.push('<div class="tw"><table class="matrix"><thead><tr><th><button type="button" data-sort="">Company' + (S.sort ? '' : ' ▾') + '</button></th><th>Likely on site</th>');
+    m.tracks.forEach(function (t) { h.push('<th><button type="button" data-sort="' + t.code + '" title="Sort by ' + esc(t.title) + '">' + t.code + (S.sort === t.code ? ' ▾' : '') + '</button></th>'); });
+    h.push('<th>Open</th></tr></thead><tbody>');
+    rows.forEach(function (c) {
+      h.push('<tr><td class="name"><a href="#' + c.slug + '">' + esc(c.name) + '</a><span class="one">' + esc(c.oneLiner || '') + '</span></td><td><span class="one">' + esc(c.onSite || '') + '</span></td>');
+      m.tracks.forEach(function (t) {
+        var list = c.tracks[t.code] || [];
+        h.push('<td class="n">' + fitChip(c.fits[t.code], list.length ? list[0].id : null, (c.verdicts || {})[t.code]) + '</td>');
+      });
+      h.push('<td>' + c.docs.slice(1).map(function (d) { return '<a href="#' + d.id + '">' + esc(d.label) + '</a>'; }).join(' · ') + '</td></tr>');
+    });
+    h.push('</tbody></table></div>');
+    h.push('<p class="note">Green 4–5 strong · amber 3 usable or part of a combo · orange 2 supporting role · red 0–1 weak. A score opens that company\'s track brief; hover for the verdict. Scores are our own assessment from public sources — check the hardware actually on site.</p>');
+    h.push('<p class="note">Pictures and product names belong to the respective companies. Every doc lists its sources; items marked ⚠️ could not be verified.</p>');
+    h.push('</div>');
+    main.innerHTML = h.join('');
+    main.querySelectorAll('[data-sort]').forEach(function (b) { b.addEventListener('click', function () { S.sort = b.getAttribute('data-sort') || null; renderHome(); }); });
+    main.querySelectorAll('[data-cat]').forEach(function (b) { b.addEventListener('click', function () { S.cat = b.getAttribute('data-cat') || null; renderHome(); }); });
+    markSide('home');
+  }
+
+  /* ---------- documents ---------- */
+  function frontmatter(md) {
+    var props = {};
+    if (md.slice(0, 3) !== '---') return { props: props, body: md };
+    var end = md.indexOf('\n---', 3);
+    if (end < 0) return { props: props, body: md };
+    md.slice(3, end).split('\n').forEach(function (l) {
+      var mm = l.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
+      if (mm) props[mm[1]] = mm[2].replace(/^["']|["']$/g, '');
+    });
+    var nl = md.indexOf('\n', end + 1);
+    return { props: props, body: nl < 0 ? '' : md.slice(nl + 1) };
+  }
+  function contextBar(info) {
+    var h = [], m = S.meta;
+    if (info.company) {
+      var c = company(info.company);
+      if (!c) return '';
+      h.push('<div class="row"><a class="who" href="#' + c.slug + '">' + esc(c.name) + '</a>');
+      c.docs.forEach(function (d) { h.push(pill(d.label, d.id, d.id === info.id)); });
+      h.push('</div><div class="row">');
+      m.tracks.forEach(function (t) {
+        var list = c.tracks[t.code] || [];
+        var f = c.fits[t.code];
+        h.push('<a class="pill' + (info.track === t.code ? ' on' : '') + '"' + (list.length ? ' href="#' + list[0].id + '"' : '') + '>' + t.code + ' ' + esc(t.title) + (f == null ? '' : ' · ' + f + '/5') + '</a>');
+      });
+      h.push('</div>');
+      if (info.track) {
+        h.push('<div class="row">');
+        (c.tracks[info.track] || []).forEach(function (d) { h.push(pill(d.label, d.id, d.id === info.id)); });
+        var t2 = track(info.track);
+        if (t2 && t2.docs.length) h.push(pill('Track: ' + t2.docs[0].label, t2.docs[0].id));
+        h.push('</div>');
+      }
+    } else if (info.track) {
+      var t = track(info.track);
+      h.push('<div class="row"><span class="who">' + esc(t.emoji + ' ' + t.code + ' ' + t.title) + '</span>');
+      t.docs.forEach(function (d) { h.push(pill(d.label, d.id, d.id === info.id)); });
+      h.push('</div>');
+    }
+    return h.length ? '<div class="ctx">' + h.join('') + '</div>' : '';
+  }
+  function enhance(root, info) {
+    root.querySelectorAll('a[href]').forEach(function (a) {
+      var href = a.getAttribute('href');
+      if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+        if (/^https?:/i.test(href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; a.classList.add('ext'); }
+        return;
+      }
+      if (href.charAt(0) === '#') { a.removeAttribute('href'); return; }
+      var p = href.split('#')[0];
+      try { p = decodeURIComponent(p); } catch (e) { /* keep */ }
+      var full = resolvePath(info.path, p);
+      var id = S.meta.byPath[full];
+      if (id) { a.setAttribute('href', '#' + id); }
+      else { a.removeAttribute('href'); a.classList.add('missing'); a.title = 'Not in this build: ' + p; }
+    });
+    root.querySelectorAll('img').forEach(function (img) {
+      var src = img.getAttribute('src') || '';
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(src)) {
+        try { src = decodeURIComponent(src); } catch (e) { /* keep */ }
+        img.setAttribute('src', encodeURI(resolvePath(info.path, src)));
+      }
+      img.setAttribute('loading', 'lazy');
+      img.setAttribute('decoding', 'async');
+      img.addEventListener('error', function () {
+        var par = img.parentNode;
+        img.remove();
+        if (par && par.tagName === 'P' && !par.textContent.trim() && !par.querySelector('img')) par.remove();
+      });
+    });
+    root.querySelectorAll('table').forEach(function (t) {
+      var w = document.createElement('div'); w.className = 'tw';
+      t.parentNode.insertBefore(w, t); w.appendChild(t);
+    });
+    root.querySelectorAll('pre > code').forEach(function (c) {
+      if (/language-mermaid/.test(c.className)) {
+        var pre = document.createElement('pre'); pre.className = 'mermaid'; pre.textContent = c.textContent;
+        c.parentNode.replaceWith(pre);
+      }
+    });
+  }
+  function renderDoc(id) {
+    var info = docInfo(id);
+    if (!info) { main.innerHTML = '<div class="col"><h1>Not found</h1><p class="note">No document named “' + esc(id) + '”. <a href="#home">Back to start</a></p></div>'; return; }
+    S.view = id;
+    main.innerHTML = '<div class="col"><p class="note">Loading ' + esc(info.title) + '…</p></div>';
+    Promise.all([loadPart(info.part), ensureLibs()]).then(function () {
+      if (S.view !== id) return;
+      var md = S.content[id] || '';
+      var fm = frontmatter(md);
+      var col = document.createElement('div'); col.className = 'col';
+      var head = contextBar(info) + '<p class="path">' + esc(info.path) + '</p>';
+      var tags = [];
+      if (fm.props.fit) tags.push('<span class="fit' + fitClass(parseFloat(fm.props.fit)) + '">Fit ' + esc(fm.props.fit) + '/5</span>');
+      ['hq', 'founded', 'updated', 'identity_confidence'].forEach(function (k) { if (fm.props[k]) tags.push('<span class="tag">' + k.replace('_', ' ') + ': ' + esc(fm.props[k]) + '</span>'); });
+      if (tags.length) head += '<div class="props">' + tags.join('') + '</div>';
+      var art = document.createElement('article'); art.className = 'doc';
+      if (window.marked && window.DOMPurify) {
+        var tpl = document.createElement('template');
+        tpl.innerHTML = window.DOMPurify.sanitize(window.marked.parse(fm.body, { gfm: true, breaks: false }));
+        enhance(tpl.content, info);
+        art.appendChild(tpl.content);
+      } else {
+        var pre = document.createElement('pre'); pre.textContent = fm.body; art.appendChild(pre);
+      }
+      col.innerHTML = head;
+      col.appendChild(art);
+      main.replaceChildren(col);
+      window.scrollTo(0, 0);
+      markSide(id);
+      if (window.mermaid && typeof window.mermaid.run === 'function') {
+        try { var r = window.mermaid.run({ nodes: art.querySelectorAll('pre.mermaid') }); if (r && r.catch) r.catch(function () {}); } catch (e) { /* source stays readable */ }
+      }
+    }).catch(function (e) {
+      main.innerHTML = '<div class="col"><h1>Could not load this document</h1><p class="note">' + esc(e.message) + '. If you opened the file from a zip, unzip the whole folder first so the <code>kb/</code> folder sits next to this page.</p></div>';
+    });
+  }
+
+  /* ---------- search ---------- */
+  function snippet(text, lower, term) {
+    var i = lower.indexOf(term);
+    if (i < 0) return '';
+    var a = Math.max(0, i - 70), b = Math.min(text.length, i + term.length + 110);
+    var s = text.slice(a, b).replace(/\s+/g, ' ');
+    var out = esc(s);
+    var re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
+    return (a > 0 ? '…' : '') + out.replace(re, function (x) { return '<mark>' + x + '</mark>'; }) + (b < text.length ? '…' : '');
+  }
+  function renderSearch(query) {
+    var terms = query.toLowerCase().split(/\s+/).filter(function (t) { return t.length > 1; });
+    if (!terms.length) { route(); return; }
+    var hits = [];
+    Object.keys(S.meta.docs).forEach(function (id) {
+      var info = S.meta.docs[id];
+      var text = S.content[id];
+      var title = info.title.toLowerCase();
+      var score = 0, ok = true, low = null;
+      if (text != null) { low = S.lower[id] || (S.lower[id] = text.toLowerCase()); }
+      for (var i = 0; i < terms.length; i++) {
+        var t = terms[i], inTitle = title.indexOf(t) >= 0, n = 0;
+        if (low) { var p = low.indexOf(t); while (p >= 0 && n < 40) { n++; p = low.indexOf(t, p + t.length); } }
+        if (!inTitle && !n) { ok = false; break; }
+        score += (inTitle ? 60 : 0) + Math.min(n, 40);
+      }
+      if (ok) hits.push({ id: id, info: info, score: score, text: text, low: low });
+    });
+    hits.sort(function (a, b) { return b.score - a.score; });
+    var total = Object.keys(S.meta.docs).length;
+    var loaded = Object.keys(S.content).length;
+    var h = ['<div class="col"><h1>Search: ' + esc(query) + '</h1><p class="note">' + hits.length + ' matching docs' + (loaded < total ? ' — still indexing (' + loaded + ' of ' + total + ' docs loaded), results will grow' : '') + '.</p><ul class="results">'];
+    hits.slice(0, 60).forEach(function (x) {
+      var crumb = [];
+      if (x.info.company) { var c = company(x.info.company); crumb.push(c ? c.name : x.info.company); }
+      if (x.info.track) crumb.push(x.info.track);
+      h.push('<li><a href="#' + x.id + '">' + esc(x.info.title) + '</a><span class="crumb">' + esc(crumb.join(' · ')) + '</span>' + (x.text ? '<p>' + snippet(x.text, x.low, terms[0]) + '</p>' : '') + '</li>');
+    });
+    h.push('</ul></div>');
+    main.innerHTML = h.join('');
+  }
+  var timer = null;
+  q.addEventListener('input', function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () { var v = q.value.trim(); if (v.length > 1) renderSearch(v); else route(); }, 180);
+  });
+  q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.value = ''; route(); } });
+  function indexAll() {
+    var names = S.meta.tracks.map(function (t) { return t.code; }).concat(S.meta.companies.map(function (c) { return c.slug; }));
+    var i = 0;
+    (function next() {
+      if (i >= names.length) return;
+      loadPart(names[i++]).catch(function () {}).then(function () {
+        if (q.value.trim().length > 1) renderSearch(q.value.trim());
+        setTimeout(next, 60);
+      });
+    })();
+  }
+
+  /* ---------- routing: plain #name only ---------- */
+  function route() {
+    var id = decodeURIComponent((location.hash || '').replace(/^#/, ''));
+    document.body.classList.remove('nav');
+    if (!id || id === 'home' || !S.meta.docs[id]) { S.view = 'home'; renderHome(); window.scrollTo(0, 0); return; }
+    renderDoc(id);
+  }
+  window.addEventListener('hashchange', function () { q.value = ''; route(); });
+  $('#menu').addEventListener('click', function () { document.body.classList.toggle('nav'); });
+  $('#scrim').addEventListener('click', function () { document.body.classList.remove('nav'); });
+  side.addEventListener('click', function (e) { if (e.target.closest('a')) document.body.classList.remove('nav'); });
+
+  loadPart('core').then(function () {
+    buildSide();
+    route();
+    setTimeout(indexAll, 400);
+  }).catch(function (e) {
+    main.innerHTML = '<div class="col"><h1>Knowledge base data not found</h1><p class="note">' + esc(e.message) + '. Keep this page next to its <code>kb/</code> and <code>Companies/</code> folders.</p></div>';
+  });
+})();
+</script>
+
+</body>
+</html>

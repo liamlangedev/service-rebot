@@ -1,0 +1,112 @@
+filters:
+  and:
+    - file.hasTag("leukerbad-hackathon")
+properties:
+  note.company:
+    displayName: Company
+  note.hq:
+    displayName: HQ
+  note.categories:
+    displayName: Hardware class
+  note.on_site_guess:
+    displayName: Likely on site
+  note.fit_t01:
+    displayName: T01 Urban
+  note.fit_t02:
+    displayName: T02 Safe
+  note.fit_t03:
+    displayName: T03 Sustainable
+  note.fit_t04:
+    displayName: T04 Care
+  note.fit:
+    displayName: Fit
+  note.challenge:
+    displayName: Track
+  note.identity_confidence:
+    displayName: Identity confidence
+views:
+  - type: table
+    name: "Companies - fit matrix"
+    filters:
+      and:
+        - 'type == "company"'
+    order:
+      - file.name
+      - hq
+      - categories
+      - on_site_guess
+      - fit_t01
+      - fit_t02
+      - fit_t03
+      - fit_t04
+      - identity_confidence
+    sort:
+      - property: file.name
+        direction: ASC
+  - type: table
+    name: "T01 ranking"
+    filters:
+      and:
+        - 'type == "challenge-brief"'
+        - 'challenge == "T01"'
+    order:
+      - company
+      - fit
+      - file.name
+    sort:
+      - property: fit
+        direction: DESC
+  - type: table
+    name: "T02 ranking"
+    filters:
+      and:
+        - 'type == "challenge-brief"'
+        - 'challenge == "T02"'
+    order:
+      - company
+      - fit
+      - file.name
+    sort:
+      - property: fit
+        direction: DESC
+  - type: table
+    name: "T03 ranking"
+    filters:
+      and:
+        - 'type == "challenge-brief"'
+        - 'challenge == "T03"'
+    order:
+      - company
+      - fit
+      - file.name
+    sort:
+      - property: fit
+        direction: DESC
+  - type: table
+    name: "T04 ranking"
+    filters:
+      and:
+        - 'type == "challenge-brief"'
+        - 'challenge == "T04"'
+    order:
+      - company
+      - fit
+      - file.name
+    sort:
+      - property: fit
+        direction: DESC
+  - type: table
+    name: "All track briefs"
+    filters:
+      and:
+        - 'type == "challenge-brief"'
+    groupBy:
+      property: note.challenge
+      direction: ASC
+    order:
+      - company
+      - fit
+      - file.name
+    sort:
+      - property: fit
+        direction: DESC
