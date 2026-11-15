@@ -20,6 +20,7 @@ from .agent.prompts import system_prompt
 from .agent.tools import TOOLS
 from .cameras import CameraRig, CameraStream
 from .config import Config, load_env_files
+from .digital_twin import DigitalTwin
 from .perception.detector import Detection, YoloeDetector, annotate, discovery_vocabulary
 from .perception.scene import SceneModel
 from .perception.table_map import TableMap
@@ -54,7 +55,7 @@ PAGE = r"""<!doctype html>
   header .meta { margin-left:auto; color:var(--dim); font-size:12px; }
   main { flex:1 1 auto; min-height:0; display:grid;
          grid-template-columns:minmax(0,1fr) 320px; gap:12px; padding:12px; }
-  .left-col { display:flex; flex-direction:column; gap:12px; min-height:0; }
+  .left-col { display:grid; grid-template-rows:auto minmax(0,1fr); gap:12px; min-height:0; }
   .cam-pair { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; align-items:start; min-height:0; }
   .right-col { display:flex; flex-direction:column; gap:12px; min-height:0; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px;
@@ -125,6 +126,10 @@ PAGE = r"""<!doctype html>
         <img class="video" src="/wrist_stream" alt="wrist camera">
       </div>
     </div>
+    <div class="panel">
+      <h2><span>Simulation</span><span id="twin-meta" class="cam-meta"></span></h2>
+      <iframe id="sim3d" class="video" title="simulation"></iframe>
+    </div>
   </section>
   <section class="right-col">
     <div class="panel">
@@ -160,6 +165,7 @@ PAGE = r"""<!doctype html>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+$("sim3d").src = `${location.protocol}//${location.hostname}:8765/?embed=1`;
 let lastEventKey = "";
 const SWATCH = {red:"#e5484d", orange:"#f76b15", yellow:"#ffe629", green:"#46a758",
   cyan:"#00a2c7", blue:"#0090ff", purple:"#8e4ec6", pink:"#f76190",
@@ -181,19 +187,22 @@ async function refresh() {
     $("table-meta").textContent = s.table_stats || "";
     $("wrist-meta").textContent = s.wrist_stats || "";
     $("front-meta").textContent = s.front_stats || "";
+    const twin = s.digital_twin || {};
+    $("twin-meta").textContent = twin.error
+      ? `err: ${twin.error}`
+      : (twin.ready ? `${twin.camera} · ${twin.frames} frames · ${(twin.splats || []).length} splats` : "initializing...");
     const camCount = (s.frames > 0 ? 1 : 0) + (s.wrist_frames > 0 ? 1 : 0) + (s.front_frames > 0 ? 1 : 0);
     $("model").textContent = [
       `${camCount} cams`,
       s.provider && s.model ? `${s.provider}/${s.model}` : (s.provider || s.model),
-      s.calibrated ? "calibrated" : "uncalibrated",
       s.dry_run ? "dry run" : null,
     ].filter(Boolean).join(" · ");
     $("run").disabled = !!s.busy;
     const facts = [
-      ["camera", s.calibrated ? "calibrated" : "NOT calibrated"],
       ["frames", `${s.frames} / front ${s.front_frames || 0} / wrist ${s.wrist_frames || 0}`],
       ["objects", (s.objects || []).length || (s.live_detections || []).length],
       ["vla", s.vla_backend || "stub"],
+      ["joints", twin.joint_updates ? `${Object.keys(twin.joints || {}).length} streamed (${twin.joint_age_s}s)` : "not streamed"],
       ["classes", (s.detector_classes || []).join(", ")],
       ["task", s.task || "—"],
     ];
@@ -299,12 +308,12 @@ class LazyDetector:
         return self._ensure().detect(frame)
 
 
-def _load_vla_cfg(config_dir: Path) -> dict[str, Any]:
-    path = config_dir / "vla.yaml"
+def _load_yaml_section(config_dir: Path, filename: str, section: str) -> dict[str, Any]:
+    path = config_dir / filename
     if not path.is_file():
         return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return dict(data.get("vla") or data) if isinstance(data, dict) else {}
+    return dict(data.get(section) or data) if isinstance(data, dict) else {}
 
 
 def _cam_stats(stream: CameraStream | None, dets: int) -> str:
@@ -362,8 +371,13 @@ class DashboardApp:
         if start_cameras:
             self._rig.start()
 
-        vla_cfg = _load_vla_cfg(config.directory)
+        vla_cfg = _load_yaml_section(config.directory, "vla.yaml", "vla")
         self._vla = VLAPolicyClient(vla_cfg)
+
+        twin_cfg = _load_yaml_section(config.directory, "digital_twin.yaml", "digital_twin")
+        self._twin = DigitalTwin(twin_cfg)
+        if start_cameras:
+            self._twin.start()
 
         self._table_dets: list[Detection] = []
         self._front_dets: list[Detection] = []
@@ -406,9 +420,9 @@ class DashboardApp:
                 "result": self._result,
                 "provider": self._provider,
                 "model": self._model,
-                "calibrated": self._table_map is not None,
                 "dry_run": self._dry_run,
                 "vla_backend": self._vla.backend,
+                "digital_twin": self._twin.status(),
                 "frames": t_cam.frames_received if t_cam else 0,
                 "front_frames": f_cam.frames_received if f_cam else 0,
                 "wrist_frames": w_cam.frames_received if w_cam else 0,
@@ -573,6 +587,15 @@ class DashboardApp:
         ok, buffer = self._cv2.imencode(".jpg", image, [int(self._cv2.IMWRITE_JPEG_QUALITY), 80])
         return buffer.tobytes() if ok else None
 
+    def sim_jpeg(self) -> bytes | None:
+        return self._twin.latest_jpeg()
+
+    def update_joints(self, joints: Any) -> dict[str, float]:
+        return self._twin.update_joints(joints)
+
+    def joints_json(self) -> dict[str, Any]:
+        return self._twin.joints_snapshot()
+
     def close(self) -> None:
         self._stop_event.set()
         self._bbox_wake.set()
@@ -581,6 +604,7 @@ class DashboardApp:
             self._server.shutdown()
             self._server.server_close()
         self._rig.stop()
+        self._twin.stop()
 
 
 def _capture_jpeg(stream: CameraStream | None) -> bytes | None:
@@ -613,18 +637,24 @@ def _handler(app: DashboardApp):
                 self._send(200, PAGE.encode(), "text/html; charset=utf-8")
             elif self.path == "/api/status":
                 self._json(app.status_json())
+            elif self.path == "/api/joints":
+                self._json(app.joints_json())
             elif self.path == "/frame.jpg":
                 self._serve_jpg(app.jpeg())
             elif self.path == "/front.jpg":
                 self._serve_jpg(app.front_jpeg())
             elif self.path == "/wrist.jpg":
                 self._serve_jpg(app.wrist_jpeg())
+            elif self.path == "/sim.jpg":
+                self._serve_jpg(app.sim_jpeg())
             elif self.path == "/stream":
                 self._stream(app.jpeg)
             elif self.path == "/front_stream":
                 self._stream(app.front_jpeg)
             elif self.path == "/wrist_stream":
                 self._stream(app.wrist_jpeg)
+            elif self.path == "/sim_stream":
+                self._stream(app.sim_jpeg)
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -654,6 +684,14 @@ def _handler(app: DashboardApp):
             elif self.path == "/api/stop":
                 app.stop_robot()
                 self._json({"ok": True})
+            elif self.path == "/api/joints":
+                raw_joints = payload.get("joints", payload)
+                try:
+                    snapshot = app.update_joints(raw_joints)
+                except (TypeError, ValueError) as exc:
+                    self._json({"ok": False, "error": str(exc)}, 400)
+                    return
+                self._json({"ok": True, "joints": snapshot})
             else:
                 self._send(404, b"not found", "text/plain")
 

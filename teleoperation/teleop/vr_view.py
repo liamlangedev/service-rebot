@@ -53,11 +53,18 @@ def _drawn_geoms(model: mujoco.MjModel) -> list[int]:
 
 
 class VRBridge:
-    def __init__(self, model: mujoco.MjModel, port: int = 8765, extra_sites=()):
+    def __init__(self, model: mujoco.MjModel, port: int = 8765, extra_sites=(), splats=None):
         self.model = model
         self.port = port
         self.geoms = _drawn_geoms(model)
         self.sites = [model.site(s).id for s in extra_sites]
+        self.splat_bodies: list[tuple[int, str, Path]] = []
+        self._splat_files: dict[str, Path] = {}
+        for name, path in (splats or {}).items():
+            p = Path(path)
+            if p.is_file():
+                self.splat_bodies.append((model.body(name).id, str(name), p))
+                self._splat_files[f"/splats/{name}.ply"] = p
         self._scene_json, self._mesh_blob = self._build_scene()
         self._clients = set()
         self._clients_lock = threading.Lock()
@@ -91,7 +98,8 @@ class VRBridge:
             geoms.append(dict(type=int(mujoco.mjtGeom.mjGEOM_SPHERE),
                               size=[float(m.site_size[s][0]), 0, 0],
                               rgba=m.site_rgba[s].tolist(), mesh=-1, name=m.site(s).name))
-        scene = dict(type="scene", geoms=geoms, meshes=meshes)
+        splats = [{"name": name, "url": f"/splats/{name}.ply"} for _, name, _ in self.splat_bodies]
+        scene = dict(type="scene", geoms=geoms, meshes=meshes, splats=splats)
         v = np.concatenate(verts) if verts else np.zeros((0, 3), np.float32)
         f = np.concatenate(faces) if faces else np.zeros((0, 3), np.uint32)
         blob = np.array([TAG_MESH], np.uint32).tobytes() + v.tobytes() + f.tobytes()
@@ -111,6 +119,12 @@ class VRBridge:
                 resp = connection.respond(http.HTTPStatus.OK, page)
                 del resp.headers["Content-Type"]
                 resp.headers["Content-Type"] = "text/html; charset=utf-8"
+                resp.headers["Cache-Control"] = "no-store"
+                return resp
+            if path in self._splat_files:
+                resp = connection.respond(http.HTTPStatus.OK, self._splat_files[path].read_bytes())
+                del resp.headers["Content-Type"]
+                resp.headers["Content-Type"] = "application/octet-stream"
                 resp.headers["Cache-Control"] = "no-store"
                 return resp
             return connection.respond(http.HTTPStatus.NOT_FOUND, "not found\n")
@@ -178,8 +192,14 @@ class VRBridge:
         """Sends the world pose of every drawn geom (call at ~30-60 Hz)."""
         if not self.connected:
             return
-        pos = np.concatenate([data.geom_xpos[self.geoms], data.site_xpos[self.sites]])
-        mat = np.concatenate([data.geom_xmat[self.geoms], data.site_xmat[self.sites]])
+        pos_parts = [data.geom_xpos[self.geoms], data.site_xpos[self.sites]]
+        mat_parts = [data.geom_xmat[self.geoms], data.site_xmat[self.sites]]
+        if self.splat_bodies:
+            bids = [bid for bid, _, _ in self.splat_bodies]
+            pos_parts.append(data.xpos[bids])
+            mat_parts.append(data.xmat[bids])
+        pos = np.concatenate(pos_parts)
+        mat = np.concatenate(mat_parts)
         frame = np.hstack([pos, mat]).astype(np.float32)
         self._broadcast(np.array([TAG_FRAME], np.uint32).tobytes() + frame.tobytes())
 

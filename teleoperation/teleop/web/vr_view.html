@@ -21,7 +21,8 @@
 <script type="importmap">
 { "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
 } }
 </script>
 </head>
@@ -148,7 +149,11 @@ let floorObj = null;
 let pendingScene = null;
 
 function clearScene() {
-  for (const o of objects) { root.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  for (const o of objects) {
+    root.remove(o);
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) o.material.dispose();
+  }
   objects = []; floorObj = null;
 }
 
@@ -193,6 +198,26 @@ function buildScene(desc, buf) {
     objects.push(obj);
     if (gd.type === GEOM.PLANE) floorObj = obj;
     tris += geom.index ? geom.index.count / 3 : 0;
+  }
+  if (desc.splats && desc.splats.length) {
+    const splatGroups = desc.splats.map(sp => {
+      const group = new THREE.Group();
+      group.matrixAutoUpdate = false;
+      group.visible = false;
+      root.add(group);
+      objects.push(group);
+      return { sp, group };
+    });
+    import('@mkkellogg/gaussian-splats-3d').then(GS3D => {
+      for (const { sp, group } of splatGroups) {
+        const viewer = new GS3D.DropInViewer({
+          sharedMemoryForWorkers: false,
+          gpuAcceleratedSort: false,
+        });
+        viewer.addSplatScene(sp.url, { showLoadingUI: false }).catch(err => log(`splat ${sp.name}: ${err}`));
+        group.add(viewer);
+      }
+    }).catch(err => log(`gaussian-splats-3d load failed: ${err}`));
   }
   updateFloorVisibility();
   log(`scene built: ${objects.length} geoms, ${Math.round(tris / 1000)}k triangles`);

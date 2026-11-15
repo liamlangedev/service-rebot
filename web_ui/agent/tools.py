@@ -27,7 +27,7 @@ TOOLS: list[ToolSchema] = [
         name="detect_objects",
         description=(
             "Run local detection/segmentation on the table camera without moving the arm. "
-            "Returns pixel boxes/masks and calibrated base-frame positions when available."
+            "Returns pixel boxes/masks and object labels."
         ),
         parameters=_DETECTION_PARAMETERS,
     ),

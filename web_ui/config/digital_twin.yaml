@@ -1,0 +1,14 @@
+digital_twin:
+  enabled: true
+  web_view: true
+  web_view_port: 8765
+  camera: cam_corner
+  width: 480
+  height: 360
+  fps: 30.0
+  splats_dir: simulation/splats
+  # Map MuJoCo body name -> .ply filename inside splats_dir, e.g.:
+  # objects:
+  #   bottle_pellegrino: pellegrino_object.ply
+  #   towel: towel_object.ply
+  objects: {}
