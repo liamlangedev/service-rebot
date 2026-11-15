@@ -98,6 +98,8 @@ and `--record session.npz` logs the command and target streams.
 
 ## 5. Ultraleap + real arm (lerobot)
 
+**Current instructions for the real arm, recording and safety are in [REAL_ARM.md](REAL_ARM.md); the commands below are the first version.**
+
 Run these with the root `steel_team/.venv` (lerobot, leap, mujoco). Left fist or Space = clutch,
 right hand drives, thumb-index pinch = gripper.
 
