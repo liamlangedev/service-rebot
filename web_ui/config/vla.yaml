@@ -1,0 +1,6 @@
+# VLA policy runner configuration (used when executing manipulation tasks).
+vla:
+  backend: stub               # "stub" until wired to a trained VLA policy
+  checkpoint: ""
+  timeout_s: 60.0
+  dry_run: false

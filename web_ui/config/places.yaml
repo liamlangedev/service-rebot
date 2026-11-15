@@ -1,0 +1,25 @@
+# Measured table plane and bin destinations, in base_link metres.
+# Bin destinations follow the scene v1.4 correction from real table calibration:
+# the robot-side edge is at y = 0.30, 5 cm closer than originally measured.
+
+table:
+  z: 0.000                      # table surface height in base_link
+
+bin:
+  rim_z: 0.120
+  floor_z: 0.000
+  #: two compartments, separated by a divider; x/y is the release point
+  compartments:
+    bin_0: {x: 0.1812, y: 0.4250}     # near compartment: reachable, use by default
+    bin_1: {x: 0.3687, y: 0.4250}     # far compartment: only reachable with a hard lean
+
+# There is deliberately no per-class size table here. The detector is
+# open-vocabulary, so any class list would be both wrong and incomplete. Object
+# width and orientation are measured from the mask's bottom edge through the table
+# homography; front_camera supplies height when calibrated, otherwise the grasp
+# uses the generic height ladder in motion.yaml.
+
+#: where the arm may put an object when the task names no destination
+workspace:
+  x: [0.16, 0.34]
+  y: [-0.26, 0.26]
