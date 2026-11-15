@@ -31,6 +31,7 @@ setup(
             "dashboard_node = rebot_trash_sorting_agent.dashboard_node:main",
             "workspace_scene_node = rebot_trash_sorting_agent.workspace_scene_node:main",
             "mujoco_sim_node = rebot_trash_sorting_agent.mujoco_sim_node:main",
+            "grasp_policy_node = rebot_trash_sorting_agent.grasp_policy_node:main",
             # tools
             "calibrate_table = rebot_trash_sorting_agent.calibrate_table:main",
             "detect_once = rebot_trash_sorting_agent.detect_once:main",

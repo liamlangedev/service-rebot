@@ -51,6 +51,7 @@ class SkillRunner:
         plan_only: bool = False,
         wrist_camera: Any = None,
         annotated_sink: AnnotateSink | None = None,
+        learned_grasp: Any = None,
     ) -> None:
         self.places = places
         self.motion_cfg = motion_cfg
@@ -64,6 +65,9 @@ class SkillRunner:
         self.plan_only = bool(plan_only)
         self.wrist_camera = wrist_camera
         self.annotated_sink = annotated_sink
+        self.learned_grasp = learned_grasp
+        self._learned_cfg = dict(motion_cfg.get("learned_grasp") or {})
+        self._last_learned: dict[str, Any] = {}
         self._cancelled = False
 
         self._grasp_cfg = dict(motion_cfg.get("grasp") or {})
@@ -199,6 +203,17 @@ class SkillRunner:
             # the torque monitor a free-air baseline before the close.
             self.gripper.open()
             self._check_cancel()
+
+            if self.learned_grasp is not None:
+                outcome = self._learned_attempt(candidate_plan, steps, obj.label)
+                if outcome is None:
+                    attempts.append({"grasp": candidate_plan.grasp.summary(),
+                                     "learned": self._last_learned})
+                    continue
+                close, hold = outcome
+                chosen = candidate_plan
+                break
+
             steps.append(self.motion.move_to_pose(candidate_plan.grasp, label="grasp"))
             self._check_cancel()
 
@@ -347,6 +362,34 @@ class SkillRunner:
         raise SkillError(
             "no reachable place target: " + ("; ".join(notes) if notes else "nothing configured")
         )
+
+    # ------------------------------------------------------------------ learned grasp
+    def _learned_attempt(self, plan: GraspPlan, steps: list[dict[str, Any]],
+                         label: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """Handoff -> learned grasp node -> hold check. None = attempt failed (arm retreated)."""
+        clearance = float(self._learned_cfg.get("handoff_clearance", 0.05))
+        handoff = plan.grasp.offset(dz=clearance)
+        steps.append(self.motion.move_to_pose(handoff, label="learned-grasp handoff"))
+        self._check_cancel()
+        result = self.learned_grasp.run()
+        self._last_learned = result
+        self.events.emit("learned_grasp", object=label, **result)
+        steps.append({"label": "learned grasp", **result})
+        if not result.get("success"):
+            # jaws stay as the policy left them; come straight up before reopening
+            self._safe_retreat(plan.pre_grasp)
+            self.gripper.open()
+            return None
+        close = {"position": self.gripper.position(), "torque": self.gripper.torque(),
+                 "learned": result}
+        hold = self.gripper.check_hold(close)
+        hold["verified"] = bool(self._learned_cfg.get("verify_hold", False))
+        self.events.emit("grasp_hold", object=label, **hold)
+        if hold["verified"] and (hold["slipped"] or not hold["holding"]):
+            self._last_learned = {**result, "hold": hold}
+            self.gripper.open()
+            return None
+        return close, hold
 
     # ------------------------------------------------------------------ wrist correction
     def _wrist_correction(self, obj: WorldObject) -> tuple[float, float, str | None]:
