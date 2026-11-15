@@ -177,5 +177,18 @@
         1
       ]
     }
-  ]
+  ],
+  "charuco": {
+    "_comment": "Printed ChArUco board lying flat on the table, edges parallel to the walls, caption edge towards the robot. near_left = workspace position of the pattern's corner nearest the left and near walls. Set enabled=true when it lies there (capture sessions then calibrate the cameras from it). Make it: python -m rebot_sim.charuco board.pdf",
+    "enabled": false,
+    "squares_x": 7,
+    "squares_y": 5,
+    "square": 0.035,
+    "marker": 0.026,
+    "dictionary": "DICT_5X5_100",
+    "near_left": [
+      0.48,
+      0.175
+    ]
+  }
 }

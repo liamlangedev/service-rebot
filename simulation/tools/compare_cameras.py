@@ -31,6 +31,7 @@ def main():
     h = w * 9 // 16
 
     env = RealSetupEnv(objects=False)
+    env.hide_markers()
     env.reset()
     rows = []
     for cam, photo in PHOTOS.items():

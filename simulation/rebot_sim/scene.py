@@ -91,6 +91,11 @@ class Workspace:
                          self.robot_from_left - from_left,
                          self.table_z + height])
 
+    def from_world(self, p) -> np.ndarray:
+        """World point -> workspace (from_left, from_near, height)."""
+        return np.array([self.robot_from_left - p[1], p[0] + self.robot_from_near,
+                         p[2] - self.table_z])
+
     @staticmethod
     def half(lo: float, hi: float) -> float:
         return abs(hi - lo) / 2
@@ -127,6 +132,8 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
     _add_base_plate(spec, ws, plate)
     _add_walls(spec, ws, cfg["walls"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
+    if cfg.get("charuco", {}).get("enabled"):
+        _add_charuco(spec, ws, cfg["charuco"])
     info.cameras = _add_cameras(spec, ws, cfg["cameras"])
     if "wrist_camera" in cfg and spec.camera("wrist") is not None:
         wc, cam = cfg["wrist_camera"], spec.camera("wrist")
@@ -184,8 +191,8 @@ def _add_visual_settings(spec):
     vis.headlight.ambient = [0.30, 0.30, 0.30]
     vis.headlight.diffuse = [0.45, 0.45, 0.45]
     vis.rgba.haze = [0.55, 0.55, 0.55, 1]
-    vis.global_.offwidth = max(vis.global_.offwidth, 1280)
-    vis.global_.offheight = max(vis.global_.offheight, 960)
+    vis.global_.offwidth = max(vis.global_.offwidth, 1920)   # real cameras are 1920x1080
+    vis.global_.offheight = max(vis.global_.offheight, 1080)
     # Ceiling lights of the room (warm, from above).
     for i, pos in enumerate(([0.3, 0.3, 1.8], [0.3, -0.4, 1.8])):
         spec.worldbody.add_light(name=f"room_light_{i}", pos=pos, dir=[0, 0, -1],
@@ -246,6 +253,42 @@ def _add_walls(spec, ws: Workspace, w):
         c = ws.world((l0 + l1) / 2, (n0 + n1) / 2, h / 2)
         _box(body, f"wall_{name}", c, [Workspace.half(n0, n1), Workspace.half(l0, l1), h / 2],
              mats[w[name]["color"]])
+
+
+# How the board image must be turned so MuJoCo's box-face texture mapping shows
+# it the right way round (found by rendering and detecting it, see the tests).
+_CHARUCO_TEX_OP = "rot90_cw"
+
+
+def _add_charuco(spec, ws: Workspace, c):
+    """The printed ChArUco board lying on the table (see charuco.py)."""
+    import cv2
+    from .charuco import BoardSpec
+    board = BoardSpec.from_config(c)
+    img = board.image(100)
+    img = {"none": img, "rot90_ccw": np.rot90(img, 1), "rot90_cw": np.rot90(img, -1),
+           "rot180": np.rot90(img, 2), "flipud": img[::-1], "fliplr": img[:, ::-1]}[
+        c.get("_tex_op", _CHARUCO_TEX_OP)]
+    img = np.ascontiguousarray(img)
+    # Name by content: MuJoCo caches assets by file name, so rewriting one file
+    # with a different board could reuse the stale image.
+    import hashlib
+    digest = hashlib.sha1(img.tobytes() + str(img.shape).encode()).hexdigest()[:12]
+    path = PKG_DIR / "textures" / "generated" / f"charuco_{digest}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(path), img)
+    tex = spec.add_texture(name="charuco_tex", type=mujoco.mjtTexture.mjTEXTURE_2D,
+                           file=str(path))
+    mat = spec.add_material(name="charuco_mat")
+    mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tex.name
+    mat.specular, mat.shininess = 0.0, 0.0
+    w, h = board.size
+    nl = board.near_left
+    center = ws.world(nl[0] + w / 2, nl[1] + h / 2, 0.00025)
+    spec.worldbody.add_geom(name="charuco_board", type=mujoco.mjtGeom.mjGEOM_BOX, pos=center,
+                            size=[h / 2, w / 2, 0.00025], material="charuco_mat",
+                            contype=0, conaffinity=0)
 
 
 def _add_bin(spec, ws: Workspace, b) -> list[str]:

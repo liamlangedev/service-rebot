@@ -82,6 +82,55 @@ def test_cameras_match_real_frames():
             assert err < 30, f"{cam} {label}: {err:.0f} px off"
 
 
+def test_charuco_board_in_sim():
+    """The board drawn in the sim is detected and lies where to_workspace() says
+    (texture orientation, board geometry and camera model all agree)."""
+    from rebot_sim.charuco import BoardSpec, detect
+    import cv2
+    cfg = load_config()
+    cfg["charuco"] = {**cfg["charuco"], "enabled": True}
+    e = RealSetupEnv(cfg, objects=False)
+    e.hide_markers()
+    board = BoardSpec.from_config(cfg["charuco"])
+    for cam in ("cam_corner", "cam_far"):
+        img = cv2.cvtColor(e.render(cam, 1920, 1080), cv2.COLOR_RGB2BGR)
+        det = detect(board, img)
+        # The arm hides part of the board from cam_far.
+        assert det is not None and len(det) >= 12 and det.spans_2d(board), cam
+        c = e.data.cam(cam)
+        R, C = c.xmat.reshape(3, 3), c.xpos
+        f = 540 / np.tan(np.radians(e.model.cam_fovy[e.model.camera(cam).id]) / 2)
+        for p, px in zip(board.to_workspace(det.obj), det.corners):
+            pc = R.T @ (e.ws.world(*p) - C)
+            uv = np.array([960 + f * pc[0] / -pc[2], 540 - f * pc[1] / -pc[2]])
+            assert np.linalg.norm(uv - px) < 1.5, cam
+    e.close()
+
+
+def test_fake_capture_session_recovers_cameras():
+    """Full capture session against the simulated arm and cameras: the board
+    calibration must recover the sim's own camera poses and wrist mount."""
+    import json
+    import shutil
+    import subprocess
+    name = "_test_session"
+    out = SIM / "captures" / name
+    try:
+        subprocess.run([sys.executable, "-m", "capture.capture_session", "--fake", "--yes",
+                        "--pause", "0", "--poses", "reach", "--name", name, "--overwrite"],
+                       cwd=SIM, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                       timeout=600)
+        cal = json.loads((out / "session.json").read_text())["calibration"]
+        for cam in ("cam_corner", "cam_far"):
+            assert cal["fixed_cameras"][cam]["vs_sim_mm"] < 5, cam
+        wrist = cal["wrist_camera"]
+        assert wrist and wrist["spread_mm"] < 2
+        want = load_config()["wrist_camera"]["pos"]
+        assert np.allclose(wrist["entry"]["pos"], want, atol=0.002)
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+
+
 def test_objects_rest_upright_on_table():
     e = env()
     e.step(n=50)

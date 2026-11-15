@@ -169,9 +169,20 @@ With the tool held straight down, `bin_1` (the far compartment) is at the edge o
 arm's reach at a 30 cm carry height: the IK tilts the tool about 10 cm short of the
 centre, and the object still falls in.
 
+## Capture sessions on the real setup
+
+[`capture/`](capture/README.md) has the tools for working on the real setup:
+
+- a device page for assigning cameras and the arm port, and for lens calibration;
+- a guided session where the arm holds poses while every camera is captured and
+  compared with the sim;
+- automatic camera calibration from a printed ChArUco board;
+- a pause for the phone video, and packaging it as a Hugging Face dataset for
+  Gaussian-splat training on HF Jobs.
+
 ## Camera calibration
 
-The camera poses come from real frames (`reference_photos/cameras/`, 1920×1080):
+Without the board, the camera poses come from real frames (`reference_photos/cameras/`, 1920×1080):
 
 - `tools/calibrate_cameras.py` fits each external camera's pose and focal length. It uses
   hand-picked landmarks with known positions (base-plate corners, bin corners, the
