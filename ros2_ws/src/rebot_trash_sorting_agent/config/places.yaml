@@ -1,5 +1,6 @@
 # Measured cell geometry, in base_link, from simulation/rebot_sim/real_setup.json
-# (the sim is gone; these numbers came from measuring the real table, walls and bin).
+# (scene v1.4). The bin position was corrected with the real table homography
+# (calibration.yaml): its robot-side edge is at y = 0.30, 5 cm closer than first measured.
 #
 # Boxes are [x_min, x_max, y_min, y_max, z_min, z_max] in metres. They are published
 # as collision objects so MoveIt does not plan the arm into the walls or the bin.
@@ -18,15 +19,15 @@ bin:
   floor_z: 0.000
   #: two compartments, separated by a divider; x/y is the release point
   compartments:
-    bin_0: {x: 0.1812, y: 0.4750}     # near compartment: reachable, use by default
-    bin_1: {x: 0.3687, y: 0.4750}     # far compartment: only reachable with a hard lean
+    bin_0: {x: 0.1812, y: 0.4250}     # near compartment: reachable, use by default
+    bin_1: {x: 0.3687, y: 0.4250}     # far compartment: only reachable with a hard lean
   boxes:
-    floor: [0.075, 0.475, 0.350, 0.600, 0.000, 0.020]
-    wall_left: [0.075, 0.475, 0.575, 0.600, 0.020, 0.120]
-    wall_right: [0.075, 0.475, 0.350, 0.375, 0.020, 0.120]
-    wall_near: [0.075, 0.100, 0.375, 0.575, 0.020, 0.120]
-    wall_far: [0.450, 0.475, 0.375, 0.575, 0.020, 0.120]
-    divider: [0.262, 0.287, 0.375, 0.575, 0.020, 0.120]
+    floor: [0.075, 0.475, 0.300, 0.550, 0.000, 0.020]
+    wall_left: [0.075, 0.475, 0.525, 0.550, 0.020, 0.120]
+    wall_right: [0.075, 0.475, 0.300, 0.325, 0.020, 0.120]
+    wall_near: [0.075, 0.100, 0.325, 0.525, 0.020, 0.120]
+    wall_far: [0.450, 0.475, 0.325, 0.525, 0.020, 0.120]
+    divider: [0.262, 0.287, 0.325, 0.525, 0.020, 0.120]
 
 # There is deliberately no per-class size table here. The detector is
 # open-vocabulary, so any class list would be both wrong and incomplete. Object
