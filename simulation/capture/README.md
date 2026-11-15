@@ -114,7 +114,7 @@ python -m capture.prepare_splat_dataset splat_towel --standalone \
 ```
 
 Train it with the printed command (add `-e FRAMES=300` for long videos). Then cut the
-object out of the table and scale it to metres:
+object out and scale it to metres:
 
 ```bash
 hf download <user>/rebot_splat_towel_splat --local-dir splats/towel
@@ -122,8 +122,12 @@ python tools/crop_object_splat.py splats/towel/splat.ply \
   --object splats/towel/object.json --out splats/towel_object.ply
 ```
 
-It levels the table, finds the object, and scales the splat so that the object's length
-matches `object.json`. The output's origin is on the table under the object, with z up
-(x along the length if lying). It also writes `.json` (scale, measured diameter as a
-cross-check, transform) and `.png` (top and side views on a 1 cm grid). The phone videos
+It finds the object where the cameras' optical axes meet, segments it (dense seed,
+then, for upright objects, a walk along its axis that bridges transparent parts) and
+scales the splat so its length matches `object.json`. The output's origin is at the
+centre of the object's base, with z up (x along the length if lying). It also writes
+`.json` (scale, measured diameter as a cross-check, axis tilt, transform) and `.png`
+(top and side views on a 1 cm grid). Check the `.png`: a wrong segment shows at once.
+
+The phone videos
 in `real_setup_photos/videos/` are gitignored; their datasets are on the Hub.

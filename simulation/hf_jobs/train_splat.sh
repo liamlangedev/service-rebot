@@ -9,6 +9,7 @@
 #     ghcr.io/nerfstudio-project/nerfstudio:latest bash /data/train_splat.sh
 #
 # Output repo (model type, private): splat.ply, transforms.json (camera poses),
+# dataparser_transforms.json (maps those poses into the splat.ply frame),
 # colmap/ (sparse model), session.json / object.json. Env knobs: FRAMES (frames kept
 # per video, default 200), PICK (candidates per kept frame: the sharpest one is kept,
 # default 3), ITERS (default 30000), MATCHING (exhaustive|sequential).
@@ -53,6 +54,24 @@ echo ">> $n images"
 echo ">> COLMAP camera poses"
 ns-process-data images --data "$WORK/images" --output-dir "$WORK/ns" --matching-method "$MATCHING"
 
+# COLMAP can split a video into several models; nerfstudio always takes sparse/0,
+# which may be a 2-image fragment. Use the model with the most registered images.
+best=$(python - "$WORK/ns/colmap/sparse" <<'PY'
+import struct, sys
+from pathlib import Path
+models = sorted((struct.unpack("<Q", (d / "images.bin").read_bytes()[:8])[0], d.name)
+                for d in Path(sys.argv[1]).iterdir() if (d / "images.bin").exists())
+print(" ".join(f"sparse/{m}: {k} images" for k, m in models), file=sys.stderr)
+print(models[-1][1])
+PY
+)
+if [ "$best" != "0" ]; then
+  echo ">> using COLMAP model sparse/$best (the largest)"
+  ns-process-data images --data "$WORK/images" --output-dir "$WORK/ns" \
+    --skip-colmap --colmap-model-path "colmap/sparse/$best"
+fi
+python -c "import json; f=json.load(open('$WORK/ns/transforms.json'))['frames']; print('>>', len(f), 'posed frames'); assert len(f) >= 30, 'too few posed frames'"
+
 echo ">> training splatfacto ($ITERS iterations)"
 ns-train splatfacto --data "$WORK/ns" --output-dir "$WORK/out" \
   --max-num-iterations "$ITERS" --vis tensorboard --viewer.quit-on-train-completion True
@@ -60,6 +79,8 @@ ns-train splatfacto --data "$WORK/ns" --output-dir "$WORK/out" \
 CONFIG=$(find "$WORK/out" -name config.yml | head -1)
 ns-export gaussian-splat --load-config "$CONFIG" --output-dir "$WORK/export"
 cp "$WORK/ns/transforms.json" "$WORK/export/"
+# splat.ply is in the training (dataparser) frame; this maps transforms.json into it
+cp "$(dirname "$CONFIG")/dataparser_transforms.json" "$WORK/export/" 2>/dev/null || true
 [ -d "$WORK/ns/colmap" ] && cp -r "$WORK/ns/colmap" "$WORK/export/colmap"
 for f in session.json object.json; do cp "$DATA/$f" "$WORK/export/" 2>/dev/null || true; done
 cp "$CONFIG" "$WORK/export/nerfstudio_config.yml"

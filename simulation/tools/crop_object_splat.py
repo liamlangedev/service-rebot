@@ -3,25 +3,29 @@
   ../teleoperation/.venv/bin/python tools/crop_object_splat.py splats/towel/splat.ply \
       --object splats/towel/object.json --out splats/towel_object.ply
 
-The splat comes from hf_jobs/train_splat.sh on a video that circles one object on a
-table (prepare_splat_dataset.py --standalone --object ...). nerfstudio has already
-put z roughly up and the cameras' centre near the origin, so the object sits near
-the z axis. Steps:
+The splat comes from hf_jobs/train_splat.sh on a video that circles one object
+(prepare_splat_dataset.py --standalone --object ...). It is in nerfstudio's
+training frame; transforms.json next to it (and dataparser_transforms.json, if
+present) give the cameras. Steps:
 
-1. fit the table plane (RANSAC, normal within 35 deg of +z) and level it;
-2. find the object: the densest blob just above the table near the axis;
-3. measure its length (height if upright, longest horizontal extent if lying),
-   then scale so that it matches object.json;
-4. keep the gaussians in a box around it, in the object's frame: origin on the
-   table under its centre, z up, x along its length if lying. Units are metres.
+1. normalise with the cameras: origin where their optical axes meet (the object),
+   z along their mean up vector, unit = their median distance to that point;
+2. segment the object: dense voxels near the origin, the connected component
+   closest to it (a textureless table only gives a diffuse cloud, so it is not
+   used);
+3. its principal axis is its length: vertical if upright, along the table if
+   lying. Measure the length there and scale it to object.json;
+4. keep the gaussians in a box around it, in the object's frame: origin at the
+   centre of its base, z up, x along its length if lying. Units are metres.
 
 Positions, orientations, sizes and the view-dependent colour (SH) are all
 transformed, so the result renders correctly in any 3DGS viewer. It also writes
-<out>.json (the measured size and the transform) and <out>.png (top and side
-views with a 1 cm grid) to check the crop.
+<out>.json (the measured sizes and the transform) and <out>.png (top and side
+views on a 1 cm grid) to check the crop.
 """
 import argparse
 import json
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -115,57 +119,131 @@ def frame_from_normal(n):
     return np.stack([x, np.cross(n, x), n])
 
 
-# ---------------------------------------------------------------- finding the object
+# ---------------------------------------------------------------- cameras
 
-def fit_table(p, w, rng, iters=3000, tol=0.006):
-    """RANSAC plane over opaque gaussians near the axis; normal close to +z."""
-    near = np.linalg.norm(p[:, :2], axis=1) < 1.0
-    q, qw = p[near], w[near]
-    best, best_score = None, -1
-    for _ in range(iters):
-        a, b, c = q[rng.choice(len(q), 3, replace=False)]
-        n = np.cross(b - a, c - a)
-        if np.linalg.norm(n) < 1e-9:
+def _rotation_between(a, b):
+    """nerfstudio's rotation_matrix(a, b): the rotation taking a onto b."""
+    a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
+    v, c = np.cross(a, b), a @ b
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + k + k @ k * ((1 - c) / (v @ v + 1e-8))
+
+
+def dataparser_transform(T):
+    """The splat is trained (and exported) in nerfstudio's dataparser frame, not the
+    transforms.json frame. Recompute it as nerfstudio does with its defaults
+    (orientation_method=up, center_method=poses, auto_scale_poses): returns (3x4, scale)."""
+    R = _rotation_between(T[:, :3, 1].mean(0), np.array([0.0, 0, 1]))
+    M = np.c_[R, R @ -T[:, :3, 3].mean(0)]
+    pos = T[:, :3, 3] @ R.T + M[:, 3]
+    return M, 1.0 / np.abs(pos).max()
+
+
+def camera_rig(transforms, dataparser=None):
+    """Cameras from nerfstudio transforms.json (OpenGL: look along -z, +y up), moved
+    into the splat's frame: the point nearest to all optical axes, the mean up vector
+    and the median camera distance to that point."""
+    T = np.array([f["transform_matrix"] for f in transforms["frames"]], float)
+    if dataparser:
+        M, scale = np.array(dataparser["transform"], float), dataparser["scale"]
+    else:
+        M, scale = dataparser_transform(T)
+    T = np.einsum("ij,njk->nik", M[:, :3], T[:, :3, :4])
+    T[:, :3, 3] = (T[:, :3, 3] + M[:, 3]) * scale
+    C, fwd, up = T[:, :3, 3], -T[:, :3, 2], T[:, :3, 1]
+    A, b = np.zeros((3, 3)), np.zeros(3)
+    for c, f in zip(C, fwd):
+        M = np.eye(3) - np.outer(f, f)
+        A += M
+        b += M @ c
+    o = np.linalg.solve(A, b)
+    up = up.mean(0)
+    return o, up / np.linalg.norm(up), float(np.median(np.linalg.norm(C - o, axis=1)))
+
+
+
+
+def segment(P, voxel=0.02, radius=0.9, near=0.4):
+    """Indices of the object: dense voxels inside `radius`, 26-connected, the largest
+    component whose centre is within `near` of the origin (normalised units)."""
+    idx = np.nonzero(np.linalg.norm(P, axis=1) < radius)[0]
+    keys = np.floor(P[idx] / voxel).astype(np.int64)
+    uniq, inv, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    dense = counts >= max(3, np.percentile(counts, 60))
+    cell = {tuple(k): i for i, k in enumerate(uniq) if dense[i]}
+    label, comps = {}, []
+    offs = [(a, b, c) for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1)]
+    for start in cell:
+        if start in label:
             continue
-        n /= np.linalg.norm(n)
-        if n[2] < 0:
-            n = -n
-        if n[2] < np.cos(np.radians(35)):
-            continue
-        score = qw[np.abs((q - a) @ n) < tol].sum()
-        if score > best_score:
-            best, best_score = (n, a), score
-    n, a = best
-    inl = q[np.abs((q - a) @ n) < tol]
-    c = inl.mean(0)
-    n = np.linalg.svd(inl - c)[2][2]
-    if n[2] < 0:
-        n = -n
-    return n, c, len(inl)
-
-
-def find_centre(xy, w, start=(0.0, 0.0), bw=0.12, steps=30):
-    """Weighted mean shift in the table plane."""
-    c = np.array(start, float)
-    for _ in range(steps):
-        k = w * np.exp(-np.sum((xy - c) ** 2, 1) / (2 * bw * bw))
-        c = (xy * k[:, None]).sum(0) / k.sum()
-    return c
-
-
-def top_of_column(h, gap):
-    """Highest height reached from the table without a gap > `gap`."""
-    h = np.sort(h[h > 0])
-    if len(h) == 0:
-        return 0.0
-    jumps = np.nonzero(np.diff(h) > gap)[0]
-    top = h[jumps[0]] if len(jumps) else h[-1]
-    below = h[h <= top]
-    return float(np.percentile(below, 99.5))
+        label[start] = len(comps)
+        members, q = [], deque([start])
+        while q:
+            k = q.popleft()
+            members.append(cell[k])
+            for o in offs:
+                nb = (k[0] + o[0], k[1] + o[1], k[2] + o[2])
+                if nb in cell and nb not in label:
+                    label[nb] = len(comps)
+                    q.append(nb)
+        comps.append(members)
+    best, best_n = None, 0
+    for members in comps:
+        n = counts[members].sum()
+        centre = (uniq[members].mean(0) + 0.5) * voxel
+        if np.linalg.norm(centre) < near and n > best_n:
+            best, best_n = members, n
+    if best is None:
+        raise SystemExit("no object found near the cameras' focus")
+    return idx[np.isin(inv, best)]
 
 
 def extent(v, lo=0.5, hi=99.5):
     return np.percentile(v, lo), np.percentile(v, hi)
+
+
+def principal_axis(d):
+    return np.linalg.svd(d, full_matrices=False)[2][0]
+
+
+def grow_column(P, seed, up, unit, binw=0.02, gap=0.2, rel=0.15, iters=4):
+    """An upright object from its dense seed (e.g. a bottle's cap and label): walk
+    along its axis in bins of `binw` while bins are dense, bridging sparse runs up
+    to `gap` (transparent glass), then refit the axis and repeat. Lengths are in
+    units of `unit` (the camera orbit). Returns (centre, axis, points)."""
+    c, axis = np.median(seed, axis=0), up.copy()
+    d = seed - c
+    rad = np.linalg.norm(d - np.outer(d @ axis, axis), axis=1)
+    rc = max(0.05 * unit, 1.25 * np.percentile(rad, 95))
+    for _ in range(iters):
+        d = P - c
+        t = d @ axis
+        rad = np.linalg.norm(d - np.outer(t, axis), axis=1)
+        sel = np.nonzero((rad < rc) & (np.abs(t) < 1.2 * unit))[0]
+        b = np.floor(t[sel] / (binw * unit)).astype(int)
+        b0 = b.min()
+        counts = np.bincount(b - b0)
+        dense = counts >= rel * np.percentile(counts[counts > 0], 90)
+        start = int(np.clip(-b0, 0, len(counts) - 1))
+        start = np.nonzero(dense)[0][np.argmin(np.abs(np.nonzero(dense)[0] - start))]
+        ends = []
+        for step in (1, -1):
+            k = end = start
+            miss = 0
+            while 0 <= k + step < len(counts) and miss <= gap / binw:
+                k += step
+                if dense[k]:
+                    end, miss = k, 0
+                else:
+                    miss += 1
+            ends.append(end)
+        hi, lo = ends
+        pts = P[sel[(b - b0 >= lo) & (b - b0 <= hi)]]
+        c = np.median(pts, axis=0)
+        axis = principal_axis(pts - c)
+        axis *= np.sign(axis @ up)
+    return c, axis, pts
 
 
 # ---------------------------------------------------------------- main
@@ -176,81 +254,77 @@ def main():
     p.add_argument("ply")
     p.add_argument("--object", required=True, help="object.json from the dataset")
     p.add_argument("--out", required=True)
+    p.add_argument("--transforms", help="camera poses (default: transforms.json next to the ply)")
     p.add_argument("--min-opacity", type=float, default=0.3)
-    p.add_argument("--margin", type=float, default=0.15,
+    p.add_argument("--margin", type=float, default=0.1,
                    help="extra room around the object, as a fraction of its size")
-    p.add_argument("--table", type=float, default=0.004,
-                   help="keep this much table under the object, metres (0 = none)")
     args = p.parse_args()
 
     meta = json.loads(Path(args.object).read_text())
     L, D, pose = meta["length"], meta["diameter"], meta["pose"]
     v = read_ply(args.ply)
-    P = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
+    P0 = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float64)
     alpha = 1 / (1 + np.exp(-v["opacity"].astype(np.float64)))
-    size = np.exp(np.stack([v[f"scale_{i}"] for i in range(3)], 1)).max(1)
-    good = (alpha > args.min_opacity) & np.isfinite(P).all(1)
-    good &= size <= np.percentile(size[good], 95)
-    rng = np.random.default_rng(0)
+    good = (alpha > args.min_opacity) & np.isfinite(P0).all(1)
 
-    # 1. table plane -> levelled frame (z = height above the table)
-    n, c0, n_in = fit_table(P[good], alpha[good], rng)
-    F = frame_from_normal(n)
-    Q = (P - c0) @ F.T
-    print(f"table: {n_in} gaussians on the plane, tilt {np.degrees(np.arccos(n[2])):.1f} deg")
+    # 1. normalise with the cameras
+    tf = Path(args.transforms) if args.transforms else Path(args.ply).with_name("transforms.json")
+    dp = tf.with_name("dataparser_transforms.json")
+    o, up, orbit = camera_rig(json.loads(tf.read_text()),
+                              json.loads(dp.read_text()) if dp.exists() else None)
+    P = (P0 - o) @ frame_from_normal(up).T / orbit
+    print(f"cameras: focus {o.round(3)}, orbit radius {orbit:.3f} units")
 
-    # 2. object: blob just above the table near the axis
-    g = good & (Q[:, 2] > 0.01) & (Q[:, 2] < 1.0)
-    origin_xy = (-c0 @ F.T)[:2]
-    cxy = find_centre(Q[g, :2], alpha[g], start=origin_xy)
-    r = np.linalg.norm(Q[:, :2] - cxy, axis=1)
-
-    # 3. measure the length in splat units
+    # 2. segment the object: a dense seed; an upright object then grows along its axis
+    gi = np.nonzero(good)[0]
+    seed = gi[segment(P[gi])]
     if pose == "upright":
-        col = good & (r < 0.08)
-        top = top_of_column(Q[col, 2], gap=0.03)
-        for _ in range(2):  # refine the column radius from the expected aspect ratio
-            rad = 0.6 * top * D / L * 1.3
-            col = good & (r < rad) & (Q[:, 2] > 0)
-            cxy = np.average(Q[col, :2], axis=0, weights=alpha[col])
-            r = np.linalg.norm(Q[:, :2] - cxy, axis=1)
-            top = top_of_column(Q[col & (r < rad), 2], gap=0.03)
-        measured = top
-        Rz = np.eye(3)
-        lo, hi = extent(np.linalg.norm(Q[col, :2] - cxy, axis=1), 0, 90)
-        measured_d = 2 * hi
+        m, axis, Po = grow_column(P0[good], P0[seed], up, orbit)
     else:
-        blob = good & (r < 0.5) & (Q[:, 2] > 0.01) & (Q[:, 2] < 0.3)
-        xy = Q[blob, :2] - cxy
-        axis = np.linalg.svd(xy - xy.mean(0), full_matrices=False)[2][0]
-        perp = np.array([-axis[1], axis[0]])
-        u = xy @ axis
-        a0, a1 = extent(u[np.abs(xy @ perp) < 0.15], 1, 99)
-        measured = a1 - a0
-        mid = (a0 + a1) / 2
-        cxy = cxy + axis * mid
-        Rz = np.array([[axis[0], axis[1], 0], [perp[0], perp[1], 0], [0, 0, 1]])
-        sel = good & (np.abs((Q[:, :2] - cxy) @ axis) < measured / 2) & \
-            (np.abs((Q[:, :2] - cxy) @ perp) < measured * D / L)
-        measured_d = top_of_column(Q[sel, 2], gap=0.02)
+        Po = P0[seed]
+        m = np.median(Po, axis=0)
+        axis = principal_axis(Po - m)
+    print(f"object: {len(Po)} gaussians (seed {len(seed)})")
+
+    # 3. principal axis = length; object frame rows R (x, y, z) in splat coordinates
+    if pose == "upright":
+        R = frame_from_normal(axis)
+        tilt = np.degrees(np.arccos(np.clip(axis @ up, -1, 1)))
+    else:
+        z = up - (up @ axis) * axis
+        z /= np.linalg.norm(z)
+        R = np.stack([axis, np.cross(z, axis), z])
+        tilt = 90 - np.degrees(np.arccos(np.clip(abs(axis @ up), -1, 1)))
+    Q = (Po - m) @ R.T
+    if pose == "upright":
+        lo, hi = extent(Q[:, 2])
+        measured = hi - lo
+        measured_d = 2 * np.percentile(np.linalg.norm(Q[:, :2] - np.median(Q[:, :2], 0), axis=1), 90)
+        base = np.r_[np.median(Q[:, :2], 0), lo]
+    else:
+        lo, hi = extent(Q[:, 0])
+        measured = hi - lo
+        zlo, zhi = extent(Q[:, 2])
+        measured_d = zhi - zlo
+        base = np.array([(lo + hi) / 2, np.median(Q[:, 1]), zlo])
     s = L / measured
-    print(f"{meta['object']}: length {measured:.3f} splat units -> {L * 100:g} cm "
-          f"(scale {s:.4f} m/unit); diameter then {measured_d * s * 100:.1f} cm "
-          f"(given {D * 100:g} cm)")
+    print(f"{meta['object']}: length {measured:.4f} units = {L * 100:g} cm -> scale {s:.4f} m/unit; "
+          f"axis {tilt:.1f} deg off {'vertical' if pose == 'upright' else 'horizontal'}")
+    print(f"  diameter then measures {measured_d * s * 100:.1f} cm (given {D * 100:g} cm)")
 
-    # 4. object frame in metres: X = s * Rz F (P - c0) - [cx, cy, 0]
-    R = Rz @ F
-    t = np.array([cxy[0], cxy[1], 0.0]) @ Rz.T
-    X = s * (P - c0) @ R.T - s * t
-    half = (np.array([L, D, D]) / 2 if pose == "lying" else np.array([D, D, L]) / 2)
-    half = half * (1 + args.margin) + 0.01
+    # 4. object frame in metres: X = s * R (P0 - p0); p0 = centre of the base
+    p0 = m + base @ R
+    X = s * (P0 - p0) @ R.T
+    d = max(D, measured_d * s)
     if pose == "upright":
-        zlo, zhi = -args.table, L * (1 + args.margin)
-        box = (np.abs(X[:, 0]) < half[0]) & (np.abs(X[:, 1]) < half[1])
+        half, zr = np.array([d, d]) / 2, (L, L)
     else:
-        zlo, zhi = -args.table, D * (1 + 2 * args.margin) + 0.01
-        box = (np.abs(X[:, 0]) < half[0]) & (np.abs(X[:, 1]) < half[1])
-    keep = box & (X[:, 2] > zlo) & (X[:, 2] < zhi) & np.isfinite(X).all(1)
+        half, zr = np.array([L, d]) / 2, (d, d)
+    half = half * (1 + args.margin) + 0.01
+    gsize = s * np.exp(np.stack([v[f"scale_{i}"] for i in range(3)], 1).astype(np.float64)).max(1)
+    keep = ((np.abs(X[:, :2]) < half).all(1) & (X[:, 2] > -0.003) &
+            (X[:, 2] < zr[1] * (1 + args.margin) + 0.01) & (gsize < 0.5 * d) &
+            np.isfinite(X).all(1))
 
     out = v[keep].copy()
     for i, k in enumerate("xyz"):
@@ -267,12 +341,11 @@ def main():
     rest = sorted((k for k in out.dtype.names if k.startswith("f_rest_")),
                   key=lambda k: int(k.split("_")[-1]))
     if rest:
-        m = len(rest) // 3
-        M = sh_rotation(R, m)
+        n_coef = len(rest) // 3
+        M = sh_rotation(R, n_coef)
         for ch in range(3):
-            ks = rest[ch * m:(ch + 1) * m]
-            C = np.stack([out[k] for k in ks], 1).astype(np.float64)
-            C = C @ M.T
+            ks = rest[ch * n_coef:(ch + 1) * n_coef]
+            C = np.stack([out[k] for k in ks], 1).astype(np.float64) @ M.T
             for j, k in enumerate(ks):
                 out[k] = C[:, j]
 
@@ -281,12 +354,12 @@ def main():
     write_ply(outp, out)
     info = {"object": meta["object"], "pose": pose, "given": meta,
             "measured_length_units": measured, "scale_m_per_unit": s,
-            "measured_diameter_m": measured_d * s, "n_gaussians": int(keep.sum()),
-            "frame": "origin on the table under the object's centre, z up, "
-                     "x along the length when lying; metres",
-            "splat_to_object": {"scale": s, "R": R.tolist(), "p0": c0.tolist(),
-                                "t": (s * t).tolist(),
-                                "formula": "X = scale * R @ (p - p0) - t"}}
+            "measured_diameter_m": measured_d * s, "axis_tilt_deg": tilt,
+            "n_gaussians": int(keep.sum()),
+            "frame": "origin at the centre of the object's base, z up, x along the "
+                     "length when lying; metres",
+            "splat_to_object": {"scale": s, "R": R.tolist(), "p0": p0.tolist(),
+                                "formula": "X = scale * R @ (p - p0)"}}
     outp.with_suffix(".json").write_text(json.dumps(info, indent=2) + "\n")
     preview(out, outp.with_suffix(".png"), meta["object"])
     print(f"wrote {outp} ({keep.sum()} gaussians), .json and .png")
