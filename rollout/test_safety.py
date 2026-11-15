@@ -64,3 +64,18 @@ def test_gripper_units_this_arm_vs_dataset():
     assert g.to_robot(-5.0) == pytest.approx(507.0)
     assert g.to_robot(g.to_data(300.0)) == pytest.approx(300.0)
     assert g.opening_data(-5.0) == 0.0 and g.opening_robot(161.0) == 1.0
+
+
+def test_floor_allows_rising_out_of_a_low_pose_but_not_going_lower():
+    fk = lambda q: (0.3, -0.2, 0.30 + 0.001 * q[1])  # noqa: E731  (q1 -190 -> z 0.11)
+    f = SafetyFilter(SafetyLimits(max_speed_deg_s=1e6, min_tcp_z=0.120), rate_hz=30.0, fk=fk)
+    low = GRASP.copy()
+    low[1] = -190.0                     # z 0.110, below the floor (left there by hand)
+    up = low.copy()
+    up[1] = -188.0                      # z 0.112: still below, but rising
+    down = low.copy()
+    down[1] = -192.0                    # z 0.108: lower
+    assert f.filter(up, low).stop is None
+    assert "floor" in f.filter(down, low).stop
+    assert f.check_pose(low) is not None          # without a reference it is outside
+    assert f.check_pose(low, from_q=low) is None  # staying put is allowed

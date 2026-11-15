@@ -128,15 +128,17 @@ class Session:
                    "space = stop")
         lag = LagWatch(self.limits)
         t0 = time.monotonic()
+        prev = start
         for i in range(1, n + int(RATE) + 1):  # + 1 s to settle
             s = min(i / n, 1.0)
             s = s * s * (3 - 2 * s)
             cmd = start + s * (target7 - start)
-            why = self.safety.check_pose(cmd)
+            why = self.safety.check_pose(cmd, from_q=prev)  # may rise out of a low pose
             if why:
                 self.event(f"STOP: {why}")
                 return False
             self.send(cmd)
+            prev = cmd
             k = self.keys.poll()
             if k in (" ", "s", "q"):
                 self.event("stopped by key")
@@ -419,7 +421,7 @@ def mode_grasp_abs(sess: Session, runner, cam_map) -> dict:
     print(f"clip {sess.args.start_episode} of {sess.args.start_dataset} {info}")
     print(f"  start joints [deg]: {np.round(start[:6], 1)}")
     print(f"  TCP at start: x={x:.3f} y={y:+.3f} m (base frame), {z * 100:.1f} cm site height")
-    print("  place the keys under the gripper there, as in that episode")
+    print("  place the object under the gripper there, as in that episode")
     ready = np.r_[READY_DEG, sess.grip.robot_open]
     if sess.args.via_ready and not sess.move_to(ready, 5.0, "ready pose"):
         return {"reason": "did not reach the ready pose", **info}
@@ -467,7 +469,8 @@ def mode_grasp_rel(sess: Session, runner, cam_map) -> dict:
                     set_torque(sess.robot, True)
                 return {"reason": "quit before start"}
             time.sleep(DT)
-    why = sess.safety.check_pose(sess.state())
+    here = sess.state()
+    why = sess.safety.check_pose(here, from_q=here)  # a low start only forbids going lower
     if why:
         return {"reason": f"start pose outside the workspace: {why}"}
     return run_policy(sess, runner, cam_map, grasp=True)
