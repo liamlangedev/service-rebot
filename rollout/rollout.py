@@ -170,17 +170,24 @@ def load_runner(args, mode: str):
     policy = args.policy or DEFAULT_POLICY[mode]
     sub = args.policy_subfolder if args.policy_subfolder is not None else (
         DEFAULT_SUBFOLDER.get(mode) if not args.policy else None)
-    if sub:
-        from huggingface_hub import snapshot_download
-        policy = str(Path(snapshot_download(policy, allow_patterns=[f"{sub}/*"])) / sub)
     rel = mode == "grasp-rel"
     task = args.task or ("pickup the keys and put it in the designated bin" if mode == "full"
                          else "grasp the keys and lift them")
-    print(f"loading {policy} ({'relative' if rel else 'absolute'}, {args.device})")
-    runner = PolicyRunner(RunnerConfig(policy_path=policy, mode="relative" if rel else "absolute",
-                                       device=args.device, task=task,
-                                       max_offset_deg=args.max_offset or 180.0,
-                                       use_cameras=tuple(args.use_cams) if args.use_cams else None))
+    use_cams = tuple(args.use_cams) if args.use_cams else None
+    if args.remote:
+        # inference on a remote GPU (rollout/remote/): the server downloads the model
+        from remote_runner import RemoteRunner
+        runner = RemoteRunner(args.remote, policy, sub, "relative" if rel else "absolute",
+                              task, use_cams, args.max_offset or 180.0)
+    else:
+        if sub:
+            from huggingface_hub import snapshot_download
+            policy = str(Path(snapshot_download(policy, allow_patterns=[f"{sub}/*"])) / sub)
+        print(f"loading {policy} ({'relative' if rel else 'absolute'}, {args.device})")
+        runner = PolicyRunner(RunnerConfig(policy_path=policy, mode="relative" if rel else "absolute",
+                                           device=args.device, task=task,
+                                           max_offset_deg=args.max_offset or 180.0,
+                                           use_cameras=use_cams))
     cam_map = {n: SMOLVLA_CAMERAS.get(n, n) for n in runner.camera_names}
     for pair in args.camera_map or []:
         k, v = pair.split("=", 1)
@@ -475,6 +482,9 @@ def main() -> None:
                    help="model folder inside the repo, e.g. checkpoints/004000/pretrained_model")
     p.add_argument("--task", help="language task (SmolVLA)")
     p.add_argument("--device", default="cpu")
+    p.add_argument("--remote", metavar="URL",
+                   help="run inference on a remote policy server (rollout/remote/), e.g. the "
+                        "URL printed by rollout/remote/start_server.sh")
     p.add_argument("--cam", action="append", metavar="NAME=DEVICE",
                    help="camera by dataset name: front_wide, gripper, high_oblique")
     p.add_argument("--use-cams", nargs="+", metavar="POLICY_CAM",
