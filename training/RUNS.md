@@ -89,6 +89,33 @@ stop is unexplained; rerun it if the abs strategy looks promising.
 
 SmolVLA on the same datasets was considered and skipped for now.
 
+On the real arm (`rollout/`, 2026-11-15): grasp-abs gripped and lifted 2/2 from held-out
+clip 27. grasp-rel did so 1/4 started runs; in the other three the policy closed the jaw
+in the air and kept descending (ended on the floor limit or the timeout).
+
+## Towel grasp runs: ACT and SmolVLA (2026-11-15)
+
+Same pipeline on [RoboCrafty/rebot_sort_towel2](https://huggingface.co/datasets/RoboCrafty/rebot_sort_towel2)
+(32 episodes, 640x360 cameras, same joint and gripper conventions as rebot_sort_v1). All 32
+grasps pass the filters. Like the keys, the towel grasps are all in one spot (TCP x
+0.40-0.47 m, y -0.29 to -0.19 m, xy std 2.3 cm), so "random locations" is what the relative
+variant is for. Task text: "pick up the towel" (the SmolVLA prompt). Built on HF Jobs
+(`6af9bf4c29dd05ff0368ca52`, cpu-upgrade); the datasets are **public**.
+
+| | abs (specific location) | rel (random locations) |
+|---|---|---|
+| Dataset | [`niru-5/rebot_grasp_towel_abs`](https://huggingface.co/datasets/niru-5/rebot_grasp_towel_abs): 32 clips, 3,507 frames, 3 cameras, `eval_split=0.078125` | [`niru-5/rebot_grasp_towel_rel`](https://huggingface.co/datasets/niru-5/rebot_grasp_towel_rel): 128 clips, 11,148 frames, gripper camera, `eval_split=0.08984375` |
+| Held out | source episodes 29-31 | same |
+| ACT | `6af9c3e929dd05ff0368cffc` -> `niru-5/act_rebot_grasp_towel_abs` | `6af9c3d329dd05ff0368cfcd` -> `niru-5/act_rebot_grasp_towel_rel` |
+| SmolVLA | `6af9c3f429dd05ff0368d00e` -> `niru-5/smolvla_rebot_grasp_towel_abs_2026-11-15_14-38-42` | `6af9c3de23985fb9cd836e48` -> `niru-5/smolvla_rebot_grasp_towel_rel_2026-11-15_14-38-20` |
+
+ACT settings as for the keys (`training_gripper/train.sh`). SmolVLA
+(`training_gripper/train_smolvla.sh`): fine-tunes `smolvla_base`, cameras renamed to
+camera1/2/3 (gripper -> camera2), batch 64 x 5k steps, cosine warmup 300 / decay 5k, eval
+every 500 steps, 8 workers, rtx-pro-6000. Model repos are private.
+
+Results: running.
+
 ## Aborted runs
 
 | # | Policy | Flavor | Settings | HF job | Outcome |
