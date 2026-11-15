@@ -22,7 +22,7 @@ exec "$LEROBOT_TRAIN" \
   --policy.repo_id="$HF_USER/smolvla_rebot_sort_v1" \
   --rename_map='{"observation.images.front_wide": "observation.images.camera1", "observation.images.gripper": "observation.images.camera2", "observation.images.high_oblique": "observation.images.camera3"}' \
   --batch_size=128 \
-  --num_workers=22 \
+  --num_workers=16 \
   --steps=10000 \
   --save_freq=2500 \
   --policy.scheduler_warmup_steps=500 \

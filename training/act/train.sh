@@ -22,7 +22,7 @@ exec "$LEROBOT_TRAIN" \
   --policy.chunk_size=100 \
   --policy.n_action_steps=100 \
   --batch_size=96 \
-  --num_workers=22 \
+  --num_workers=16 \
   --steps=13500 \
   --save_freq=1500 \
   --save_checkpoint_to_hub=true \
