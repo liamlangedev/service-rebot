@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import os
 from pathlib import Path
 import threading
 import time
@@ -28,7 +30,7 @@ from .skills.skills import SkillRunner
 from .skills.vla_policy import VLAPolicyClient
 from .types import TaskResult
 from .vlm.json_tools import encode_jpeg
-from .vlm.registry import make_session
+from .vlm.registry import list_provider_models, make_session
 
 log = logging.getLogger(__name__)
 _DISPLAY_CONFIDENCE = 0.5
@@ -108,6 +110,9 @@ PAGE = r"""<!doctype html>
           margin-right:6px; vertical-align:baseline; border:1px solid #444; }
   .task-hdr { color:var(--warn); font-weight:600; font-size:12px; overflow-wrap:anywhere; min-width:0; }
   .chatmsg { font:11px ui-monospace,monospace; color:var(--dim); margin-top:6px; min-height:15px; }
+  .model-select { background:#0f141b; color:var(--fg); border:1px solid var(--line);
+                  border-radius:8px; padding:3px 8px; font:12px ui-monospace,monospace; cursor:pointer; }
+  .model-select:disabled { opacity:.5; cursor:not-allowed; }
   header { flex-wrap:wrap; }
   @media (max-width:900px) {
     html,body { height:auto; min-height:100%; overflow:auto; }
@@ -121,6 +126,7 @@ PAGE = r"""<!doctype html>
   <span id="state" class="badge">connecting</span>
   <span id="task-hdr" class="task-hdr"></span>
   <span id="model" class="meta"></span>
+  <select id="model-select" class="model-select" title="Switch VLM model"></select>
 </header>
 <main>
   <section class="left-col">
@@ -219,9 +225,20 @@ async function refresh() {
     const camCount = (s.frames > 0 ? 1 : 0) + (s.wrist_frames > 0 ? 1 : 0) + (s.front_frames > 0 ? 1 : 0);
     $("model").textContent = [
       `${camCount} cams`,
-      s.provider && s.model ? `${s.provider}/${s.model}` : (s.provider || s.model),
       s.dry_run ? "dry run" : null,
     ].filter(Boolean).join(" · ");
+    const sel = $("model-select");
+    const avail = s.available_models || [];
+    const availSig = JSON.stringify(avail);
+    if (sel.dataset.sig !== availSig) {
+      sel.dataset.sig = availSig;
+      sel.innerHTML = avail.map(m =>
+        `<option value="${esc(m.provider)}::${esc(m.model)}">${esc(m.provider)}/${esc(m.model)}</option>`
+      ).join("");
+    }
+    const curVal = `${s.provider}::${s.model}`;
+    if ([...sel.options].some(o => o.value === curVal)) sel.value = curVal;
+    sel.disabled = !!s.busy || avail.length <= 1;
     $("run").disabled = !!s.busy;
     const facts = [
       ["frames", `${s.frames} / front ${s.front_frames || 0} / wrist ${s.wrist_frames || 0}`],
@@ -308,6 +325,10 @@ $("run").onclick = () => {
   post("/api/task", {task}, "running");
 };
 $("stop").onclick = () => post("/api/stop", {}, "stop requested");
+$("model-select").onchange = (e) => {
+  const [provider, model] = String(e.target.value || "").split("::");
+  if (provider && model) post("/api/model", {provider, model}, `model: ${provider}/${model}`);
+};
 $("task").addEventListener("input", (e) => {
   e.target.style.height = "auto";
   e.target.style.height = Math.min(96, e.target.scrollHeight) + "px";
@@ -424,6 +445,7 @@ class DashboardApp:
         self._front_dets: list[Detection] = []
         self._wrist_dets: list[Detection] = []
         self._jpeg_cache: dict[str, tuple[tuple[int, tuple[Any, ...]], bytes]] = {}
+        self._model_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
 
         self._state = "idle"
         self._task = ""
@@ -449,10 +471,77 @@ class DashboardApp:
             return self._rig.get("front_camera")
         return stream
 
+    def _cached_provider_models(self, provider: str, api_key: str | None, base_url: str | None = None) -> list[str]:
+        cache: dict[tuple[str, str], tuple[float, list[str]]] | None = getattr(self, "_model_cache", None)
+        if cache is None:
+            cache = {}
+            self._model_cache = cache
+        key = (provider, f"{api_key or ''}|{base_url or ''}")
+        now = time.monotonic()
+        entry = cache.get(key)
+        if entry is not None and (now - entry[0]) < 300.0:
+            return list(entry[1])
+        models = list_provider_models(provider, api_key=api_key, base_url=base_url)
+        cache[key] = (now, list(models))
+        return list(models)
+
+    def available_models(self) -> list[dict[str, str]]:
+        """Return provider/model options whose credentials are available."""
+        options: list[dict[str, str]] = []
+        gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or self._config.api_key()
+        if gemini_key:
+            models = self._cached_provider_models("gemini", gemini_key)
+            if self._provider == "gemini" and self._model not in models:
+                models.insert(0, self._model)
+            for m in models:
+                options.append({"provider": "gemini", "model": m})
+
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        base_url = self._config.vlm.base_url
+        if openai_key or base_url:
+            models = self._cached_provider_models("openai", openai_key, base_url=base_url)
+            if self._provider == "openai" and self._model not in models:
+                models.insert(0, self._model)
+            for m in models:
+                options.append({"provider": "openai", "model": m})
+
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+        if anthropic_key:
+            models = self._cached_provider_models("anthropic", anthropic_key)
+            if self._provider == "anthropic" and self._model not in models:
+                models.insert(0, self._model)
+            for m in models:
+                options.append({"provider": "anthropic", "model": m})
+
+        options.append({"provider": "mock", "model": "mock"})
+        return options
+
+    def set_model(self, provider: str, model: str) -> bool:
+        allowed = {(m["provider"], m["model"]) for m in self.available_models()}
+        if (provider, model) not in allowed:
+            raise ValueError(f"model {provider}/{model} has no available credentials")
+        with self._lock:
+            if self._worker is not None and self._worker.is_alive():
+                return False
+            self._provider = provider
+            self._model = model
+        self._events.emit("note", text=f"switched model to {provider}/{model}")
+        return True
+
+    def _api_key_for(self, provider: str) -> str | None:
+        if provider == "gemini":
+            return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or self._config.api_key()
+        if provider == "openai":
+            return os.environ.get("OPENAI_API_KEY")
+        if provider == "anthropic":
+            return os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+        return None
+
     def status_json(self) -> dict[str, Any]:
         t_cam = self._stream_for(self._table_name)
         f_cam = self._stream_for("front")
         w_cam = self._stream_for("wrist")
+        avail = self.available_models()
         with self._lock:
             return {
                 "state": self._state,
@@ -461,6 +550,7 @@ class DashboardApp:
                 "result": self._result,
                 "provider": self._provider,
                 "model": self._model,
+                "available_models": avail,
                 "dry_run": self._dry_run,
                 "vla_backend": self._vla.backend,
                 "digital_twin": self._twin.status(),
@@ -524,15 +614,12 @@ class DashboardApp:
             max_consecutive_errors=int(self._config.run.get("max_consecutive_errors", 3)),
         )
         try:
+            vlm_settings = replace(self._config.vlm, provider=self._provider, model=self._model)
             session = make_session(
-                provider=self._provider,
-                model=self._model,
-                tools=TOOLS,
-                system=system_prompt(self._config.places),
-                api_key=self._config.api_key(),
-                base_url=self._config.vlm.base_url,
-                temperature=self._config.vlm.temperature,
-                max_tokens=self._config.vlm.max_tokens,
+                vlm_settings,
+                system_prompt(self._config.places),
+                TOOLS,
+                api_key=self._api_key_for(self._provider),
             )
             orch = Orchestrator(
                 session=session,
@@ -725,6 +812,18 @@ def _handler(app: DashboardApp):
             elif self.path == "/api/stop":
                 app.stop_robot()
                 self._json({"ok": True})
+            elif self.path == "/api/model":
+                provider = str(payload.get("provider", "")).strip()
+                model = str(payload.get("model", "")).strip()
+                try:
+                    ok = app.set_model(provider, model)
+                except ValueError as exc:
+                    self._json({"ok": False, "error": str(exc)}, 400)
+                    return
+                if not ok:
+                    self._json({"ok": False, "error": "agent is busy"}, 409)
+                    return
+                self._json({"ok": True, "provider": provider, "model": model})
             elif self.path == "/api/joints":
                 raw_joints = payload.get("joints", payload)
                 try:
