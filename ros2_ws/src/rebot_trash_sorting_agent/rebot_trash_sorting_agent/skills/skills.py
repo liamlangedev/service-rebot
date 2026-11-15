@@ -15,12 +15,20 @@ tests possible.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
-from ..types import PlaceTarget, ToolResult, WorldObject
-from .grasp import GraspPlan, plan_grasp
-from .place import resolve_place
-from .poses import ToolPose
+from rebot_trash_sorting_agent.skills.grasp import (
+    GraspPlan,
+    plan_grasp,
+)
+from rebot_trash_sorting_agent.skills.place import resolve_place
+from rebot_trash_sorting_agent.skills.poses import ToolPose
+from rebot_trash_sorting_agent.types import (
+    PlaceTarget,
+    ToolResult,
+    WorldObject,
+)
 
 
 class SkillError(RuntimeError):
@@ -51,6 +59,8 @@ class SkillRunner:
         plan_only: bool = False,
         wrist_camera: Any = None,
         annotated_sink: AnnotateSink | None = None,
+        front_camera: Any = None,
+        height_camera: Any = None,
     ) -> None:
         self.places = places
         self.motion_cfg = motion_cfg
@@ -64,6 +74,8 @@ class SkillRunner:
         self.plan_only = bool(plan_only)
         self.wrist_camera = wrist_camera
         self.annotated_sink = annotated_sink
+        self.front_camera = front_camera
+        self.height_camera = height_camera
         self._cancelled = False
 
         self._grasp_cfg = dict(motion_cfg.get("grasp") or {})
@@ -113,10 +125,11 @@ class SkillRunner:
         frame = self._grab(self.camera)
         if frame is None:
             raise SkillError(
-                "no camera frame: is camera_node running and is cameras.yaml device correct?"
+                "no camera frame: is camera_node running and is cameras.yaml device correct?",
             )
         detections = self._detect(frame)
         objects = self.scene.update(detections, self.table_map)
+        height_note = self._update_heights(objects)
         self._publish_annotated(frame, detections)
 
         if self.table_map is None:
@@ -124,8 +137,7 @@ class SkillRunner:
                 "calibrated": False,
                 "objects": [],
                 "detections": [
-                    {"label": d.label, "score": round(d.score, 3), "width_px": round(d.width_px, 1)}
-                    for d in detections
+                    {"label": d.label, "score": round(d.score, 3), "width_px": round(d.width_px, 1)} for d in detections
                 ],
                 "summary": (
                     "the table camera is not calibrated, so pixels cannot be turned into "
@@ -135,6 +147,7 @@ class SkillRunner:
         return {
             "calibrated": True,
             "visible": len(objects),
+            "height_estimation": height_note,
             "objects": self.scene.as_summaries(),
             "summary": _objects_sentence(objects),
         }
@@ -156,8 +169,7 @@ class SkillRunner:
         notes: list[str] = []
         if obj.state == "remembered":
             notes.append(
-                f"{obj.label} was last seen {obj.age_s:.1f} s ago and is not visible now; "
-                "the position may be stale"
+                f"{obj.label} was last seen {obj.age_s:.1f} s ago and is not visible now; the position may be stale",
             )
 
         plans, grasp_notes = self._reachable_grasps(obj)
@@ -204,13 +216,11 @@ class SkillRunner:
 
             close = self.gripper.close()
             if not close.get("holding"):
-                attempts.append({"grasp": candidate_plan.grasp.summary(),
-                                 "close": _grasp_payload(close)})
+                attempts.append({"grasp": candidate_plan.grasp.summary(), "close": _grasp_payload(close)})
                 # Retreat with the jaws still closed: if the torque test missed a soft
                 # object, it comes up rather than being knocked off the table by an
                 # opening jaw.
-                self.motion.move_to_pose(candidate_plan.pre_grasp,
-                                         label="retreat after empty grasp")
+                self.motion.move_to_pose(candidate_plan.pre_grasp, label="retreat after empty grasp")
                 self.gripper.open()
                 continue
 
@@ -222,8 +232,7 @@ class SkillRunner:
             hold = self.gripper.check_hold(close)
             self.events.emit("grasp_hold", object=obj.label, **hold)
             if hold["slipped"] or not hold["holding"]:
-                attempts.append({"grasp": candidate_plan.grasp.summary(),
-                                 "close": _grasp_payload(close), "hold": hold})
+                attempts.append({"grasp": candidate_plan.grasp.summary(), "close": _grasp_payload(close), "hold": hold})
                 self.gripper.open()
                 continue
 
@@ -232,10 +241,8 @@ class SkillRunner:
 
         if chosen is None:
             raise SkillError(
-                "could not hold {} after {} grasp attempt(s) ({}); it is probably not where "
-                "the detector thought, too wide for the jaw, or out of reach".format(
-                    obj.label, len(attempts), _attempts_sentence(attempts)
-                )
+                f"could not hold {obj.label} after {len(attempts)} grasp attempt(s) ({_attempts_sentence(attempts)}); it is probably not where "
+                "the detector thought, too wide for the jaw, or out of reach",
             )
 
         exclude = [o for o in self.scene.all() if o.label != obj.label]
@@ -267,8 +274,7 @@ class SkillRunner:
             "grasp_plan": chosen.summary(),
             "hold": hold,
             "attempts": attempts,
-            "released_at": {"x": round(release.x, 4), "y": round(release.y, 4),
-                            "z": round(release.z, 4)},
+            "released_at": {"x": round(release.x, 4), "y": round(release.y, 4), "z": round(release.z, 4)},
             "steps": steps,
             "notes": notes,
             "summary": (
@@ -280,8 +286,12 @@ class SkillRunner:
     # ------------------------------------------------------------------ move_home
     def move_home(self) -> dict[str, Any]:
         if self.plan_only:
-            return {"success": True, "dry_run": True,
-                    "joints": self.motion.named_pose("home"), "summary": "dry run: would go home"}
+            return {
+                "success": True,
+                "dry_run": True,
+                "joints": self.motion.named_pose("home"),
+                "summary": "dry run: would go home",
+            }
         result = self.motion.move_named("home")
         return {"success": True, "motion": result, "summary": "arm is at the home pose"}
 
@@ -297,21 +307,24 @@ class SkillRunner:
         plans: list[GraspPlan] = []
         for candidate in plan.candidates:
             grasp = ToolPose(candidate.x, candidate.y, candidate.z, candidate.yaw_deg)
-            pre_grasp = grasp.offset(dz=pre_clear)
+            clearance = max(pre_clear, self._table_z + obj.height_m + 0.04 - grasp.z) if obj.height_m else pre_clear
+            pre_grasp = grasp.offset(dz=clearance)
             lift = grasp.offset(dz=lift_clear)
             if self.motion.ik_feasible(pre_grasp) and self.motion.ik_feasible(grasp):
-                plans.append(GraspPlan(
-                    label=obj.label,
-                    pre_grasp=pre_grasp,
-                    grasp=grasp,
-                    lift=lift,
-                    candidates=[candidate],
-                ))
+                plans.append(
+                    GraspPlan(
+                        label=obj.label,
+                        pre_grasp=pre_grasp,
+                        grasp=grasp,
+                        lift=lift,
+                        candidates=[candidate],
+                    ),
+                )
         if not plans:
             raise SkillError(
                 f"no reachable grasp for {obj.label} at ({obj.x:.3f}, {obj.y:.3f}): "
                 f"IK failed for all {len(plan.candidates)} candidate poses. Move the object "
-                "closer to the arm (x 0.16-0.34 m, |y| < 0.26 m) or rotate it."
+                "closer to the arm (x 0.16-0.34 m, |y| < 0.26 m) or rotate it.",
             )
         skipped = len(plan.candidates) - len(plans)
         if skipped:
@@ -321,8 +334,11 @@ class SkillRunner:
             plans = plans[:max_attempts]
         return plans, notes
 
-    def _reachable_place(self, destination: str | None,
-                         objects: Sequence[WorldObject] = ()) -> tuple[PlaceTarget, ToolPose, ToolPose | None, list[str]]:
+    def _reachable_place(
+        self,
+        destination: str | None,
+        objects: Sequence[WorldObject] = (),
+    ) -> tuple[PlaceTarget, ToolPose, ToolPose | None, list[str]]:
         targets = resolve_place(
             destination,
             self.places,
@@ -345,8 +361,42 @@ class SkillRunner:
                 notes.append(f"{destination} unreachable; used a free spot on the table instead")
             return target, release, approach, notes
         raise SkillError(
-            "no reachable place target: " + ("; ".join(notes) if notes else "nothing configured")
+            "no reachable place target: " + ("; ".join(notes) if notes else "nothing configured"),
         )
+
+    def _update_heights(self, objects: Sequence[WorldObject]) -> str:
+        for obj in objects:
+            obj.height_m = None
+        if self.front_camera is None or self.height_camera is None:
+            return "front_camera not configured or height pose not calibrated; using fallback grasp heights"
+        if not objects:
+            return "no visible objects"
+        frame = self._grab(self.front_camera, fresh_timeout=1.5)
+        if frame is None:
+            return "no fresh front_camera frame; using fallback grasp heights"
+        detections = self._detect(frame)
+        cfg = dict(self.motion_cfg.get("height_estimation") or {})
+        try:
+            estimates = self.height_camera.estimate_heights(
+                objects,
+                detections,
+                (frame.shape[1], frame.shape[0]),
+                match_margin_px=float(cfg.get("match_margin_px", 20.0)),
+                min_height_m=float(cfg.get("min_height_m", 0.005)),
+                max_height_m=float(cfg.get("max_height_m", 0.35)),
+            )
+        except ValueError as exc:
+            self.events.emit("height_rejected", reason=str(exc))
+            return f"front_camera height rejected: {exc}; using fallback grasp heights"
+        for index, height in estimates.items():
+            objects[index].height_m = height
+            self.events.emit("object_height", object=objects[index].label, height_m=round(height, 4))
+        source = (
+            "approximate FOV intrinsics"
+            if self.height_camera.meta.get("approximate_intrinsics")
+            else "calibrated intrinsics"
+        )
+        return f"front_camera: estimated {len(estimates)}/{len(objects)} heights ({source})"
 
     # ------------------------------------------------------------------ wrist correction
     def _wrist_correction(self, obj: WorldObject) -> tuple[float, float, str | None]:
@@ -372,9 +422,13 @@ class SkillRunner:
         dx, dy = max(-limit, min(limit, dx)), max(-limit, min(limit, dy))
         if abs(dx) < 0.002 and abs(dy) < 0.002:
             return 0.0, 0.0, "wrist view agrees with the table camera"
-        return dx, dy, (
-            f"wrist correction {1000 * dx:+.0f} mm x, {1000 * dy:+.0f} mm y from a "
-            f"{best.label} at ({u:.0f}, {v:.0f}) px"
+        return (
+            dx,
+            dy,
+            (
+                f"wrist correction {1000 * dx:+.0f} mm x, {1000 * dy:+.0f} mm y from a "
+                f"{best.label} at ({u:.0f}, {v:.0f}) px"
+            ),
         )
 
     # ------------------------------------------------------------------ helpers
@@ -393,7 +447,7 @@ class SkillRunner:
     def _detect(self, frame: Any) -> list[Any]:
         try:
             return list(self.detector.detect(frame))
-        except Exception as exc:  # noqa: BLE001 - surface detector problems to the planner
+        except Exception as exc:
             raise SkillError(f"detector failed: {exc}") from exc
 
     def _publish_annotated(self, frame: Any, detections: Sequence[Any]) -> None:
@@ -416,8 +470,7 @@ class SkillRunner:
 
 def _grasp_payload(result: dict[str, Any]) -> dict[str, Any]:
     """The handful of fields worth keeping from one failed attempt."""
-    return {key: result.get(key)
-            for key in ("position", "torque", "torque_delta", "holding", "slipped")}
+    return {key: result.get(key) for key in ("position", "torque", "torque_delta", "holding", "slipped")}
 
 
 def _attempts_sentence(attempts: Sequence[dict[str, Any]]) -> str:
@@ -440,8 +493,7 @@ def _grasp_numbers(result: dict[str, Any]) -> str:
     if torque is not None:
         delta = result.get("torque_delta")
         parts.append(
-            f"torque {torque:.3f} N m"
-            + (f" ({delta:+.3f} above free air)" if delta is not None else "")
+            f"torque {torque:.3f} N m" + (f" ({delta:+.3f} above free air)" if delta is not None else ""),
         )
     elif result.get("torque_available") is False:
         parts.append("no torque telemetry")

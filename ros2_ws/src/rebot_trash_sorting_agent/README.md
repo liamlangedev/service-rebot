@@ -26,18 +26,42 @@ ros2 topic pub --once /agent/task std_msgs/msg/String '{data: "Put the can in th
 ## Quick start (real hardware)
 
 1. Put `GEMINI_API_KEY=...` in `ros2_ws/.env` (gitignored).
-2. Calibrate the table camera homography (either by pointing the **closed** gripper tip at 5 table marks with `--from-arm`, or by passing measured `base_link` `--points`):
+2. In `config/cameras.yaml`, set the `front_camera` device and `enabled: true`.
+   Calibrate both fixed views: record five table marks once, then click the same
+   five marks in the same order in the table view and again in the front view.
+   Start the camera topics before running calibration. Camera mounts, focus and
+   capture resolution must stay fixed after calibration.
    ```bash
    # Optional: disable motor torque so you can move the arm by hand.
    # WARNING: the arm will fall under gravity when disabled — be ready to catch/support it!
    ros2 service call /rebotarm/disable std_srvs/srv/Trigger "{}"
 
-   # Recommended: touch each mark with the closed gripper tip, move arm away, then click the marks
+   # Touch five marks once; then click five points in each camera image
    ros2 run rebot_trash_sorting_agent calibrate_table --from-arm --count 5 --joint-states-topic /rebotarm/joint_states
 
    # Or pass measured base_link (x, y) coordinates directly
    ros2 run rebot_trash_sorting_agent calibrate_table --points "x1,y1;x2,y2;x3,y3;x4,y4"
+
+   # Single-camera calibration remains available
+   ros2 run rebot_trash_sorting_agent calibrate_table --camera table --from-arm --count 5
    ```
+   Front-camera height uses the same marks and a calibrated `camera_matrix`
+   (3x3 K, nine row-major values) plus optional OpenCV `distortion` coefficients
+   from `cameras.yaml`. Without intrinsics only XY is saved. To explicitly try
+   approximate height from the configured **horizontal** `fov_deg`, add
+   `--allow-approximate-intrinsics` to the calibration command. Validate those
+   heights against measured objects before allowing grasps; low table-plane
+   reprojection error alone does not establish height accuracy.
+
+   Both maps and the front height pose are saved to `config/calibration.yaml`.
+   Restart the agent after calibration. `list_objects` reports `height_m` in metres
+   above the table; grasp heights use `grasp.height_fractions` of this measurement.
+   Missing/ambiguous front detections, changed resolution, or unavailable calibration
+   fall back to `grasp.pinch_heights_m`, with a reason in `height_estimation`.
+   The estimate assumes an upright object with an approximately circular footprint;
+   overhangs, occlusion, and non-upright objects can produce inaccurate heights.
+   For headless calibration supply `--pixels` and `--front-pixels` (and optionally
+   `--image` / `--front-image`); coordinates must match each configured resolution.
 3. Launch:
    ```bash
    ros2 launch rebot_trash_sorting_agent sorting.launch.py use_fake_hardware:=false channel:=/dev/ttyACM0

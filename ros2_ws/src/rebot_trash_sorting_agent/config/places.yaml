@@ -14,7 +14,8 @@ bin:
 # There is deliberately no per-class size table here. The detector is
 # open-vocabulary, so any class list would be both wrong and incomplete. Object
 # width and orientation are measured from the mask's bottom edge through the table
-# homography, and grasp height is a generic ladder in motion.yaml.
+# homography; front_camera supplies height when calibrated, otherwise the grasp
+# uses the generic height ladder in motion.yaml.
 
 #: where the arm may put an object when the task names no destination
 workspace:

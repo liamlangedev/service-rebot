@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fit the table-plane homography: image pixels -> base_link metres.
 
-This is the *only* calibration the agent needs. No intrinsics, no hand-eye, no
-depth: an object standing on the table touches a known plane, so four or more
-known points on that plane are enough to place every detection.
+Record table marks once, then click them in the table and front_camera views.
+Front-view height also needs camera intrinsics (camera_matrix in cameras.yaml).
+Use --allow-approximate-intrinsics to explicitly use the configured FOV instead;
+those heights are approximate and must be checked against measured objects.
 
 Procedure
 
@@ -53,8 +54,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import Config
-from .perception.table_map import TableMap
+from rebot_trash_sorting_agent.config import Config
+from rebot_trash_sorting_agent.perception.height import HeightCamera
+from rebot_trash_sorting_agent.perception.table_map import TableMap
 
 
 def _parse_pairs(text: str, label: str) -> list[tuple[float, float]]:
@@ -91,8 +93,7 @@ def _grab_frame(camera: str, config_dir: str | None) -> np.ndarray:
     rclpy.shutdown()
     if frame is None:
         raise SystemExit(
-            f"no frame on {topic}: is camera_node running? "
-            "(ros2 launch rebot_trash_sorting_agent agent.launch.py)"
+            f"no frame on {topic}: is camera_node running? (ros2 launch rebot_trash_sorting_agent agent.launch.py)",
         )
     return frame
 
@@ -114,10 +115,26 @@ def _click_points(image: np.ndarray, expected: int) -> list[tuple[float, float]]
         canvas = image.copy()
         for index, (x, y) in enumerate(points, start=1):
             cv2.circle(canvas, (int(x), int(y)), 6, (0, 0, 255), -1)
-            cv2.putText(canvas, str(index), (int(x) + 9, int(y) - 9),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"{len(points)}/{expected} points", (12, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 0), 2, cv2.LINE_AA)
+            cv2.putText(
+                canvas,
+                str(index),
+                (int(x) + 9, int(y) - 9),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        cv2.putText(
+            canvas,
+            f"{len(points)}/{expected} points",
+            (12, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 200, 0),
+            2,
+            cv2.LINE_AA,
+        )
         cv2.imshow(window, canvas)
         key = cv2.waitKey(30) & 0xFF
         if key in (13, 10, 32) and points:
@@ -147,13 +164,13 @@ def _write(out: Path, camera: str, table_map: TableMap) -> None:
         "# [u, v, 1] * H -> [x, y, 1] in metres on the table plane (z = places.yaml table.z).\n"
         "# Regenerate after moving the camera; this file is disposable.\n"
     )
-    out.write_text(header + yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
-                   encoding="utf-8")
+    out.write_text(header + yaml.safe_dump(data, sort_keys=False, default_flow_style=False), encoding="utf-8")
 
 
 def _record_from_arm(count: int, joint_states_topic: str) -> list[tuple[float, float]]:
     """Compute gripper-tip (x, y) in base_link from live /joint_states via MuJoCo FK."""
     import os
+
     import mujoco
     import rclpy
     from rclpy.node import Node
@@ -199,7 +216,7 @@ def _record_from_arm(count: int, joint_states_topic: str) -> list[tuple[float, f
         rclpy.shutdown()
         raise SystemExit(
             f"no joint states on {joint_states_topic} "
-            "(is the arm driver running? try --joint-states-topic /rebotarm/joint_states)"
+            "(is the arm driver running? try --joint-states-topic /rebotarm/joint_states)",
         )
 
     points: list[tuple[float, float]] = []
@@ -235,30 +252,128 @@ def _source_config_dir() -> Path | None:
     return None
 
 
+def _calibrate_view(
+    args: argparse.Namespace,
+    config: Config,
+    camera: str,
+    table_points: list[tuple[float, float]],
+    first: bool,
+) -> TableMap:
+    import cv2
+
+    cfg = config.camera(camera)
+    front = camera == "front_camera"
+    image_path = args.front_image if front and args.front_image else args.image if first else None
+    pixel_text = args.front_pixels if front and args.front_pixels else args.pixels if first else None
+    if image_path:
+        image = cv2.imread(image_path)
+        if image is None:
+            raise SystemExit(f"cannot read image {image_path}")
+    elif pixel_text:
+        image = np.empty((int(cfg.get("height", 480)), int(cfg.get("width", 640)), 3), dtype=np.uint8)
+    else:
+        print(f"\n{camera}: capture the same table marks, with the arm out of view")
+        image = _grab_frame(camera, args.config_dir)
+    if pixel_text:
+        pixels = _parse_pairs(pixel_text, f"{camera} pixels")
+    else:
+        print(f"{camera}: click {len(table_points)} marks in this order:")
+        for index, (horizontal, lateral) in enumerate(table_points, start=1):
+            print(f"  {index}: x={horizontal:+.3f} y={lateral:+.3f}")
+        pixels = _click_points(image, len(table_points))
+    if len(pixels) != len(table_points):
+        raise SystemExit(f"{camera}: got {len(pixels)} pixels for {len(table_points)} marks")
+    table_z = float(config.table().get("z", 0.0))
+    table_map = TableMap.fit(pixels, table_points, table_z)
+    error = table_map.reprojection_error_mm(pixels, table_points)
+    print(f"{camera}: mean table reprojection error {error:.1f} mm")
+    if not np.isfinite(error) or (error > args.max_error_mm and not args.force):
+        raise SystemExit(f"{camera}: table error exceeds --max-error-mm; check point order and measurements")
+    table_map.meta.update(error_mm=round(error, 2), camera=camera, points=len(pixels))
+    if front:
+        intrinsic = cfg.get("camera_matrix")
+        approximate = intrinsic is None
+        image_size = (image.shape[1], image.shape[0])
+        if approximate and args.allow_approximate_intrinsics:
+            focal = image_size[0] / (2 * np.tan(np.radians(float(cfg.get("fov_deg", 75))) / 2))
+            intrinsic = [[focal, 0, image_size[0] / 2], [0, focal, image_size[1] / 2], [0, 0, 1]]
+            print("WARNING: front_camera height uses approximate horizontal FOV intrinsics")
+        if intrinsic is not None:
+            try:
+                model = HeightCamera.fit_table(
+                    pixels,
+                    table_points,
+                    table_z,
+                    image_size,
+                    intrinsic,
+                    cfg.get("distortion") or (),
+                )
+            except (ValueError, cv2.error) as exc:
+                raise SystemExit(f"front_camera height calibration failed: {exc}") from exc
+            if model.meta["max_error_px"] > args.max_error_px and not args.force:
+                raise SystemExit("front_camera pose reprojection error exceeds --max-error-px; check intrinsics")
+            model.meta["approximate_intrinsics"] = approximate
+            table_map.meta["height_camera"] = model.to_mapping()
+            print(f"front_camera: height pose mean error {model.meta['error_px']:.2f} px")
+        else:
+            print("front_camera: XY saved only; set camera_matrix or pass --allow-approximate-intrinsics for height")
+    return table_map
+
+
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--camera", default="table", help="camera name from cameras.yaml")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    cameras = parser.add_mutually_exclusive_group()
+    cameras.add_argument("--camera", default=None, help="calibrate just one camera (legacy mode)")
+    cameras.add_argument(
+        "--cameras",
+        nargs="+",
+        default=None,
+        help="camera names in capture order (default: table front_camera)",
+    )
     parser.add_argument("--config-dir", default=None)
-    parser.add_argument("--points", default=None,
-                        help="base_link coordinates 'x,y;x,y;...' in click order (metres)")
-    parser.add_argument("--from-arm", action="store_true",
-                        help="record base_link (x, y) from live joint_states FK by touching each mark")
-    parser.add_argument("--count", type=int, default=5,
-                        help="number of marks to record when using --from-arm")
-    parser.add_argument("--joint-states-topic", default="/joint_states",
-                        help="JointState topic for --from-arm (e.g. /joint_states or /rebotarm/joint_states)")
-    parser.add_argument("--pixels", default=None,
-                        help="skip the window: 'u,v;u,v;...' in the same order")
+    parser.add_argument("--points", default=None, help="base_link coordinates 'x,y;x,y;...' in click order (metres)")
+    parser.add_argument(
+        "--from-arm",
+        action="store_true",
+        help="record base_link (x, y) from live joint_states FK by touching each mark",
+    )
+    parser.add_argument("--count", type=int, default=5, help="number of marks to record when using --from-arm")
+    parser.add_argument(
+        "--joint-states-topic",
+        default="/joint_states",
+        help="JointState topic for --from-arm (e.g. /joint_states or /rebotarm/joint_states)",
+    )
+    parser.add_argument("--pixels", default=None, help="skip the window: 'u,v;u,v;...' in the same order")
     parser.add_argument("--image", default=None, help="use this still instead of the live topic")
+    parser.add_argument("--front-image", default=None, help="front_camera still for the second click set")
+    parser.add_argument("--front-pixels", default=None, help="headless front_camera pixel coordinates")
+    parser.add_argument(
+        "--allow-approximate-intrinsics",
+        action="store_true",
+        help="estimate front_camera intrinsics from horizontal fov_deg; heights are approximate",
+    )
+    parser.add_argument(
+        "--max-error-px",
+        type=float,
+        default=5.0,
+        help="maximum front-camera pose reprojection error in pixels",
+    )
     parser.add_argument("--out", default=None, help="default: <config_dir>/calibration.yaml")
-    parser.add_argument("--max-error-mm", type=float, default=10.0,
-                        help="refuse to save above this mean reprojection error")
+    parser.add_argument(
+        "--max-error-mm",
+        type=float,
+        default=10.0,
+        help="refuse to save above this mean reprojection error",
+    )
     parser.add_argument("--force", action="store_true", help="save even above the error limit")
     args, _unknown = parser.parse_known_args(argv)
 
     config = Config.load(args.config_dir)
-    table_z = float(config.table().get("z", 0.0))
+    names = args.cameras or ([args.camera] if args.camera else ["table", "front_camera"])
+    if len(set(names)) != len(names):
+        raise SystemExit("camera names must not repeat")
+    for name in names:
+        config.camera(name)
     if args.from_arm:
         table_points = _record_from_arm(args.count, args.joint_states_topic)
     elif args.points:
@@ -268,44 +383,7 @@ def main(argv: list[str] | None = None) -> None:
     if len(table_points) < 4:
         raise SystemExit("need at least 4 table points (6-8 spread out is better)")
 
-    if args.image:
-        import cv2
-
-        image = cv2.imread(args.image)
-        if image is None:
-            raise SystemExit(f"cannot read image {args.image}")
-    else:
-        image = _grab_frame(args.camera, args.config_dir)
-
-    if args.pixels:
-        pixels = _parse_pairs(args.pixels, "--pixels")
-    else:
-        print(f"click {len(table_points)} points on the table, in the order of --points:")
-        for index, (x, y) in enumerate(table_points, start=1):
-            print(f"  {index}: x={x:+.3f} y={y:+.3f}")
-        pixels = _click_points(image, len(table_points))
-
-    if len(pixels) != len(table_points):
-        raise SystemExit(f"got {len(pixels)} pixels for {len(table_points)} table points")
-
-    table_map = TableMap.fit(pixels, table_points, table_z)
-    errors = []
-    print("\npoint   pixel            base (measured)   reprojected       error")
-    for index, ((u, v), (x, y)) in enumerate(zip(pixels, table_points), start=1):
-        px, py = table_map.pixel_to_base(u, v)
-        error = 1000.0 * ((px - x) ** 2 + (py - y) ** 2) ** 0.5
-        errors.append(error)
-        print(f"{index:5d}   ({u:6.1f},{v:6.1f})  ({x:+.3f},{y:+.3f})   "
-              f"({px:+.3f},{py:+.3f})  {error:6.1f} mm")
-    mean = float(np.mean(errors))
-    print(f"\nmean reprojection error: {mean:.1f} mm")
-    if mean > args.max_error_mm and not args.force:
-        raise SystemExit(
-            f"mean error {mean:.1f} mm exceeds --max-error-mm {args.max_error_mm:.1f}: "
-            "re-measure the points, or pass --force if the marks themselves are rough"
-        )
-
-    table_map.meta.update(error_mm=round(mean, 2), camera=args.camera, points=len(pixels))
+    maps = {name: _calibrate_view(args, config, name, table_points, index == 0) for index, name in enumerate(names)}
     if args.out:
         targets = [Path(args.out).expanduser()]
     elif args.config_dir:
@@ -318,7 +396,8 @@ def main(argv: list[str] | None = None) -> None:
             targets.append(install_out)
 
     for out in targets:
-        _write(out, args.camera, table_map)
+        for name, table_map in maps.items():
+            _write(out, name, table_map)
         print(f"\nsaved {out}")
     print("restart agent_node (or the launch file) to pick it up")
 

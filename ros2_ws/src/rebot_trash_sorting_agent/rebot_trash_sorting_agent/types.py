@@ -6,8 +6,9 @@ unit-tested without a ROS graph.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Literal
 
 # --------------------------------------------------------------------------- perception
 
@@ -82,6 +83,7 @@ class WorldObject:
     yaw_deg: float = 0.0
     #: monotonic stamp of the last frame that contained this object (bookkeeping only)
     last_seen: float = 0.0
+    height_m: float | None = None
 
     @property
     def xy(self) -> tuple[float, float]:
@@ -95,6 +97,7 @@ class WorldObject:
             "y": round(self.y, 4),
             "z": round(self.z, 4),
             "width_m": round(self.width_m, 4),
+            "height_m": round(self.height_m, 4) if self.height_m is not None else None,
             "yaw_deg": round(self.yaw_deg, 1),
             "age_s": round(self.age_s, 1),
             "seen_count": self.seen_count,
