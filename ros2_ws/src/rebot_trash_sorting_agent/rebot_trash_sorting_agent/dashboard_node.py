@@ -39,6 +39,8 @@ from rebot_trash_sorting_agent.perception.detector import Detection, YoloeDetect
 from .config import Config
 from .ros_image import imgmsg_to_bgr
 
+_DISPLAY_CONFIDENCE = 0.5
+
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -317,6 +319,7 @@ class DashboardNode(Node):
         self._wrist_dets: list[Detection] = []
         self._front_dets: list[Detection] = []
         self._perception_cfg = dict(config.perception)
+        self._perception_cfg["conf"] = max(_DISPLAY_CONFIDENCE, float(self._perception_cfg.get("conf", 0.12)))
         self._detector: YoloeDetector | None = None
         self._bbox_wake = threading.Event()
         self._bbox_wake.set()
@@ -525,14 +528,11 @@ class DashboardNode(Node):
     def jpeg(self) -> bytes | None:
         """Annotated frame with HUD overlay and per-frame JPEG caching."""
         with self._lock:
-            jpeg, jpeg_age = self._jpeg, time.monotonic() - self._jpeg_stamp
             frame, frame_age = self._frame, time.monotonic() - self._frame_stamp
             seq, fps = self._frame_seq, self._frame_fps
             bboxes = self._bboxes_enabled
             dets = list(self._table_dets) if bboxes else []
             agent_state = str(self._status.get("state", "idle"))
-        if bboxes and not dets and jpeg is not None and jpeg_age < 0.5:
-            return jpeg
         return self._render_stream("table", frame, frame_age, seq, dets, fps, agent_state)
 
     def wrist_jpeg(self) -> bytes | None:
@@ -569,6 +569,7 @@ class DashboardNode(Node):
     ) -> bytes | None:
         if frame is None or age > 5.0:
             return None
+        dets = [detection for detection in dets if detection.score >= _DISPLAY_CONFIDENCE]
         det_sig = tuple((d.label, round(d.score, 2), tuple(d.bbox), tuple(d.polygon)) for d in dets)
         cache_key = (seq, det_sig)
         cached = self._jpeg_cache.get(name)
@@ -588,7 +589,9 @@ class DashboardNode(Node):
         scale = min(1.0, 960.0 / max(height, width))
         if scale < 1.0:
             image = self._cv2.resize(
-                image, (int(width * scale), int(height * scale)), interpolation=self._cv2.INTER_AREA
+                image,
+                (int(width * scale), int(height * scale)),
+                interpolation=self._cv2.INTER_AREA,
             )
         ok, buffer = self._cv2.imencode(".jpg", image, [int(self._cv2.IMWRITE_JPEG_QUALITY), 80])
         return buffer.tobytes() if ok else None
