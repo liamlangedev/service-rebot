@@ -416,8 +416,8 @@ def main() -> None:
     p.add_argument("--max-speed", type=float, default=45.0, help="joint speed cap [deg/s]")
     p.add_argument("--max-offset", type=float, default=None,
                    help="max arm joint change from the start [deg] (grasp modes default 30)")
-    p.add_argument("--min-tcp-z", type=float, default=0.125, help="tcp site floor [m]")
-    p.add_argument("--max-reach", type=float, default=0.50, help="horizontal reach cap [m]")
+    p.add_argument("--min-tcp-z", type=float, default=0.120, help="tcp site floor [m]")
+    p.add_argument("--max-reach", type=float, default=0.55, help="horizontal reach cap [m]")
     p.add_argument("--max-lag-deg", type=float, default=25.0)
     p.add_argument("--arrive-tol-deg", type=float, default=5.0,
                    help="max joint error after a slow move, else stop")

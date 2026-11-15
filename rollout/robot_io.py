@@ -50,7 +50,7 @@ def connect_robot(args, cameras: dict[str, str]):
     if not args.fake_hardware:
         from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
         for name, dev in cameras.items():
-            index = int(dev) if dev.isdigit() else dev
+            index = int(dev) if dev.isdigit() else Path(dev)
             cam_cfgs[name] = OpenCVCameraConfig(index_or_path=index, fps=30, width=640, height=480)
 
     config = RebotB601FollowerRobotConfig(

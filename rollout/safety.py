@@ -37,9 +37,11 @@ class SafetyLimits:
     soft_limit_margin_deg: float = 1.0   # dataset wrist_flex reaches 87 (limit 90)
     #: MuJoCo `tcp` site height floor [m]. That site sits ~14 cm above the fingertips
     #: (it is 0.25 m at the ready pose, where the fingertips are ~0.11 m above the table).
-    #: In rebot_sort_v1 grasps happen at 0.144-0.15 m (one tilted grasp at 0.117).
-    min_tcp_z: float = 0.125
-    max_reach_m: float = 0.50             # horizontal distance of the TCP from the base
+    #: In rebot_sort_v1 grasps happen at 0.144-0.15 m; the teleop *commands* press a little
+    #: into the table while closing (1% of action frames are below 0.128, the deepest 0.063
+    #: in a tilted grasp), so the floor sits just under the usual grasp height.
+    min_tcp_z: float = 0.120
+    max_reach_m: float = 0.55             # horizontal TCP distance from the base (dataset max 0.495)
     max_lag_deg: float = 25.0
     lag_time_s: float = 1.0
 
