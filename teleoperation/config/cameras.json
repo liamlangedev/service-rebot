@@ -1,0 +1,11 @@
+{
+  "_comment": "name -> OpenCV index. Indices can change after replugging: run tools/probe_cameras.py and edit here.",
+  "width": 640,
+  "height": 480,
+  "fps": 30,
+  "cameras": {
+    "front_wide": 1,
+    "gripper": 2,
+    "high_oblique": 3
+  }
+}
