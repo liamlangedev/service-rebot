@@ -5,14 +5,17 @@
 `rebot_sim` is a MuJoCo replica of the team's real reBot B601-DM workspace, built from
 measurements and photos of the setup (`reference_photos/`):
 
-- **Robot:** Seeed's reBot B601-DM model with the teleop servos, gripper and IK, clamped
-  on its base plate 38 cm from the right wall and flush with the near wall.
+- **Robot:** Seeed's reBot B601-DM model with the teleop servos and IK, and the **soft
+  (Fin-Ray) gripper** the real arm has. It's clamped on its base plate 38 cm from the right
+  wall and flush with the near wall. At the ready pose the fingertips are 11.6 cm above the
+  table; 11 cm was measured on the real arm.
 - **Workspace:** a 98 × 84 cm wood table (texture taken from the photos) with 37 cm walls:
   cardboard behind and right of the robot, a black board on the left.
 - **Bin:** the white foam bin, 25 × 40 × 12 cm, with two compartments. The drop targets
   are `bin_0` (nearer the robot) and `bin_1`.
-- **Cameras:** the same three as on the real setup. `cam_corner` is the Logitech C920 at
-  60 cm, `cam_far` is the LeRobot camera at 30 cm, and `wrist` is on the gripper.
+- **Cameras:** the same three as on the real setup, calibrated against real frames.
+  `cam_corner` is the Logitech C920 on a gooseneck, `cam_far` is the LeRobot camera at
+  about 30 cm, and `wrist` is on the gripper.
 - **Objects:** a can (13 × 4.5 cm, 15 g) and a hollow paper cup (11 × 9 cm, 8 g). Mesh
   assets can replace them.
 
@@ -28,7 +31,7 @@ run the tests and push. Everyone gets the new model with `git pull`; the package
 installed editable, so no re-install is needed.
 
 ![top-down: sim vs. photo](docs/topdown_sim_vs_photo.jpg)
-![cam_corner, cam_far, wrist](docs/cameras.jpg)
+![real frame | sim | sim + real edges, for cam_corner, cam_far, wrist](docs/camera_compare.jpg)
 
 ## Setup
 
@@ -62,11 +65,11 @@ from rebot_sim import RealSetupEnv
 env = RealSetupEnv()                        # RealSetupEnv(config="my_setup.json", objects=False)
 env.reset(randomize=True, seed=0)           # objects at random spots in spawn_region
 can = env.object_pos("can")                 # world position of the can's base
-env.move_grasp_to(can + [0, 0, 0.25])       # IK move, gripper pointing down (TOP_DOWN)
+env.move_grasp_to(can + [0, 0, 0.20])       # IK move of the pinch point, gripper down (TOP_DOWN)
 env.move_grasp_to(can + [0, 0, 0.06]); env.set_gripper(env.GRIPPER_CLOSED)
-env.move_grasp_to(env.bin_pos("bin_0") + [0, 0, 0.30]); env.set_gripper(env.GRIPPER_OPEN)
+env.move_grasp_to(env.bin_pos("bin_0") + [0, 0, 0.25]); env.set_gripper(env.GRIPPER_OPEN)
 env.in_bin("can", "bin_0")                  # -> True
-rgb = env.render("cam_corner")              # 480x640x3 uint8
+rgb = env.render("wrist")                   # 1080x1920x3 uint8 (the camera's real size; others 480x640)
 env.step(q_arm, gripper)                    # or drive the joints yourself (100 Hz ticks)
 ```
 
@@ -104,11 +107,11 @@ renders, the teleop `--scene` flag, and that the export loads standalone.
 
 The robot base stays at the world origin, so the IK, teleop and recording code are unchanged.
 **+x** points from the robot to the open far edge and **+y** points to the robot's left (the bin side).
-The table top is at z = −1.2 cm, the base plate's thickness.
+The table top is at z = 0: the robot's base plate (part of the robot mesh) stands on it. This is the same frame as `base_link` in the ROS stack (`classic_real`).
 
 ```
                  far edge (open)  84 cm from the near wall
-   cam_far ⊗ (36 cm from left, 30 cm high)            ⊗ cam_corner (60 cm high)
+   cam_far ⊗ (30 cm from left, 33 cm high)     (gooseneck base ⊗ far-right corner)
  ┌──────────────────────────────────────────────────────┐
  │                                                      │
  │ ┌──────┐                                             │
@@ -129,13 +132,13 @@ All measurements are in **`rebot_sim/real_setup.json`**, in workspace coordinate
 |---|---|---|
 | Workspace | 98 × 84 cm | measured |
 | Robot (joint-1 axis) | 38 cm from the right wall; plate flush with the near wall (axis 7.5 cm out) | measured |
-| Base plate | 19 × 15 × 1.2 cm, black, 2 green clamps | estimated from photo |
-| Foam bin | 25 × 40 cm, 15 cm from the near wall, against the left wall | measured |
+| Base plate | 20 × 14 × 1.4 cm, part of the robot mesh, centred on joint 1; 2 green clamps | robot model |
+| Foam bin | 25 × 40 cm, 15 cm from the near wall; robot-side edge 30 cm from joint 1 (5 cm gap to the left wall) | size measured; position from the real arm's table homography |
 | Bin height / divider | 12 cm, one divider in the middle → `bin_0`, `bin_1` | measured |
 | Bin wall / floor thickness | 2.5 cm / 2 cm | **estimated** |
-| `cam_far` | LeRobot camera, far edge, 36 cm from the left, 30 cm high, 100° FOV | measured; aim **estimated** |
-| `cam_corner` | Logitech C920 on a gooseneck, far-right corner, 60 cm high, ~75° FOV | measured; aim **estimated** |
-| `wrist` | on the gripper, 100° FOV, 8 cm behind and 6 cm above the fingertips | FOV measured; mount spot **estimated** |
+| `cam_far` | LeRobot camera, far edge: 35 cm from the left, 31 cm high; fovy 66° (16:9) | fitted to the real frame (matches the hand measurement) |
+| `cam_corner` | Logitech C920 on the gooseneck: 83 cm from the left, 61 cm from the near wall, 54 cm high; fovy 43° | real arm's table homography + the real frame |
+| `wrist` | on the gripper, centred between the fingers, 5.6 cm behind and 5.6 cm above the hard-finger tip line, tilted 33° towards the fingers; fovy 64°; recorded at 1920×1080 | fitted to the real frame's soft-finger silhouette (IoU 0.90) |
 | Walls | 37 cm (cardboard near/right, black board left) | measured |
 | Can | 13 cm tall, 4.5 cm diameter, 15 g | measured |
 | Paper cup | 11 cm tall, 9 cm top diameter (6 cm bottom, estimated), 8 g | measured |
@@ -168,13 +171,56 @@ With the tool held straight down, `bin_1` (the far compartment) is at the edge o
 arm's reach at a 30 cm carry height: the IK tilts the tool about 10 cm short of the
 centre, and the object still falls in.
 
+## Capture sessions on the real setup
+
+[`capture/`](capture/README.md) has the tools for working on the real setup:
+
+- a device page for assigning cameras and the arm port, and for lens calibration;
+- a guided session where the arm holds poses while every camera is captured and
+  compared with the sim;
+- automatic camera calibration from a printed ChArUco board;
+- a pause for the phone video, and packaging it as a Hugging Face dataset for
+  Gaussian-splat training on HF Jobs.
+
+## Camera calibration
+
+Without the board, the camera poses come from real frames (`reference_photos/cameras/`, 1920×1080):
+
+- `tools/calibrate_cameras.py` fits each external camera's pose and focal length. It uses
+  hand-picked landmarks with known positions (base-plate corners, bin corners, the
+  table/wall edges) and their pixels in the photo. `--overlay DIR` draws the fit on the
+  photos and `--write` updates `real_setup.json`.
+- For the C920 (`cam_corner`) it also uses the **table homography measured on the real
+  arm**, from the `classic_real` branch
+  (`ros2_ws/src/rebot_trash_sorting_agent/config/calibration.yaml`): 5 tape marks touched
+  with the closed gripper and read from forward kinematics, 2.48 mm error. That ties the
+  camera to the arm itself; the fit matches it to 3.4 px mean. Decomposed on its own, the
+  homography gives a 42.8° vertical FOV, the C920's spec.
+- The homography also corrected two scene errors. The separate base plate was a duplicate
+  (the robot mesh already has it), so the table moved up 12 mm to z = 0. And the bin sits
+  5 cm closer to the robot than the sketch had it. With both fixed, the center camera fits
+  to 35 cm from the left and 31 cm high, which matches the hand measurement (36 cm, 30 cm).
+- The gripper camera sees no fixed landmarks. `tools/fit_wrist_camera.py` fits its mount,
+  field of view and the finger opening, by matching the sim's soft-finger silhouette to the
+  dark fingers in the real frame (0.90 IoU).
+- `tools/compare_cameras.py` renders the image above (real | sim | sim + real edges).
+- The test `test_cameras_match_real_frames` checks that every landmark projects through
+  the compiled sim cameras to within 30 px of the real frame.
+
+If a camera moves: take a new 1920×1080 frame, update its landmark pixels in
+`tools/calibrate_cameras.py`, run it with `--write`, check `compare_cameras.py`, and
+run the tests.
+
+Recording renders at 640×480. Because the config stores the vertical FOV, a 4:3 render
+is the 16:9 view with its sides cropped, which is roughly what these webcams do in 4:3
+modes.
+
 ## Not modelled yet
 
 - Arm-link collisions: only the gripper palm and fingers collide (that's how Seeed's
   model is set up). The upper arm can pass through the bin walls and the near wall.
-- Camera aim: the positions and FOVs are measured, but where each camera points
-  (`look_at`) and the wrist mount spot are guesses. Compare `python -m rebot_sim render` output with real
-  frames and adjust them. FOVs are read as spec-sheet **diagonal** angles and
-  converted to MuJoCo's vertical `fovy` for 4:3 frames (100° → 71°, 75° → 49°);
-  give `fovy` directly to override.
+- Lens distortion: MuJoCo cameras are ideal pinholes. The 100° LeRobot cameras have
+  visible barrel distortion, so straight edges near the frame borders sit up to about
+  25 px off. To train on sim images, undistort the real frames or add distortion as an
+  augmentation.
 - The foam bin's inner steps and inserts, cables, and the clutter beyond the far edge.

@@ -1,5 +1,5 @@
 {
-  "version": "1.1",
+  "version": "1.4",
   "_version_comment": "bump when the measured setup changes (rebot_sim.scene_version())",
   "_comment": [
     "Real hackathon setup of the reBot B601 (measured, see reference_photos/).",
@@ -11,59 +11,182 @@
     "Values marked in _assumed are guesses from the photos: measure and correct them here."
   ],
   "_assumed": [
-    "base_plate.*", "wrist_camera.pos", "wrist_camera.look_at", "bin.wall", "bin.floor", "cameras.*.look_at",
-    "cameras.*.fov_diagonal_deg is read as a DIAGONAL fov (spec-sheet style)",
+    "bin.wall",
+    "bin.floor",
+    "bin.from_left (from the table homography, see bin._comment)",
     "objects.cup.bottom_radius"
   ],
-
-  "workspace": {"width": 0.98, "depth": 0.84},
-
-  "table": {"thickness": 0.04, "extend_far": 0.45, "extend_sides": 0.15, "height_above_floor": 0.74,
-            "texture": "textures/table_wood.png", "texture_tile": 0.46},
-
-  "robot": {"from_left": 0.60, "from_near": 0.075, "yaw_deg": 0.0},
-
-  "base_plate": {"size_near_far": 0.15, "size_left_right": 0.19, "thickness": 0.012,
-                 "center_offset_near_far": 0.0},
-
+  "workspace": {
+    "width": 0.98,
+    "depth": 0.84
+  },
+  "table": {
+    "thickness": 0.04,
+    "extend_far": 0.45,
+    "extend_sides": 0.15,
+    "height_above_floor": 0.74,
+    "texture": "textures/table_wood.png",
+    "texture_tile": 0.46
+  },
+  "robot": {
+    "from_left": 0.6,
+    "from_near": 0.075,
+    "yaw_deg": 0.0,
+    "_comment": "joint-1 axis. The black base plate is part of the robot mesh (20 x 14 x 1.4 cm), standing on the table at z = 0."
+  },
   "walls": {
     "thickness": 0.006,
-    "near":  {"height": 0.37, "color": "cardboard"},
-    "right": {"height": 0.37, "color": "cardboard"},
-    "left":  {"height": 0.37, "color": "black"}
+    "near": {
+      "height": 0.37,
+      "color": "cardboard"
+    },
+    "right": {
+      "height": 0.37,
+      "color": "cardboard"
+    },
+    "left": {
+      "height": 0.37,
+      "color": "black"
+    }
   },
-
   "bin": {
-    "_comment": "White foam box against the left wall. Outer size 25 cm (left-right) x 40 cm (near-far).",
-    "from_left": 0.0, "from_near": 0.15,
-    "size_left_right": 0.25, "size_near_far": 0.40,
-    "height": 0.12, "wall": 0.025, "floor": 0.02,
-    "dividers": [0.5],
+    "_comment": "White foam box, 25 cm (left-right) x 40 cm (near-far). from_left: the real arm's table homography (classic_real branch) puts its robot-side bottom edge 30 cm from the joint-1 axis, i.e. 5 cm closer to the robot than flush against the left wall (sketch). Measure the gap to the left wall to confirm.",
+    "from_left": 0.05,
+    "from_near": 0.15,
+    "size_left_right": 0.25,
+    "size_near_far": 0.4,
+    "height": 0.12,
+    "wall": 0.025,
+    "floor": 0.02,
+    "dividers": [
+      0.5
+    ],
     "_dividers_comment": "fractions along near->far where an inner wall splits the box into compartments"
   },
-
   "_cameras_comment": "fov_diagonal_deg + aspect are converted to MuJoCo's vertical fovy (or give fovy directly)",
   "cameras": [
-    {"name": "cam_far", "_comment": "LeRobot camera (100 deg) on the far edge, 62 cm from the right corner, 30 cm high",
-     "from_left": 0.36, "from_near": 0.84, "height": 0.30,
-     "look_at": [0.45, 0.30, 0.0], "fov_diagonal_deg": 100, "aspect": [4, 3]},
-    {"name": "cam_corner", "_comment": "Logitech C920 (~75 deg) on a gooseneck at the far-right corner, 60 cm high",
-     "from_left": 0.98, "from_near": 0.84, "height": 0.60,
-     "look_at": [0.45, 0.30, 0.0], "fov_diagonal_deg": 75, "aspect": [4, 3]}
+    {
+      "name": "cam_far",
+      "_comment": "LeRobot camera (100 deg) on the far edge, ~30 cm high. Pose and fovy fitted to the real frame (pinhole fit of a lens with barrel distortion)",
+      "from_left": 0.354,
+      "from_near": 0.826,
+      "height": 0.312,
+      "look_at": [
+        0.543,
+        0.446,
+        0.0
+      ],
+      "aspect": [
+        16,
+        9
+      ],
+      "roll_deg": 1.2,
+      "fovy": 65.9,
+      "_calibrated": "tools/calibrate_cameras.py: reference_photos/cameras"
+    },
+    {
+      "name": "cam_corner",
+      "_comment": "Logitech C920 (~75 deg diagonal) on a gooseneck from the far-right corner; the head sits over the right wall. Pose fitted to the real frame, fovy pinned to the C920 spec",
+      "from_left": 0.833,
+      "from_near": 0.61,
+      "height": 0.541,
+      "look_at": [
+        0.547,
+        0.311,
+        0.0
+      ],
+      "aspect": [
+        16,
+        9
+      ],
+      "roll_deg": 7.4,
+      "fovy": 43.3,
+      "_calibrated": "tools/calibrate_cameras.py: reference_photos/cameras + the real arm's table homography (classic_real)",
+      "mount": "none"
+    }
   ],
-  "wrist_camera": {"_comment": "camera mounted on the reBot gripper (the teleop model's `wrist`). pos/look_at are in the end_link frame: +x = along the fingers (fingertips at x=0), +y = finger travel, +z = up when the tool is level. Mount spot estimated.",
-                   "pos": [-0.08, 0.0, 0.06], "look_at": [0.10, 0.0, -0.01],
-                   "fov_diagonal_deg": 100, "aspect": [4, 3]},
-
-  "spawn_region": {"_comment": "where RealSetupEnv.randomize_objects() may put objects (workspace coords)",
-                   "from_left": [0.33, 0.90], "from_near": [0.22, 0.60],
-                   "min_robot_distance": 0.18, "min_spacing": 0.12},
-
+  "wrist_camera": {
+    "_comment": "camera on the reBot gripper (the teleop model's `wrist`), recorded at full 1920x1080. pos/look_at in the end_link frame: +x along the fingers (hard-finger tips at x=0, the soft fingertips at x=0.0286), +y finger travel, +z away from the finger plane.",
+    "pos": [
+      -0.0564,
+      0.0,
+      0.0563
+    ],
+    "look_at": [
+      0.0272,
+      0.0,
+      0.0014
+    ],
+    "aspect": [
+      16,
+      9
+    ],
+    "fovy": 63.6,
+    "_calibrated": "tools/fit_wrist_camera.py: soft-finger silhouette vs gripper_camera_view.jpeg (IoU 0.90)",
+    "roll_deg": 0.0,
+    "resolution": [
+      1920,
+      1080
+    ]
+  },
+  "spawn_region": {
+    "_comment": "where RealSetupEnv.randomize_objects() may put objects (workspace coords)",
+    "from_left": [
+      0.33,
+      0.9
+    ],
+    "from_near": [
+      0.22,
+      0.6
+    ],
+    "min_robot_distance": 0.18,
+    "min_spacing": 0.12
+  },
   "objects": [
-    {"name": "can", "type": "can", "from_left": 0.42, "from_near": 0.40,
-     "radius": 0.0225, "height": 0.13, "mass": 0.015, "rgba": [0.75, 0.05, 0.05, 1]},
-    {"name": "cup", "type": "cup", "from_left": 0.70, "from_near": 0.45,
-     "top_radius": 0.045, "bottom_radius": 0.030, "height": 0.11, "wall": 0.002,
-     "mass": 0.008, "rgba": [0.95, 0.94, 0.90, 1]}
-  ]
+    {
+      "name": "can",
+      "type": "can",
+      "from_left": 0.42,
+      "from_near": 0.4,
+      "radius": 0.0225,
+      "height": 0.13,
+      "mass": 0.015,
+      "rgba": [
+        0.75,
+        0.05,
+        0.05,
+        1
+      ]
+    },
+    {
+      "name": "cup",
+      "type": "cup",
+      "from_left": 0.7,
+      "from_near": 0.45,
+      "top_radius": 0.045,
+      "bottom_radius": 0.03,
+      "height": 0.11,
+      "wall": 0.002,
+      "mass": 0.008,
+      "rgba": [
+        0.95,
+        0.94,
+        0.9,
+        1
+      ]
+    }
+  ],
+  "charuco": {
+    "_comment": "Printed ChArUco board lying flat on the table, edges parallel to the walls, caption edge towards the robot. near_left = workspace position of the pattern's corner nearest the left and near walls. Set enabled=true when it lies there (capture sessions then calibrate the cameras from it). Make it: python -m rebot_sim.charuco board.pdf",
+    "enabled": false,
+    "squares_x": 7,
+    "squares_y": 5,
+    "square": 0.035,
+    "marker": 0.026,
+    "dictionary": "DICT_5X5_100",
+    "near_left": [
+      0.48,
+      0.175
+    ]
+  }
 }

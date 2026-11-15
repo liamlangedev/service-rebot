@@ -17,12 +17,12 @@ from rebot_sim import RealSetupEnv  # noqa: E402
 
 def pick_and_place(env: RealSetupEnv, obj: str, bin_name: str, grip_height: float = 0.06) -> bool:
     o = env.object_pos(obj)
-    above = o + [0, 0, 0.25]
+    above = o + [0, 0, 0.20]  # grasp point (soft-finger pinch) above the object
     env.move_grasp_to(above)
     env.move_grasp_to(o + [0, 0, grip_height])
     env.set_gripper(env.GRIPPER_CLOSED)
     env.move_grasp_to(above)
-    env.move_grasp_to(env.bin_pos(bin_name) + [0, 0, 0.30])
+    env.move_grasp_to(env.bin_pos(bin_name) + [0, 0, 0.25])
     env.set_gripper(env.GRIPPER_OPEN, secs=1.0)
     env.step(n=100)
     return env.in_bin(obj, bin_name)

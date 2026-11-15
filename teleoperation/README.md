@@ -86,6 +86,15 @@ marks something needed only for one mode (headset, recording, real arm). Expecte
 on a fresh machine: `Quest axis calibration` stays WARN until you run
 `tools/calibrate_quest_axes.py` with the headset.
 
+### Gripper
+
+The model has the real arm's **soft (Fin-Ray) gripper fingers**:
+`build_spec(gripper="soft")` is the default and `"hard"` gives Seeed's original fingers.
+The meshes, in `meshes/soft_gripper/`, come from the ROS stack (`classic_real`) and are built
+from Seeed's CAD. The fingertips reach 2.86 cm past the hard ones. The `grasp` site (pinch
+point) is 2 cm behind the tips and the `fingertip` site is at the tips, the ROS
+`gripper_tcp`.
+
 ### Simulated real setup
 
 `--scene real` (on `sim_teleop.py` and `quest_ee_teleop.py`) swaps Seeed's demo table for
