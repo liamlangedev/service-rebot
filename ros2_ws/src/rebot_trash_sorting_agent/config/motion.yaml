@@ -49,7 +49,7 @@ gripper:
   # reading `torque_delta` in the agent log: set the threshold above that noise.
   # For scale, the bridge's max_effort is 1.5, so 0.15 is ~10 % of a full push.
   torque_monitor: true
-  holding_torque_delta_nm: 0.15
+  holding_torque_delta_nm: 0.35
   #: after the lift, a drop of either signal below the close-time reading is a slip
   slip_position_drop_m: 0.003
   slip_torque_drop_nm: 0.10

@@ -68,6 +68,7 @@ class GripperClient:
         from control_msgs.action import FollowJointTrajectory
         from rclpy.action import ActionClient
         from rclpy.callback_groups import ReentrantCallbackGroup
+        from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import JointState
 
         self._node = node
@@ -95,7 +96,8 @@ class GripperClient:
         self._baseline: float | None = None
         self._lock = threading.Lock()
         self._sub = node.create_subscription(
-            JointState, "/joint_states", self._on_state, 20, callback_group=self._group
+            JointState, "/joint_states", self._on_state, qos_profile_sensor_data,
+            callback_group=self._group,
         )
         if not self._client.wait_for_server(timeout_sec=3.0):
             node.get_logger().warn(
@@ -172,16 +174,20 @@ class GripperClient:
         return result
 
     def close(self, plan_only: bool = False) -> dict[str, Any]:
-        """Close to ``closed_m``, then measure whether the jaw ended up on an object."""
+        """Close gently until torque rises (or to ``closed_m``), then check holding."""
         if not plan_only and self._baseline is None:
             # No open() this session: take the free-air reading now, before pushing.
             _, torque = self._median(0.4)
             self._baseline = torque
-        result = self.command(self._closed_m, self._close_s, label="gripper_close",
-                              plan_only=plan_only)
-        if plan_only:
-            result["holding"] = True
-            return result
+
+        if plan_only or not (self._torque_enabled and self.torque_available):
+            result = self.command(self._closed_m, self._close_s, label="gripper_close",
+                                  plan_only=plan_only)
+            if plan_only:
+                result["holding"] = True
+                return result
+        else:
+            result = self._step_close()
 
         time.sleep(self._sample_s)
         position, torque = self._median(self._sample_s)
@@ -201,6 +207,94 @@ class GripperClient:
         elif position is None:
             result["note"] = "no /joint_states position for finger_left; cannot confirm a grasp"
         return result
+
+    def _step_close(self) -> dict[str, Any]:
+        """Close smoothly in one trajectory (~15 mm/s) and cancel on contact torque."""
+        from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+        cur = self.position()
+        start_m = cur if cur is not None else self._open_m
+        if start_m <= self._closed_m + 1e-4:
+            return {"label": "gripper_close", "target_m": round(self._closed_m, 4), "executed": True, "blocked": False}
+
+        if not self._client.wait_for_server(timeout_sec=self._timeout_s):
+            raise GripperError(f"{self._action_name} is not available")
+
+        speed_mps = 0.015
+        dt = 0.10
+        step_m = speed_mps * dt
+        trajectory = JointTrajectory(joint_names=[self._joint])
+        pos_m = start_m
+        t_s = 0.0
+        while pos_m > self._closed_m + 1e-4:
+            pos_m = max(self._closed_m, pos_m - step_m)
+            t_s += dt
+            point = JointTrajectoryPoint()
+            point.positions = [pos_m]
+            point.velocities = [0.0 if pos_m <= self._closed_m + 1e-4 else -speed_mps]
+            point.time_from_start.sec = int(t_s)
+            point.time_from_start.nanosec = int((t_s % 1.0) * 1e9)
+            trajectory.points.append(point)
+
+        goal = self._Action.Goal()
+        goal.trajectory = trajectory
+
+        started = time.monotonic()
+        accepted = threading.Event()
+        send_future = self._client.send_goal_async(goal)
+        send_future.add_done_callback(lambda _: accepted.set())
+        if not accepted.wait(timeout=self._timeout_s + 2.0):
+            raise GripperError("gripper_close: gripper action server did not answer")
+        handle = send_future.result()
+        if handle is None or not handle.accepted:
+            raise GripperError("gripper_close: gripper goal rejected (is the controller active?)")
+
+        done = threading.Event()
+        result_future = handle.get_result_async()
+        result_future.add_done_callback(lambda _: done.set())
+
+        deadline = started + max(self._timeout_s, t_s + 3.0)
+        while not done.wait(timeout=0.02):
+            if time.monotonic() > deadline:
+                handle.cancel_goal_async()
+                raise GripperError("gripper_close: gripper motion timed out")
+            pos, torque = self._median(0.06)
+            expected = max(self._closed_m, start_m - speed_mps * (time.monotonic() - started))
+            if (
+                pos is not None
+                and torque is not None
+                and pos - self._closed_m > self._gap_m
+                and (
+                    (pos - expected > 0.002 and abs(torque - self.baseline_torque) >= self._torque_delta)
+                    or abs(torque - self.baseline_torque) >= 0.50
+                )
+            ):
+                handle.cancel_goal_async()
+                done.wait(timeout=0.5)
+                return {
+                    "label": "gripper_close",
+                    "target_m": round(pos, 4),
+                    "duration_s": round(time.monotonic() - started, 3),
+                    "executed": True,
+                    "blocked": True,
+                }
+
+        wrapped = result_future.result()
+        code = int(getattr(wrapped.result, "error_code", 0)) if wrapped is not None else -1
+        blocked = False
+        if code != 0:
+            blocked = code in (-4, -5)
+            if not blocked:
+                text = str(getattr(wrapped.result, "error_string", "") or "").strip()
+                raise GripperError(f"gripper_close: gripper error {code}" + (f" ({text})" if text else ""))
+
+        return {
+            "label": "gripper_close",
+            "target_m": round(self._closed_m, 4),
+            "duration_s": round(time.monotonic() - started, 3),
+            "executed": True,
+            "blocked": blocked,
+        }
 
     def check_hold(self, reference: dict[str, Any], sample_s: float | None = None) -> dict[str, Any]:
         """Re-measure the grasp after a lift and report a slip in either signal."""

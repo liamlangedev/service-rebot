@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+import time
 
 from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from control_msgs.action import FollowJointTrajectory, GripperCommand
@@ -89,21 +90,7 @@ class HardwareGripperBridgeNode(Node):
         ratio = max(0.0, min(1.0, float(finger_m) / _MAX_FINGER_LEFT_M))
         return close_rad + ratio * (open_rad - close_rad)
 
-    def _execute_callback(self, goal_handle) -> FollowJointTrajectory.Result:
-        result = FollowJointTrajectory.Result()
-        traj = goal_handle.request.trajectory
-        idx = traj.joint_names.index("finger_left")
-        final_finger_m = float(traj.points[-1].positions[idx])
-        target_rad = self._finger_m_to_motor_rad(final_finger_m)
-        max_effort = float(self.get_parameter("max_effort").value)
-
-        if not self._gripper_client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().error("Hardware gripper action server not available")
-            goal_handle.abort()
-            result.error_code = FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED
-            result.error_string = "Hardware gripper action server not available"
-            return result
-
+    def _send_gripper_goal(self, target_rad: float, max_effort: float):
         cmd_goal = GripperCommand.Goal()
         cmd_goal.command.position = target_rad
         cmd_goal.command.max_effort = max_effort
@@ -113,23 +100,63 @@ class HardwareGripperBridgeNode(Node):
         send_future.add_done_callback(lambda _: accepted_event.set())
 
         if not accepted_event.wait(timeout=2.0):
-            goal_handle.abort()
-            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
-            result.error_string = "Timed out sending goal to hardware gripper"
-            return result
+            return None, FollowJointTrajectory.Result.INVALID_GOAL, "Timed out sending goal to hardware gripper"
 
         client_goal_handle = send_future.result()
         if client_goal_handle is None or not client_goal_handle.accepted:
+            return None, FollowJointTrajectory.Result.INVALID_GOAL, "Hardware gripper rejected goal (is the arm enabled?)"
+
+        return client_goal_handle, FollowJointTrajectory.Result.SUCCESSFUL, ""
+
+    def _execute_callback(self, goal_handle) -> FollowJointTrajectory.Result:
+        result = FollowJointTrajectory.Result()
+        traj = goal_handle.request.trajectory
+        idx = traj.joint_names.index("finger_left")
+        max_effort = float(self.get_parameter("max_effort").value)
+
+        if not self._gripper_client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().error("Hardware gripper action server not available")
             goal_handle.abort()
-            result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
-            result.error_string = "Hardware gripper rejected goal (is the arm enabled?)"
+            result.error_code = FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED
+            result.error_string = "Hardware gripper action server not available"
             return result
+
+        started = time.monotonic()
+        client_goal_handle = None
+        for point in traj.points:
+            pt_time = float(point.time_from_start.sec) + float(point.time_from_start.nanosec) * 1e-9
+            while time.monotonic() - started < pt_time:
+                if goal_handle.is_cancel_requested:
+                    if client_goal_handle is not None:
+                        client_goal_handle.cancel_goal_async()
+                    goal_handle.canceled()
+                    result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+                    return result
+                time.sleep(min(0.02, max(0.0, pt_time - (time.monotonic() - started))))
+
+            if goal_handle.is_cancel_requested:
+                if client_goal_handle is not None:
+                    client_goal_handle.cancel_goal_async()
+                goal_handle.canceled()
+                result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+                return result
+
+            if client_goal_handle is not None:
+                client_goal_handle.cancel_goal_async()
+
+            target_rad = self._finger_m_to_motor_rad(float(point.positions[idx]))
+            client_goal_handle, err_code, err_str = self._send_gripper_goal(target_rad, max_effort)
+            if client_goal_handle is None:
+                goal_handle.abort()
+                result.error_code = err_code
+                result.error_string = err_str
+                return result
 
         done_event = threading.Event()
         result_future = client_goal_handle.get_result_async()
         result_future.add_done_callback(lambda _: done_event.set())
 
-        while not done_event.wait(timeout=0.05):
+        while not done_event.wait(timeout=0.02):
             if goal_handle.is_cancel_requested:
                 client_goal_handle.cancel_goal_async()
                 goal_handle.canceled()
