@@ -389,7 +389,10 @@ class DashboardApp:
             log.info("dashboard listening on http://%s:%d", host, port)
 
     def _stream_for(self, name: str) -> CameraStream | None:
-        return self._rig.get(name)
+        stream = self._rig.get(name)
+        if stream is None and name == "front":
+            return self._rig.get("front_camera")
+        return stream
 
     def status_json(self) -> dict[str, Any]:
         t_cam = self._stream_for(self._table_name)
