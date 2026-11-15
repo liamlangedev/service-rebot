@@ -4,7 +4,7 @@ You type what you want, for example *"put the red block on the blue block"*. An 
 
 It is built on [WRC](https://github.com/TheMoonAstronaut/wrc), an open-source robot pipeline made for the RS version of our arm. This folder adapts it to our **DM** arm.
 
-> **Latest version (third push, 2026-11-15).** The simulator is now the team's own copy of our real workspace (`simulation/` on `main`): the real table, the red can, the paper cup, the foam bin and the corner camera. You can type *"put the red can in the bin"*. Details: [`overlay/local_dm/README.md`](overlay/local_dm/README.md), first section. The second push (same day) fixed joint limits, upright put-down and free-spot placement.
+> **Latest version (fourth push, 2026-11-15): no depth camera needed.** Our webcams give no distance, so on the real robot the can and the cup were placed and sized wrongly and the grasp missed. The pipeline now measures each object's position, height and width from its outline in our two fixed scene cameras. In the simulator with depth switched off: positions within 3 mm, 8 of 8 random pick-and-place trials into the bin; the old method got 0 of 4. **Not tested on the real cameras or the real arm.** Both scene cameras must be calibrated first. Details and how to use it: [`overlay/local_dm/README.md`](overlay/local_dm/README.md), first section. The third push (same day) switched the simulator to the team's real-workspace scene.
 
 ## How it works
 
@@ -27,7 +27,7 @@ you type a task → Claude (sees the camera) → WRC (plans + safety check) → 
 
 - **In the simulation of our real workspace: yes, for the cases tested.** Claude put the can into the near bin compartment and the cup into the far one (checked against the simulator's own object positions). Of 8 random start positions, 5 worked at first; the 3 failures were fixed and re-run one by one. The full random set was not repeated after the fix, so there is no success rate yet.
 - **On the old demo table (three blocks): yes.** Claude stacked blocks, moved objects and described the scene, 5 to 15 mm from the goal. `WRC_DM_SCENE=demo ./START_WRC.sh dm` starts it.
-- **The real corner camera has no depth, and this pipeline needs depth.** The simulator provides it. On the real setup a depth camera is needed for tall objects like the can and the cup.
+- **No depth camera: handled with two scene cameras (new, simulator only).** With depth switched off in the simulator, objects are measured from their outlines in the corner and far cameras: 8 of 8 random trials worked (keyword commands). Check the real cameras first with `./START_WRC.sh dm-measure --camera A --camera2 B --table-z 0.0`, which prints what they measure and moves nothing. For the real arm the bin and wall positions still have to be configured by hand.
 - **On the real arm: not tested.** The connection uses the same driver calls as our `teleoperation/go_ready.py`, but nobody has run this pipeline on the hardware. Start slowly and follow the checklist (link below).
 - **Camera calibration: tool included, tested in the simulator only.** You print one sheet, measure two points with a ruler, and run one command.
 

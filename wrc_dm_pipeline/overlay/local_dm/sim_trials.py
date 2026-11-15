@@ -120,6 +120,8 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--no-llm", action="store_true", help="keyword commands instead of Claude (no API calls)")
     p.add_argument("--timeout", type=float, default=240.0, help="per trial [s]")
+    p.add_argument("--extra", default="", help="extra options passed to run_dm.py for every trial, e.g. "
+                                               "\"--rgb-only --camera2 dm_sim_overhead\" (no depth, two cameras)")
     p.add_argument("--out", default=None)
     args = p.parse_args()
 

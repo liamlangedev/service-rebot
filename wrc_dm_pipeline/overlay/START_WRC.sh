@@ -23,6 +23,11 @@
 #                                  #   (--n 5, --seed 7, --no-llm for keyword commands without API calls)
 #   ./START_WRC.sh dm-calibrate    # camera calibration from the printed sheet (no arguments: shows the steps)
 #   ./START_WRC.sh dm-calib-test   # check the camera calibration helper against the sim's true camera
+#   ./START_WRC.sh dm-measure --camera A --camera2 B --table-z 0.0   # no depth camera: what the two scene
+#                                  #   cameras measure (place, height, width of each object). Does not move the arm.
+#   ./START_WRC.sh dm-measure-test # self-test of that measuring on drawn scenes (no simulator, no cameras)
+#                                  #   Extra options for dm / dm-task go in WRC_DM_EXTRA, e.g.
+#                                  #   WRC_DM_EXTRA="--camera my_cam --camera2 my_cam2 --table-z 0.0 --known-objects my_objects.yaml"
 #   ./START_WRC.sh 3d              # (older) mock RS arm mirrored in a 3D window
 #   ./START_WRC.sh tests           # README's documented quick tests (expect 17 passed, 1 skipped)
 #   ./START_WRC.sh tests-full      # full mock suite (last run: 381 passed, 20 failed, 5 skipped)
@@ -106,6 +111,15 @@ case "$mode" in
   dm-shuffle)
     # Move the objects of the running DM simulator to new random places.
     exec python local_dm/shuffle_sim.py ;;
+  dm-measure)
+    # No depth camera: what the scene cameras measure for each object. Moves nothing.
+    shift
+    [ -e mobileclip2_b.ts ] || [ ! -e models/mobileclip2_b.ts ] || ln -s models/mobileclip2_b.ts mobileclip2_b.ts
+    exec python local_dm/measure_objects.py "$@" ;;
+  dm-measure-test)
+    # Self-test of the camera-outline measuring: the maths on drawn scenes, then the wiring into the pipeline.
+    python local_dm/two_view_selftest.py
+    exec python local_dm/camera_measure_wiring_test.py ;;
   dm-calib-test)
     # Self-test of the camera calibration helper against the sim's known camera pose.
     exec python local_dm/calibration_selftest.py ;;
@@ -153,12 +167,14 @@ case "$mode" in
     fi
     if [ "$mode" = "dm-task" ]; then
       shift
-      python local_dm/run_dm.py --task "${*:-look around and tell me what you see}"
+      # shellcheck disable=SC2086  # WRC_DM_EXTRA is a list of options, split on purpose
+      python local_dm/run_dm.py ${WRC_DM_EXTRA:-} --task "${*:-look around and tell me what you see}"
     else
       if lsof -nP -iTCP:8090 -sTCP:LISTEN >/dev/null 2>&1; then
         echo "Dashboard port 8090 is already in use — stop the other WRC dashboard first (pkill -f local_dm/run_dm.py; pkill -f local_mock/dashboard_mock.py)"; exit 1
       fi
-      python local_dm/run_dm.py --dashboard
+      # shellcheck disable=SC2086
+      python local_dm/run_dm.py ${WRC_DM_EXTRA:-} --dashboard
     fi ;;
   3d)
     # Dashboard + MuJoCo 3D window that mirrors WRC's arm (Seeed reBot B601-RS model).

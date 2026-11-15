@@ -226,3 +226,11 @@ conda install -n wrc-demo -c conda-forge -y "libopenblas=*=*pthreads*"   # macOS
 ## 7d. Team real-workspace simulation (2026-11-15)
 
 `./START_WRC.sh dm` now runs the team's `rebot_sim` scene (steel_team main, `simulation/`) when it is found; `WRC_DM_SCENE=demo` keeps the old table. On this machine the team's main branch is checked out as a separate worktree in `../steel_team_main` (the shared `../steel_team` checkout was not touched). What changed, what was measured and what is still open: `local_dm/README.md`, section "Real-workspace simulation". Simulation only; no hardware was connected.
+
+## 7e. Measuring objects without a depth camera (2026-11-15, fourth push)
+
+On the real robot the webcams give no depth, so standing objects were placed and sized wrongly and grasps missed. `local_dm/two_view.py` now measures each object from its outline in two calibrated scene cameras (one camera as a fallback, optional table of known sizes). Details, usage and limits: `local_dm/README.md`, first section.
+
+- Tested: `./START_WRC.sh dm-measure-test` (maths on drawn scenes; wiring with WRC's data types and a stand-in robot). Both pass.
+- Simulator with depth switched off and the team's two cameras: measured positions within 3 mm of the truth (18 measurements); 8 of 8 random pick-and-place trials into the bin succeeded (keyword commands). Control with the old flat-table method: 0 of 4.
+- Not run: Claude planning with depth off, the real cameras, the real arm.

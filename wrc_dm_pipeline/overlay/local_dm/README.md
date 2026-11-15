@@ -4,7 +4,63 @@ Prompt → Claude looks at the camera → picks a WRC skill → WRC plans the gr
 
 This folder ports the WRC pipeline (built for the B601-**RS**) to the B601-**DM**. Written 2026-11-14 at the Leukerbad hackathon. No upstream WRC file is modified; everything here is additive.
 
-## Latest version (third push, 2026-11-15): the team's real-workspace simulation
+## Latest version (fourth push, 2026-11-15): measuring objects without a depth camera (works in the simulator, untested on the real robot)
+
+**The fault on the real robot.** The webcams give no distance. WRC then assumes every pixel lies on the table. That is right for the table and wrong for anything standing on it: in the wiring test a 13 cm can looks 0 cm tall and its middle is placed 8 cm away from where it stands. The arm closes at the wrong height and in the wrong place.
+
+**The fix.** With two fixed, calibrated scene cameras, each object is measured from its outline in both pictures (`two_view.py`):
+
+- Seen from above, an outline spans a range of directions from the camera. The object's middle lies on the line through the middle of that range. Two cameras give two lines, and where they cross is the object's position.
+- That range of directions times the distance is the width.
+- The highest outline point is the object's top edge. Its line of sight, followed out to the object's distance, gives the height. A camera near table level is best for this.
+- The gripper then closes at half the measured height (50 % straight down, 55 % leaning), as before.
+- If the second camera does not see the object, one camera alone is used: the lowest outline point is where the object touches the table. This is less exact.
+- Optional: a table of known sizes (`--known-objects`, see `known_objects_example.yaml`). When the detector's name and the measured size both fit an entry, the exact size from the table is used. The cameras still decide where the object stands.
+
+The gripper camera is not used for this.
+
+**How to use it on the real setup**
+
+1. Calibrate both scene cameras with the printed sheet (`./START_WRC.sh dm-calibrate`, section "Camera calibration" below). Leave the sheet in the same place for both. Give each camera its own profile name and its own `device_index`.
+2. Check what the cameras measure. This moves nothing and needs no arm:
+   ```bash
+   ./START_WRC.sh dm-measure --camera my_cam --camera2 my_cam2 --table-z 0.0 --classes "cup,red cup,white box"
+   ```
+   It prints each object's position, height and width, what each camera alone says, and saves pictures with the outlines and the measured foot and top drawn in. Put the can at a spot measured with a ruler and compare.
+3. Run the pipeline with both cameras:
+   ```bash
+   python local_dm/run_dm.py --camera my_cam --camera2 my_cam2 --table-z 0.0 --classes "cup,red cup,white box" --known-objects my_objects.yaml --task "..."
+   ```
+   Measuring from outlines switches on by itself when the main camera has no depth (`--measure auto`).
+
+**What was tested, and what was not**
+
+| What | Result |
+|---|---|
+| The maths, on drawn scenes with exact outlines (`./START_WRC.sh dm-measure-test`): can, cup and box at 7 spots, 3 camera arrangements | Two cameras: position within 4.2 mm, height within 5.7 mm (can and cup: 1.2 mm), can and cup width within 1.6 mm. One camera: can within 2.5 mm; cup position 16–17 mm off and height up to 20 mm off (its foot is narrower than its rim) |
+| Outlines one pixel too big or too small | Position within 6 mm, height within 6 mm; can and cup width up to 5 mm off |
+| Calibration wrong by 0.5° and 5 mm per camera | Position up to 26 mm off (about 12 mm on average with both cameras raised, 4–5 mm with one camera near table level). **The calibration is what limits the accuracy** |
+| Pairing with two objects in view and swapped names; known-size table; second camera blocked | Pass |
+| Wiring into the pipeline (WRC's real data types, stand-in robot): planned grasp vs. true object | Can 0.1 mm, cup 0.5 mm from the true middle, at half height; the 9 cm cup gets the leaning grasp first |
+| Simulator, depth switched off, real detector, the team's two cameras (`dm-measure --rgb-only`): can and cup at 9 random layouts, compared with the simulator's true positions | Position within 3 mm in all 18 measurements. Height within 6 mm (can 12.6–13.2 cm for 13.0, cup 11.1–11.6 for 11.0). Width 2–5 mm too wide, once 10 mm (can). One measurement fell back to one camera and was still 2 mm off |
+| Simulator, depth switched off, full pick-and-place into the bin, 8 random trials, keyword commands (`dm-trials --no-llm --extra "--rgb-only --camera2 dm_sim_overhead"`) | **8 of 8** (4 can, 4 cup, both bin compartments), about 31 s each |
+| Control: the same trials with the old flat-table method (`--rgb-only --measure depth`, 4 trials) | **0 of 4.** Cup: "required width 115 mm > gripper max 91 mm". Can: "air grasp: gripper closed fully, object not held". This is the fault seen on the real robot |
+| Simulator with Claude planning and depth off | **NOT RUN** (the trials used keyword commands; the planner is not what changed) |
+| Real cameras, real arm | **NOT RUN** |
+
+**Limits**
+
+- **Lens data.** The geometry needs each camera's true focal length. A profile without `intrinsics` guesses a 70° field of view, and lens distortion is not modelled. A wrong focal length shows up in `dm-measure` as a wrong height for an object of known height.
+- A camera that looks at an object from almost straight above (more than 68° down) cannot see its height and is not used for that object.
+- An object partly outside ONE camera's picture is still measured, using the side edge that is visible and the width from the other camera (found in the simulator: a can at the table edge was 16 mm off before this and 0 mm after). If no usable combination is left, the pick stops with "cannot measure ...: cut off at the edge of the camera picture" instead of reaching for a wrong place.
+- An object partly hidden by the arm or by another object gives a wrong size, and nothing detects that. Objects are measured with the arm at home.
+- The simulator's pictures are clean: no lens distortion, exact calibration, even light. Real pictures will be worse.
+- Objects under 4 cm tall keep WRC's flat-table estimate, which is right for flat things.
+- Objects wider at the bottom than at the top (a bottle) can read up to about 2 cm too tall from a steep camera; the camera near table level corrects most of it.
+- The live object list on the dashboard still uses the flat-table guess. Only the object being picked is measured, at the moment it is located.
+- For a real arm the bin, the walls and the table height still have to be given by hand (`--table-z`, `--classes`); bin placement needs the workspace settings that only the simulator provides today.
+
+## Third push (2026-11-15): the team's real-workspace simulation
 
 `./START_WRC.sh dm` now runs the team's own MuJoCo replica of the real workspace (`steel_team` main, `simulation/`, package `rebot_sim`): the measured table, the red can, the paper cup, the foam bin with two compartments, and the corner camera `cam_corner`. It is used automatically when the team checkout has `simulation/` (it is on `main`) and `uv sync` was run in `teleoperation/`. `WRC_DM_SCENE=demo ./START_WRC.sh dm` brings back the old three-block table.
 
@@ -244,6 +300,10 @@ Known gaps for the real arm: no hardware e-stop integration, plain position cont
 | `calibrate_camera.py` | wrc-demo | Camera-to-base calibration from the printed sheet; writes a camera profile |
 | `calib_sheet_A4.png`, `calibration_example.yaml` | – | The sheet to print and the input file to fill in |
 | `calibration_selftest.py` | wrc-demo | `./START_WRC.sh dm-calib-test`: checks the calibration against the sim's true camera |
+| `two_view.py` | wrc-demo | Object position, height and width from the outlines in one or two calibrated RGB cameras (no depth) |
+| `measure_objects.py` | wrc-demo | `./START_WRC.sh dm-measure`: prints what the cameras measure; moves nothing |
+| `known_objects_example.yaml` | – | Table of known object sizes for `--known-objects` |
+| `two_view_selftest.py`, `camera_measure_wiring_test.py` | wrc-demo | `./START_WRC.sh dm-measure-test`: the maths on drawn scenes, and the wiring into the pipeline |
 | `fake_real_arm.py` | teleoperation venv | Rehearses the bridge's real-arm path against a stand-in driver, no hardware |
 | `../configs/arms/rebot_dm.yaml`, `../configs/cameras/dm_sim_overhead.yaml` | – | WRC profiles |
 

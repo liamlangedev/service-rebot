@@ -268,7 +268,7 @@ def install_scene_places(runtime, arm, cfg, scene: dict) -> None:
 WIDE_OBJECT_M = 0.07   # wider than this at the top: do not try to pass the fingers over the rim first
 
 
-def install_topdown_grasps(runtime, cfg) -> bool:
+def install_topdown_grasps(runtime, cfg, force: bool = False) -> bool:
     """For a camera that looks at the table from the side: grasp standing objects straight down.
 
     WRC's first-choice planner dives along the camera's line of sight, which is right for a camera
@@ -278,6 +278,9 @@ def install_topdown_grasps(runtime, cfg) -> bool:
     (measured in the team's scene: 1-2 mm off the true centre). The gripper then comes straight
     down over that centre and closes at half height -- the same grasp the team's own script uses.
     Flat objects (under 4 cm) are left to WRC's planners. Returns True when installed.
+
+    Without a depth camera the object's place and size come from install_camera_measure (below)
+    instead of from 3D points; `force` installs this planner whatever the camera's angle.
     """
     import numpy as np
     import pinocchio as pin
@@ -289,7 +292,7 @@ def install_topdown_grasps(runtime, cfg) -> bool:
         T = np.asarray(runtime.extrinsics.cam_to_base(), dtype=float)
     except Exception:  # noqa: BLE001 -- no extrinsics: nothing to decide on
         return False
-    if T[2, 2] < -0.9:           # optical axis within ~25 deg of straight down: WRC's planner is fine
+    if T[2, 2] < -0.9 and not force:   # optical axis within ~25 deg of straight down: WRC's planner is fine
         return False
     table_z = float(cfg.safety.get("table_z", 0.0))
     orig = runtime._plan_grasps
@@ -306,21 +309,30 @@ def install_topdown_grasps(runtime, cfg) -> bool:
         return np.asarray(fix.points, dtype=float)
 
     def plan(fix, label=None):
-        pts = object_points(fix)
-        obj = pts[pts[:, 2] > table_z + 0.015]                    # drop table pixels at the mask edge
-        if len(obj) < 40:
-            return orig(fix, label)
-        top_z = float(np.percentile(obj[:, 2], 98))
-        height = top_z - table_z
-        if height < 0.04:
-            return orig(fix, label)
-        rim = obj[obj[:, 2] > top_z - max(0.012, 0.1 * height)]
-        lo, hi = np.percentile(rim[:, :2], [2, 98], axis=0)
-        centre, size = (lo + hi) / 2, hi - lo
+        m = getattr(fix, "dm_measure", None)
+        if m is not None:
+            # No depth camera: place, height and width were measured from the camera outlines.
+            height = float(m.height)
+            if height < 0.04:
+                return orig(fix, label)
+            centre, size, source = np.asarray(m.centre, dtype=float), np.array([m.width_min, m.width]), m.method
+            yaws = []                # two outlines do not say which way an oblong object lies
+        else:
+            pts = object_points(fix)
+            obj = pts[pts[:, 2] > table_z + 0.015]                # drop table pixels at the mask edge
+            if len(obj) < 40:
+                return orig(fix, label)
+            top_z = float(np.percentile(obj[:, 2], 98))
+            height = top_z - table_z
+            if height < 0.04:
+                return orig(fix, label)
+            rim = obj[obj[:, 2] > top_z - max(0.012, 0.1 * height)]
+            lo, hi = np.percentile(rim[:, :2], [2, 98], axis=0)
+            centre, size, source = (lo + hi) / 2, hi - lo, "side camera"
+            # Straight down. Jaw direction: across the narrow side if the top is clearly elongated, else any.
+            yaws = [0.0 if size[0] < size[1] else np.pi / 2] if max(size) > 1.3 * min(size) else []
         width = float(min(size.min() + 0.01, runtime._max_width))  # the jaws are opened fully anyway
         radial = float(np.arctan2(centre[1], centre[0]))
-        # Straight down. Jaw direction: across the narrow side if the top is clearly elongated, else any.
-        yaws = [0.0 if size[0] < size[1] else np.pi / 2] if max(size) > 1.3 * min(size) else []
         yaws += [radial, radial + np.pi / 2, 0.0, np.pi / 2, np.pi / 4, -np.pi / 4]
         down = [(np.pi / 2, y) for y in yaws]
         # Leaning in from the robot's side, jaws level. Two uses: (1) an object nearly as wide as
@@ -346,13 +358,91 @@ def install_topdown_grasps(runtime, cfg) -> bool:
                                 quality=conf * (1.0 - 0.04 * i), label=label or fix.label))
         runtime._last_grasp_z_nudge = 0.0
         runtime._dm_top_width = float(size.max())                 # the bin release needs the object's width
-        runtime.memory.add("note", f"side camera: {label or fix.label!r} stands at ({centre[0]:.3f}, {centre[1]:.3f}), "
+        runtime.memory.add("note", f"{source}: {label or fix.label!r} stands at ({centre[0]:.3f}, {centre[1]:.3f}), "
                                    f"{height * 100:.0f} cm tall, top {size.max() * 100:.0f} cm wide -> "
                                    f"{'leaning grasp first (nearly as wide as the gripper)' if wide else 'straight-down grasp first, leaning if out of reach'}")
         return grasps
 
     runtime._plan_grasps = plan
     return True
+
+
+def install_camera_measure(runtime, cfg, known: list, always: bool = False) -> int:
+    """No depth camera: measure each object from its outline in the calibrated cameras.
+
+    A webcam gives no distance, so WRC assumes every pixel lies on the table. That is wrong for
+    anything standing on it: a 13 cm can is "seen" lying flat behind where it stands, and the
+    arm closes at the wrong height. Here, whenever an object is located for a pick, its outline
+    in the main camera is paired with the same object's outline in the second scene camera and
+    its place, height and width are worked out from the two (local_dm/two_view.py). With no
+    second camera, or when the second camera does not see the object, the main camera alone is
+    used (less exact). A table of known object sizes replaces the measured size when it fits.
+
+    `always` measures this way even when the camera has real depth (to compare the two).
+    Returns the number of second cameras in use.
+    """
+    import two_view as tv
+    from wrc_demo.perception.colors import detection_color
+    from wrc_demo.perception.grounding import oriented_bbox
+    from wrc_demo.types import SkillError
+
+    table_z = float(cfg.safety.get("table_z", 0.0))
+    orig = runtime._localize
+    cams = getattr(runtime.watcher, "_cams", None) if runtime.watcher else None
+    main_name = str(getattr(cams[0].stream, "name", "main camera")) if cams else "main camera"
+    seconds = list(cams[1:]) if cams else []
+
+    def other_views():
+        views = []
+        for cam in seconds:
+            name = str(getattr(cam.stream, "name", "second camera"))
+            try:
+                f = cam.stream.get_frame()
+                if f.T_base_cam is not None:       # a camera riding on the arm: not a fixed viewpoint
+                    continue
+                T = cam.extrinsics.cam_to_base()
+                dets = runtime.detector.detect(f, classes=runtime._default_classes)
+            except Exception as e:  # noqa: BLE001 -- a camera hiccup must not stop the pick
+                runtime.memory.add("note", f"camera '{name}' gave no usable picture ({str(e)[:80]})")
+                continue
+            for d in dets:
+                if d.mask is not None and d.mask.shape == f.rgb.shape[:2]:
+                    views.append(tv.View(name, f.K, T, d.mask, d.label, float(d.conf), detection_color(f.rgb, d)))
+        return views
+
+    def localize(query, spatial_hint=None):
+        frame, fix = orig(query, spatial_hint=spatial_hint)
+        det = getattr(fix, "detection", None)
+        mask = getattr(det, "mask", None)
+        if (frame is None or frame is not runtime.last_frame or mask is None
+                or mask.shape != frame.rgb.shape[:2]
+                or (frame.depth_source == "sensor" and not always)):
+            return frame, fix
+        try:
+            T = frame.T_base_cam if frame.T_base_cam is not None else runtime.extrinsics.cam_to_base()
+            view = tv.View(main_name, frame.K, T, mask, det.label, float(det.conf), detection_color(frame.rgb, det))
+            m = tv.measure(view, other_views(), table_z, known=known)
+        except Exception as e:  # noqa: BLE001 -- measuring is an improvement, never a reason to crash
+            runtime.memory.add("note", f"could not measure {query!r} from the camera outlines ({str(e)[:100]})")
+            return frame, fix
+        if m is None:
+            if tv.why_unusable(view) == "cut off":
+                # Half an outline gives a wrong size, and the flat-table guess is centimetres off for
+                # anything standing up. Say so instead of reaching for the wrong place.
+                raise SkillError(f"cannot measure {query!r}: it is cut off at the edge of the camera picture "
+                                 "and no second camera sees it whole. Move it further into view.")
+            runtime.memory.add("note", f"{query!r} is seen from almost straight above; using the flat-table estimate")
+            return frame, fix
+        if m.height < 0.04:                        # flat on the table: the flat-table estimate is right
+            return frame, fix
+        pts = m.points()
+        fix.position, fix.extent, fix.axes = oriented_bbox(pts)
+        fix.points, fix.dm_measure = pts, m
+        runtime.memory.add("note", f"measured {query!r} without depth, {m.describe()}")
+        return frame, fix
+
+    runtime._localize = localize
+    return len(seconds)
 
 
 # Detector word lists per simulator scene. In the real-workspace scene the plain red can is
@@ -379,23 +469,51 @@ def bridge_scene() -> tuple[dict, dict]:
     return info, cams
 
 
+def table_plane_in_camera(T_base_cam, table_z: float) -> list:
+    """The table surface (z = table_z in the robot base) written in a camera's own axes: nx, ny, nz, d."""
+    import numpy as np
+    T = np.asarray(T_base_cam, dtype=float)
+    n = T[:3, :3].T @ np.array([0.0, 0.0, 1.0])
+    return [float(n[0]), float(n[1]), float(n[2]), float(T[2, 3] - table_z)]
+
+
 def build_cfg(args, run_dir: Path, scene: dict, sim_cams: dict):
     from wrc_demo.config import load_demo_config
 
-    cfg = load_demo_config(cameras=[args.camera], arm=args.arm, llm="mock")
+    names = [args.camera] + ([args.camera2] if getattr(args, "camera2", None) else [])
+    cfg = load_demo_config(cameras=names, arm=args.arm, llm="mock")
     d = cfg._data
     kind = scene.get("scene")
     table_z = args.table_z if args.table_z is not None else (scene.get("table_z") if scene.get("table_z") is not None else 0.03)
     d["safety"]["table_z"] = float(table_z)
     classes = args.classes or SCENE_CLASSES.get(kind, SCENE_CLASSES["demo"])
     d["detect_classes"] = [c.strip() for c in classes.split(",") if c.strip()]
-    if str(d["camera"].get("type")) == "dm_bridge" and sim_cams:
+    cams = d.get("cameras") or [d["camera"]]
+    for i, c in enumerate(cams):
+        if str(c.get("type")) != "dm_bridge" or not sim_cams:
+            continue
         # The simulator knows exactly where its cameras are; a real camera needs calibrate_camera.py.
-        cam = args.sim_camera or ("cam_corner" if kind == "real" else str(d["camera"].get("camera", "overhead_rgb")))
+        if i == 0:
+            cam = args.sim_camera or ("cam_corner" if kind == "real" else str(c.get("camera", "overhead_rgb")))
+        else:
+            first = str(cams[0].get("camera"))
+            cam = getattr(args, "sim_camera2", None) or ("cam_far" if kind == "real" else
+                                                         next((n for n in sim_cams if n != first), first))
         if cam not in sim_cams:
             raise SystemExit(f"the simulator has no camera {cam!r} (it has: {', '.join(sim_cams)})")
-        d["camera"]["camera"] = cam
-        d["camera"]["extrinsics"] = {"mode": "eye_to_hand", "T": sim_cams[cam]}
+        c["camera"] = cam
+        if i > 0:
+            c["name"] = cam                      # (the main camera keeps its profile name)
+        c["extrinsics"] = {"mode": "eye_to_hand", "T": sim_cams[cam]}
+        if getattr(args, "rgb_only", False):
+            # Rehearse plain webcams: throw the simulator's depth away. WRC then lays every pixel
+            # on the table plane, exactly as it does for a real RGB camera.
+            c["rgb_only"] = True
+            c["table_plane_cam"] = table_plane_in_camera(sim_cams[cam], float(table_z))
+    for c in cams[1:]:
+        # The second camera is for measuring. Its own flat-table positions of tall objects differ
+        # from the main camera's, and fusing both would show every tall object twice.
+        c["fuse_beliefs"] = False
     if kind == "real":
         # The team's measured workspace: table 1.2 cm below the arm base, left wall at y = +0.60,
         # right wall at y = -0.38, foam bin on the left. Widen WRC's box to reach the bin, keep the
@@ -445,6 +563,18 @@ def main(argv=None) -> int:
     p.add_argument("--sim-camera", default=None,
                    help="which simulator camera WRC looks through (default: cam_corner in the real-workspace "
                         "scene, overhead_rgb in the demo scene)")
+    p.add_argument("--camera2", default=None,
+                   help="a second fixed scene camera (profile in configs/cameras/). With cameras that have no "
+                        "depth, objects are measured from their outlines in both (see local_dm/README.md)")
+    p.add_argument("--sim-camera2", default=None,
+                   help="which simulator camera --camera2 looks through (default: cam_far in the real-workspace scene)")
+    p.add_argument("--rgb-only", action="store_true",
+                   help="simulator only: throw the rendered depth away, to rehearse plain webcams")
+    p.add_argument("--known-objects", default=None, metavar="YAML",
+                   help="table of known object sizes, measured with a ruler (local_dm/known_objects_example.yaml)")
+    p.add_argument("--measure", choices=["auto", "outlines", "depth"], default="auto",
+                   help="where an object's size comes from: 'auto' = the camera outlines whenever the camera has "
+                        "no depth sensor; 'outlines' = always; 'depth' = never (WRC's flat-table guess without depth)")
     p.add_argument("--drop-zone", default="auto",
                    help="where 'pick X' with no destination puts the object: 'auto' = a free spot on the table "
                         "chosen before every task (so objects do not pile up), or fixed 'x,y' in metres")
@@ -537,8 +667,23 @@ def main(argv=None) -> int:
     )
 
     install_scene_places(runtime, arm, cfg, scene)
-    if install_topdown_grasps(runtime, cfg):
+    first = runtime.observe()
+    no_depth = first.depth_source != "sensor"
+    outlines = args.measure == "outlines" or (args.measure == "auto" and no_depth)
+    if install_topdown_grasps(runtime, cfg, force=outlines):
         print("[wrc-dm] side-view camera: standing objects are grasped over their top centre (straight down, or leaning in when wide or far)", flush=True)
+    if outlines:
+        known = []
+        if args.known_objects:
+            import two_view
+            known = two_view.load_known(args.known_objects)
+        n2 = install_camera_measure(runtime, cfg, known, always=args.measure == "outlines")
+        print(f"[wrc-dm] no depth camera: objects are measured from their outlines in "
+              f"{'the two scene cameras' if n2 else 'the ONE camera (less exact: add --camera2)'}"
+              + (f"; known sizes: {', '.join(k.name for k in known)}" if known else ""), flush=True)
+    elif no_depth:
+        print("[wrc-dm] WARNING: the camera has no depth and --measure depth is set: standing objects will be "
+              "placed and sized wrongly", flush=True)
 
     default_drop = list(cfg._data["grasp"]["drop_zone"])
     if args.drop_zone != "auto":

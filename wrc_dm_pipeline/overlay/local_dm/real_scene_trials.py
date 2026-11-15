@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+import shlex
+
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
@@ -50,6 +52,7 @@ def run(bridge, args, out: Path) -> int:
         jpath, log = out / f"trial_{i:02d}.json", out / f"trial_{i:02d}.log"
         cmd = [sys.executable, "-s", str(HERE / "run_dm.py"), "--task", task, "--run-dir", str(out / f"trial_{i:02d}"),
                "--json-out", str(jpath), "--llm", "mock" if args.no_llm else "claude"]
+        cmd += shlex.split(getattr(args, "extra", "") or "")
         t0, timed_out = time.time(), False
         with open(log, "w") as lf:
             proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, cwd=str(REPO))
