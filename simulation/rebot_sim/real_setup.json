@@ -1,5 +1,5 @@
 {
-  "version": "1.4",
+  "version": "1.5",
   "_version_comment": "bump when the measured setup changes (rebot_sim.scene_version())",
   "_comment": [
     "Real hackathon setup of the reBot B601 (measured, see reference_photos/).",
@@ -187,6 +187,61 @@
     "near_left": [
       0.48,
       0.175
+    ]
+  },
+  "tape": {
+    "_comment": "Yellow tape on the table (reference_photos new_reference_*.jpg). The long line runs from the near wall to the far edge, flush against the right edge of the robot's base plate (as in the photos; the annotated photo says 27.5 cm from the right wall, 1.4 cm more than the plate allows with the robot 38 cm from that wall). The three marks: wall-side end 12 / 12.5 / 13 cm from the right wall, centres 25 / 43.5 / 60.5 cm from the near wall (annotated photo, rough). Strips are [from, to] ranges in workspace coords.",
+    "color": [
+      0.96,
+      0.84,
+      0.1,
+      1
+    ],
+    "strips": [
+      {
+        "name": "tape_line",
+        "from_left": [
+          0.7,
+          0.719
+        ],
+        "from_near": [
+          0.0,
+          0.84
+        ]
+      },
+      {
+        "name": "tape_mark_near",
+        "from_left": [
+          0.805,
+          0.86
+        ],
+        "from_near": [
+          0.2405,
+          0.2595
+        ]
+      },
+      {
+        "name": "tape_mark_mid",
+        "from_left": [
+          0.8,
+          0.855
+        ],
+        "from_near": [
+          0.4255,
+          0.4445
+        ]
+      },
+      {
+        "name": "tape_mark_far",
+        "from_left": [
+          0.795,
+          0.85
+        ],
+        "from_near": [
+          0.5955,
+          0.6145
+        ]
+      }
     ]
   }
 }

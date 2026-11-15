@@ -130,6 +130,22 @@ def test_fake_capture_session_recovers_cameras():
         shutil.rmtree(out, ignore_errors=True)
 
 
+def test_tape_on_the_table():
+    """The yellow tape: a line flush against the base plate's right edge, the
+    length of the table, and three marks 12-13 cm from the right wall."""
+    e = env()
+    m, ws = e.model, e.ws
+    line = m.geom("tape_line")
+    assert abs((line.pos[1] + line.size[1]) - (-0.10)) < 1e-6      # touches the plate edge
+    assert abs(2 * line.size[0] - ws.depth) < 1e-6
+    for name, from_wall in (("tape_mark_near", 0.12), ("tape_mark_mid", 0.125),
+                            ("tape_mark_far", 0.13)):
+        g = m.geom(name)
+        right_wall_y = ws.robot_from_left - ws.width
+        assert abs((g.pos[1] - g.size[1]) - right_wall_y - from_wall) < 1e-6, name
+        assert m.geom_contype[g.id] == 0 and g.pos[2] < 0.001, name
+
+
 def test_ready_pose_fingertips_11cm_above_table():
     """Measured on the real arm (soft gripper): at the ready pose the fingertips
     are 11 cm above the table."""

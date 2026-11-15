@@ -8,6 +8,7 @@ real_setup.json (next to this file):
   * the two green clamps on the robot's base plate (the plate itself is part of
     the robot mesh: 20 x 14 x 1.4 cm, bottom at the robot origin)
   * cardboard walls behind and right of the robot, black board on the left
+  * the yellow tape on the table (a line next to the robot and three marks)
   * the white foam bin with its compartments (place targets `bin_0`, `bin_1`, ...)
   * the two external cameras (`cam_far`, `cam_corner`) at their measured spots
   * placeholder pick objects (a can and a paper cup), or your own meshes
@@ -134,6 +135,8 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
     _add_table(spec, ws, cfg["table"], _resolve(cfg, cfg["table"]["texture"]))
     _add_clamps(spec, ws)
     _add_walls(spec, ws, cfg["walls"])
+    if cfg.get("tape"):
+        _add_tape(spec, ws, cfg["tape"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
     if cfg.get("charuco", {}).get("enabled"):
         _add_charuco(spec, ws, cfg["charuco"])
@@ -241,6 +244,18 @@ def _add_clamps(spec, ws: Workspace):
     for i, side in enumerate((-1, 1)):
         _box(body, f"clamp_{i}", [-hx + 0.02, side * (hy - 0.015), BASE_PLATE_T + 0.012],
              [0.02, 0.008, 0.012], clamp, collide=False)
+
+
+def _add_tape(spec, ws: Workspace, t):
+    """Tape strips on the table (visual only, a fraction of a millimetre thick)."""
+    mat = _material(spec, "tape_mat", t.get("color", [0.96, 0.84, 0.10, 1]),
+                    specular=0.3, shininess=0.4)
+    body = spec.worldbody.add_body(name="tape")
+    for i, strip in enumerate(t["strips"]):
+        (l0, l1), (n0, n1) = strip["from_left"], strip["from_near"]
+        c = ws.world((l0 + l1) / 2, (n0 + n1) / 2, 0.00015)
+        _box(body, strip.get("name", f"tape_{i}"), c,
+             [Workspace.half(n0, n1), Workspace.half(l0, l1), 0.00015], mat, collide=False)
 
 
 def _add_walls(spec, ws: Workspace, w):
