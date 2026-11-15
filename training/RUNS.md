@@ -75,13 +75,17 @@ Small ACTs trained only on the grasp (handoff to a 5 cm lift), cut out of `rebot
 | HF job | `6af9a6eb23985fb9cd8350ac` | `6af9a6e423985fb9cd83509b` |
 | Model repo | `niru-5/act_rebot_grasp_keys_abs` | `niru-5/act_rebot_grasp_keys_rel` |
 | Settings | rtx-pro-6000, 8 workers, batch 64 x 5k steps, chunk 30, lr 3e-5 (backbone too), eval every 500 steps, checkpoints every 1k | same |
-| Result | running | running |
+| Result | **stopped at step ~2.1k** (job COMPLETED after 33 min, log ends mid-run with no error; no final model pushed). Checkpoints `001000`, `002000` under `checkpoints/`. Eval loss 0.395 / 0.384 / 0.396 / **0.380** at 0.5k / 1k / 1.5k / 2k. 1.2-1.3 steps/s: data-bound with 3 cameras on 8 workers (`data_s` ~0.4 s ~ `updt_s`). | Completed 5k steps in 27 min. Eval loss 0.446 (0.5k) -> 0.401 (1k) -> 0.386 (2.5k) -> **0.380** (4.5k) -> 0.391 (5k); flat after ~2.5k. Final train loss 0.066 (L1 0.059). Final model at the repo root; checkpoints every 1k. |
 
 First attempt (`6af9a547…` rel, `6af9a557…` abs, 16 workers) crashed at step 500, the first
 eval: the eval DataLoader spawned 16 more workers next to the 16 training workers and they
 died at spawn ("CPU dispatcher tracer already initlized", OpenBLAS thread limit). Cancelled
 and rerun with 8 workers; data loading was far from the bottleneck (`data_s` 0.04 s vs
 `updt_s` 0.15 s at 5.6 steps/s).
+
+Suggested for robot trials: rel final (or `004000`), abs `002000` (`rollout/` loads it by
+default). Both eval losses settle near 0.38 on the 3 held-out grasps. The abs run's early
+stop is unexplained; rerun it if the abs strategy looks promising.
 
 SmolVLA on the same datasets was considered and skipped for now.
 
