@@ -61,6 +61,24 @@ Run the policy at 30 Hz to match the dataset fps.
   jerky, try temporal ensembling at inference (`n_action_steps=1`, `temporal_ensemble_coeff=0.01`).
 - **SmolVLA:** `010000` (final) and `005000`.
 
+## Grasp-only ACT runs (2026-11-15)
+
+Small ACTs trained only on the grasp (handoff to a 5 cm lift), cut out of `rebot_sort_v1` by
+[`training_gripper/make_dataset.py`](../training_gripper/README.md) (HF job
+`6af9960829dd05ff03689948`, cpu-upgrade). Both datasets and models are private.
+
+| | A: absolute | B: relative |
+|---|---|---|
+| Dataset | `niru-5/rebot_grasp_keys_abs`: 30 clips, 3,456 frames, 3 cameras | `niru-5/rebot_grasp_keys_rel`: 120 clips (4 start offsets per grasp), 11,124 frames, gripper camera |
+| State / action | absolute lerobot degrees | arm joints relative to the clip's first state; gripper absolute |
+| Held out | last 3 source episodes (32-34), `eval_split=0.0833` | same episodes (12 clips), `eval_split=0.0958` |
+| HF job | `6af9a55723985fb9cd834f6b` | `6af9a54729dd05ff0368ac2c` |
+| Model repo | `niru-5/act_rebot_grasp_keys_abs` | `niru-5/act_rebot_grasp_keys_rel` |
+| Settings | rtx-pro-6000, 16 workers, batch 64 x 5k steps, chunk 30, lr 3e-5 (backbone too), eval every 500 steps, checkpoints every 1k | same |
+| Result | running | running |
+
+SmolVLA on the same datasets was considered and skipped for now.
+
 ## Aborted runs
 
 | # | Policy | Flavor | Settings | HF job | Outcome |
