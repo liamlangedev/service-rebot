@@ -161,11 +161,13 @@ class Config:
         calibration: dict = {}
         if calibration_path.is_file():
             calibration = _read_yaml(calibration_path)
+        motion_path = directory / "motion.yaml"
+        motion = _read_yaml(motion_path) if motion_path.is_file() else {}
         return cls(
             directory=directory,
             agent=_read_yaml(directory / "agent.yaml"),
             cameras=_read_yaml(directory / "cameras.yaml"),
-            motion=_read_yaml(directory / "motion.yaml"),
+            motion=motion,
             places=_read_yaml(directory / "places.yaml"),
             calibration=calibration,
         )
