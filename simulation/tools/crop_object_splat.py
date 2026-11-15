@@ -8,8 +8,9 @@ The splat comes from hf_jobs/train_splat.sh on a video that circles one object
 training frame; transforms.json next to it (and dataparser_transforms.json, if
 present) give the cameras. Steps:
 
-1. normalise with the cameras: origin where their optical axes meet (the object),
-   z along their mean up vector, unit = their median distance to that point;
+1. normalise with the cameras: origin where they look (the first surface their
+   centre rays hit), z along their mean up vector, unit = their median distance
+   to that point;
 2. segment the object: dense voxels near the origin, the connected component
    closest to it (a textureless table only gives a diffuse cloud, so it is not
    used);
@@ -139,28 +140,48 @@ def dataparser_transform(T):
     return M, 1.0 / np.abs(pos).max()
 
 
-def camera_rig(transforms, dataparser=None):
+def camera_rig(transforms, dataparser=None, points=None, cone_deg=3.0):
     """Cameras from nerfstudio transforms.json (OpenGL: look along -z, +y up), moved
-    into the splat's frame: the point nearest to all optical axes, the mean up vector
-    and the median camera distance to that point."""
+    into the splat's frame. Returns the focus (where the cameras look: the median of
+    the first surface each camera's centre ray hits among `points`; without points,
+    the point nearest to all optical axes), the mean up vector and the median camera
+    distance to the focus. Ray hits work for orbits and one-sided sweeps alike; the
+    axes' nearest point is ill-conditioned when the cameras all face one way."""
     T = np.array([f["transform_matrix"] for f in transforms["frames"]], float)
     if dataparser:
+        # nerfstudio saves it relative to the original COLMAP frame, i.e. before
+        # transforms.json's applied_transform: undo that first
         M, scale = np.array(dataparser["transform"], float), dataparser["scale"]
+        if "applied_transform" in transforms:
+            A = np.array(transforms["applied_transform"], float)
+            Ri = A[:3, :3].T
+            M = np.c_[M[:, :3] @ Ri, M[:, 3] - M[:, :3] @ Ri @ A[:3, 3]]
     else:
         M, scale = dataparser_transform(T)
     T = np.einsum("ij,njk->nik", M[:, :3], T[:, :3, :4])
     T[:, :3, 3] = (T[:, :3, 3] + M[:, 3]) * scale
     C, fwd, up = T[:, :3, 3], -T[:, :3, 2], T[:, :3, 1]
-    A, b = np.zeros((3, 3)), np.zeros(3)
-    for c, f in zip(C, fwd):
-        M = np.eye(3) - np.outer(f, f)
-        A += M
-        b += M @ c
-    o = np.linalg.solve(A, b)
+    hits = []
+    if points is not None:
+        cos = np.cos(np.radians(cone_deg))
+        sub = points[np.random.default_rng(0).permutation(len(points))[:200000]]
+        for c, f in zip(C[::max(1, len(C) // 40)], fwd[::max(1, len(C) // 40)]):
+            d = sub - c
+            dist = np.linalg.norm(d, axis=1)
+            near = (d @ f > cos * dist) & (dist > 1e-6)
+            if near.sum() >= 20:
+                hits.append(c + f * np.percentile(dist[near], 10))
+    if len(hits) >= 5:
+        o = np.median(np.array(hits), axis=0)
+    else:
+        A, b = np.zeros((3, 3)), np.zeros(3)
+        for c, f in zip(C, fwd):
+            P = np.eye(3) - np.outer(f, f)
+            A += P
+            b += P @ c
+        o = np.linalg.solve(A, b)
     up = up.mean(0)
     return o, up / np.linalg.norm(up), float(np.median(np.linalg.norm(C - o, axis=1)))
-
-
 
 
 def segment(P, voxel=0.02, radius=0.9, near=0.4):
@@ -201,6 +222,33 @@ def segment(P, voxel=0.02, radius=0.9, near=0.4):
 
 def extent(v, lo=0.5, hi=99.5):
     return np.percentile(v, lo), np.percentile(v, hi)
+
+
+def fit_plane(p, up, tol, max_tilt=50.0, iters=2000, min_frac=0.2):
+    """RANSAC plane with its normal within `max_tilt` of `up` (sign towards up):
+    (normal, point on it), or None if no plane holds `min_frac` of the points."""
+    if len(p) < 50:
+        return None
+    rng = np.random.default_rng(0)
+    best, best_n = None, 0
+    for _ in range(iters):
+        a, b, c = p[rng.choice(len(p), 3, replace=False)]
+        n = np.cross(b - a, c - a)
+        if np.linalg.norm(n) < 1e-12:
+            continue
+        n = n / np.linalg.norm(n)
+        n = n if n @ up >= 0 else -n
+        if n @ up < np.cos(np.radians(max_tilt)):
+            continue
+        k = int((np.abs((p - a) @ n) < tol).sum())
+        if k > best_n:
+            best, best_n = (n, a), k
+    if best is None or best_n < min_frac * len(p):
+        return None
+    n, a = best
+    inl = p[np.abs((p - a) @ n) < tol]
+    n = np.linalg.svd(inl - inl.mean(0), full_matrices=False)[2][2]
+    return n * np.sign(n @ up), inl.mean(0)
 
 
 def principal_axis(d):
@@ -271,19 +319,33 @@ def main():
     tf = Path(args.transforms) if args.transforms else Path(args.ply).with_name("transforms.json")
     dp = tf.with_name("dataparser_transforms.json")
     o, up, orbit = camera_rig(json.loads(tf.read_text()),
-                              json.loads(dp.read_text()) if dp.exists() else None)
+                              json.loads(dp.read_text()) if dp.exists() else None,
+                              points=P0[good])
     P = (P0 - o) @ frame_from_normal(up).T / orbit
     print(f"cameras: focus {o.round(3)}, orbit radius {orbit:.3f} units")
 
     # 2. segment the object: a dense seed; an upright object then grows along its axis
     gi = np.nonzero(good)[0]
     seed = gi[segment(P[gi])]
+    table_pt = None
     if pose == "upright":
         m, axis, Po = grow_column(P0[good], P0[seed], up, orbit)
     else:
         Po = P0[seed]
         m = np.median(Po, axis=0)
         axis = principal_axis(Po - m)
+        # a phone looking down tilts the cameras' up; the table under the object is
+        # the real up for something lying on it
+        rest = np.setdiff1d(gi, seed)
+        near = rest[np.linalg.norm(P0[rest] - m, axis=1) < 0.6 * orbit]
+        plane = fit_plane(P0[near], up, tol=0.01 * orbit, max_tilt=80, min_frac=0.1)
+        if plane is not None and abs(plane[0] @ axis) > np.sin(np.radians(15)):
+            plane = None  # the object must lie in it
+        if plane is not None:
+            n_tab, table_pt = plane
+            print(f"table: normal {np.degrees(np.arccos(np.clip(n_tab @ up, -1, 1))):.1f} deg "
+                  "from the cameras' up; using it as up")
+            up = n_tab
     print(f"object: {len(Po)} gaussians (seed {len(seed)})")
 
     # 3. principal axis = length; object frame rows R (x, y, z) in splat coordinates
@@ -299,18 +361,26 @@ def main():
     if pose == "upright":
         lo, hi = extent(Q[:, 2])
         measured = hi - lo
-        measured_d = 2 * np.percentile(np.linalg.norm(Q[:, :2] - np.median(Q[:, :2], 0), axis=1), 90)
+        # cross-check only: the mid-height band (no neck, no base). Transparent
+        # bottles grow ghost shells and reflections, so the crop uses the given size
+        mid = Q[(Q[:, 2] > lo + 0.3 * (hi - lo)) & (Q[:, 2] < lo + 0.7 * (hi - lo))]
+        measured_d = 2 * np.percentile(
+            np.linalg.norm(mid[:, :2] - np.median(mid[:, :2], 0), axis=1), 95)
         base = np.r_[np.median(Q[:, :2], 0), lo]
     else:
         lo, hi = extent(Q[:, 0])
         measured = hi - lo
         zlo, zhi = extent(Q[:, 2])
+        if table_pt is not None:  # the base is on the table, not on table bits
+            zlo = (table_pt - m) @ R[2]
+            zhi = np.percentile(Q[Q[:, 2] > zlo, 2], 99)
         measured_d = zhi - zlo
         base = np.array([(lo + hi) / 2, np.median(Q[:, 1]), zlo])
     s = L / measured
     print(f"{meta['object']}: length {measured:.4f} units = {L * 100:g} cm -> scale {s:.4f} m/unit; "
           f"axis {tilt:.1f} deg off {'vertical' if pose == 'upright' else 'horizontal'}")
-    print(f"  diameter then measures {measured_d * s * 100:.1f} cm (given {D * 100:g} cm)")
+    if pose == "lying":  # upright: the crop uses the given diameter (see above)
+        print(f"  diameter then measures {measured_d * s * 100:.1f} cm (given {D * 100:g} cm)")
 
     # 4. object frame in metres: X = s * R (P0 - p0); p0 = centre of the base
     p0 = m + base @ R
@@ -322,9 +392,15 @@ def main():
         half, zr = np.array([L, d]) / 2, (d, d)
     half = half * (1 + args.margin) + 0.01
     gsize = s * np.exp(np.stack([v[f"scale_{i}"] for i in range(3)], 1).astype(np.float64)).max(1)
-    keep = ((np.abs(X[:, :2]) < half).all(1) & (X[:, 2] > -0.003) &
-            (X[:, 2] < zr[1] * (1 + args.margin) + 0.01) & (gsize < 0.5 * d) &
-            np.isfinite(X).all(1))
+    if pose == "upright":  # a cylinder around the given diameter, with headroom
+        inside = np.linalg.norm(X[:, :2], axis=1) < 0.7 * D + 0.004
+    else:  # a round envelope around the length axis, sitting on the table
+        zc = (measured_d * s) / 2
+        inside = (np.abs(X[:, 0]) < half[0]) & \
+            (np.hypot(X[:, 1], X[:, 2] - zc) < zc * (1 + args.margin) + 0.004)
+    floor = 0.002 if table_pt is not None else -0.003  # drop the table layer
+    keep = (inside & (X[:, 2] > floor) & (X[:, 2] < zr[1] * (1 + args.margin) + 0.01) &
+            (gsize < 0.5 * d) & np.isfinite(X).all(1))
 
     out = v[keep].copy()
     for i, k in enumerate("xyz"):

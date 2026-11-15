@@ -66,9 +66,17 @@ print(models[-1][1])
 PY
 )
 if [ "$best" != "0" ]; then
+  # rewrite transforms.json and sparse_pc.ply (splatfacto's init) from that model;
+  # its images already have their frame_ names, so no rename map
   echo ">> using COLMAP model sparse/$best (the largest)"
-  ns-process-data images --data "$WORK/images" --output-dir "$WORK/ns" \
-    --skip-colmap --colmap-model-path "colmap/sparse/$best"
+  python - "$WORK/ns" "$best" <<'PY'
+import sys
+from pathlib import Path
+from nerfstudio.process_data.colmap_utils import colmap_to_json
+ns = Path(sys.argv[1])
+n = colmap_to_json(recon_dir=ns / "colmap" / "sparse" / sys.argv[2], output_dir=ns)
+print(f">> transforms.json rewritten: {n} frames")
+PY
 fi
 python -c "import json; f=json.load(open('$WORK/ns/transforms.json'))['frames']; print('>>', len(f), 'posed frames'); assert len(f) >= 30, 'too few posed frames'"
 

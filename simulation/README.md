@@ -186,6 +186,15 @@ centre, and the object still falls in.
 - a pause for the phone video, and packaging it as a Hugging Face dataset for
   Gaussian-splat training on HF Jobs.
 
+### Scanned objects (Gaussian splats)
+
+Phone videos of real objects become splats on HF Jobs (`capture/README.md`, standalone
+mode), `tools/crop_object_splat.py` cuts and scales each object, and
+`tools/splat_in_sim.py` drops them into the scene with physics proxies and renders the
+cameras with the splats composited in (`rebot_sim/splat_render.py`, CPU):
+
+![splats in the sim](docs/splats_in_sim_front.jpg)
+
 ## Camera calibration
 
 Without the board, the camera poses come from real frames (`reference_photos/cameras/`, 1920×1080):

@@ -57,7 +57,8 @@ From Python: `from rebot_sim import RealSetupEnv`. It has `reset(randomize=True,
 
 - **New measurements:** edit `real_setup.json`, bump `version`, run the tests, regenerate
   `docs/` images with `tools/compare_cameras.py`.
-- **New objects:** add an `objects` entry: `can`, `cup` (hollow) or `mesh`. Relative paths
+- **New objects:** add an `objects` entry: `can`, `roll` (cylinder lying along x), `cup`
+  (hollow) or `mesh`. Relative paths
   resolve against the JSON's folder. Mesh collisions use the convex hull, so open containers
   need the `cup` type.
 - **Camera moved:** with the board, run a capture session (below) with `--write`. Without it,
@@ -74,6 +75,21 @@ From Python: `from rebot_sim import RealSetupEnv`. It has `reset(randomize=True,
    pauses 3 min for the phone video.
 3. `python -m capture.prepare_splat_dataset s1 --media … --repo-id …`: uploads an HF dataset.
    It prints an `hf jobs run … nerfstudio … train_splat.sh` command for Gaussian-splat training.
+   Plain phone videos work too (`--standalone`, plus `--object/--pose/--length/--diameter`
+   for one object).
+
+## Scanned objects (Gaussian splats) in the sim
+
+- `tools/crop_object_splat.py splats/<x>/splat.ply --object …/object.json --out …`: cuts the
+  object out of its trained splat, scales it to metres from the measured length, base at the
+  origin, z up. Check the `.png` it writes.
+- `tools/splat_in_sim.py [--video]`: adds the objects with physics proxies (`can`/`roll`) to a
+  copy of the setup and renders each camera with the splats composited in
+  (`rebot_sim/splat_render.py`: CPU torch rasteriser, depth-tested against MuJoCo, proxies
+  hidden in geom group 3). Seconds per frame on CPU: fine for stills, slow for video.
+- Transparent bottles reconstruct poorly (refraction makes ghost shells); textured, opaque
+  objects work best. Splats live in `simulation/splats/` (gitignored) and on the Hub
+  (`niru-5/rebot_splat_<name>_splat`).
 
 Every tool has `--fake`, which runs against a simulated arm and cameras, so test there before
 touching hardware. The real arm keeps torque on while holding; warn the user to support it
