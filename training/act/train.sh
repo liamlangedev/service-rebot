@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Baseline ACT on RoboCrafty/rebot_sort_v1, trained from scratch on HF Jobs.
 #
-#   ./training/act/train.sh                     # submit to HF Jobs (a100-large) and detach
+#   ./training/act/train.sh                     # submit to HF Jobs (rtx-pro-6000) and detach
 #   TARGET=local ./training/act/train.sh        # run on this machine instead
 #   ./training/act/train.sh --steps=1000        # extra args are appended (override anything)
 #
@@ -11,7 +11,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LEROBOT_TRAIN="${LEROBOT_TRAIN:-$REPO_ROOT/teleoperation/.venv/bin/lerobot-train}"
 HF_USER="${HF_USER:-niru-5}"
-TARGET="${TARGET:-a100-large}"
+TARGET="${TARGET:-rtx-pro-6000}"
 
 exec "$LEROBOT_TRAIN" \
   --dataset.repo_id=RoboCrafty/rebot_sort_v1 \
@@ -22,7 +22,7 @@ exec "$LEROBOT_TRAIN" \
   --policy.chunk_size=100 \
   --policy.n_action_steps=100 \
   --batch_size=96 \
-  --num_workers=10 \
+  --num_workers=22 \
   --steps=13500 \
   --save_freq=1500 \
   --save_checkpoint_to_hub=true \

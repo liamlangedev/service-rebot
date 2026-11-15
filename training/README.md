@@ -16,7 +16,7 @@ Most episodes run 13–19 s. One outlier is 50 s; it's kept for now.
 | Batch size / steps | 96 / 13.5k | 128 / 10k |
 | Learning rate | 1e-5 (default) | 1e-4, cosine decay (warmup 500, decay 15k) |
 | Checkpoints | Every 1.5k steps, pushed to the Hub | Every 2.5k steps, pushed to the Hub |
-| HF Jobs flavor | `a100-large` | `a100-large` |
+| HF Jobs flavor | `rtx-pro-6000` (23 vCPU), 22 workers | same |
 | Tracking | Trackio → `niru-5/rebot-training` (private Space) | same |
 
 ## Run
@@ -51,3 +51,6 @@ as a secret.
   limited by video decoding (`data_s` ≈ `updt_s`). `image_transforms.backend=gpu` would help, but
   lerobot validates the config on the submitting machine, which has no GPU, so it can't be used
   from here.
+- Both runs moved to `rtx-pro-6000`: 23 vCPUs vs the A100's 12, 96 GB of GPU memory, $2.75/h.
+  Feeding the GPU is limited by CPU decoding, so more cores matter more than a faster GPU.
+  Single-GPU HF flavors top out at 23 vCPUs.

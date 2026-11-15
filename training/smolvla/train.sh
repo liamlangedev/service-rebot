@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fine-tune lerobot/smolvla_base on RoboCrafty/rebot_sort_v1 on HF Jobs.
 #
-#   ./training/smolvla/train.sh                 # submit to HF Jobs (a100-large) and detach
+#   ./training/smolvla/train.sh                 # submit to HF Jobs (rtx-pro-6000) and detach
 #   TARGET=local ./training/smolvla/train.sh    # run on this machine instead
 #   ./training/smolvla/train.sh --steps=1000    # extra args are appended (override anything)
 #
@@ -12,7 +12,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LEROBOT_TRAIN="${LEROBOT_TRAIN:-$REPO_ROOT/teleoperation/.venv/bin/lerobot-train}"
 HF_USER="${HF_USER:-niru-5}"
-TARGET="${TARGET:-a100-large}"
+TARGET="${TARGET:-rtx-pro-6000}"
 
 exec "$LEROBOT_TRAIN" \
   --dataset.repo_id=RoboCrafty/rebot_sort_v1 \
@@ -22,7 +22,7 @@ exec "$LEROBOT_TRAIN" \
   --policy.repo_id="$HF_USER/smolvla_rebot_sort_v1" \
   --rename_map='{"observation.images.front_wide": "observation.images.camera1", "observation.images.gripper": "observation.images.camera2", "observation.images.high_oblique": "observation.images.camera3"}' \
   --batch_size=128 \
-  --num_workers=10 \
+  --num_workers=22 \
   --steps=10000 \
   --save_freq=2500 \
   --policy.scheduler_warmup_steps=500 \
