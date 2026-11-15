@@ -90,9 +90,10 @@ Runs are logged in [`training/RUNS.md`](../training/RUNS.md).
 ### Check on the hardware before the first run
 
 1. **Gripper map.** `gripper_ros_*` / `gripper_data_*` map finger_left metres to the
-   dataset's gripper degrees through the opening fraction. This repo's arm reads 161 open
-   / 507 closed in lerobot degrees, while the dataset arm read -365 / -5, so raw degrees
-   can't be used.
+   dataset's gripper degrees through the opening fraction. The dataset arm read -365 open
+   / -5 closed. This repo's arm reads -370 / 0 in lerobot degrees
+   (`teleoperation/config/gripper_limits.json`, re-measured 2026-11-15; the earlier
+   161 / 507 was stale). Check it against the arm before trusting the gripper.
 2. **Wrist camera.** The dataset's `gripper` camera is 640x480. ROS `/wrist_cam` is
    1920x1080, centre-cropped to 4:3 and resized. Compare a frame side by side with a
    dataset frame: same mount, same field of view?

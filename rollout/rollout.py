@@ -509,7 +509,12 @@ def main() -> None:
     p.add_argument("--max-lag-deg", type=float, default=25.0)
     p.add_argument("--arrive-tol-deg", type=float, default=5.0,
                    help="max joint error after a slow move, else stop")
-    p.add_argument("--max-step-deg", type=float, default=8.0, help="driver max_relative_target")
+    p.add_argument("--max-step-deg", type=float, default=8.0,
+                   help="driver max_relative_target for the arm joints [deg per command]")
+    p.add_argument("--max-gripper-step-deg", type=float, default=40.0,
+                   help="driver max_relative_target for the gripper [deg per command]")
+    p.add_argument("--gripper-torque-ratio", type=float, default=0.03,
+                   help="FORCE_POS gripper force limit (as in teleoperation/rollout_policy.py)")
     p.add_argument("--motor-vel-deg", type=float, default=60.0, help="driver pos_vel speed [deg/s]")
     p.add_argument("--timeout", type=float, default=None,
                    help="policy time limit [s] (with --sync: time spent moving)")

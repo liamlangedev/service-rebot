@@ -3,7 +3,13 @@
 The arm is driven through lerobot's reBot B601 follower, set up like
 teleoperation/go_ready.py: pos_vel control (the motors cap joint speed), a per-command
 step limit (`max_relative_target`), the measured gripper range, never re-zeroing, and
-torque left on at exit so the arm does not drop.
+torque left on at exit so the arm does not drop. The gripper runs in FORCE_POS mode like
+the dev/roboCrafy inference script.
+
+The gripper range comes from teleoperation/config/gripper_limits.json. If the gripper
+reading in a rollout log never changes, or the driver warns that a gripper goal had to be
+clamped from far away, the file does not match the arm: re-measure with
+teleoperation/tools/measure_gripper.py.
 """
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ def state_of(obs: dict) -> np.ndarray:
 def connect_robot(args, cameras: dict[str, str]):
     """Real follower (or the MuJoCo stand-in with --fake-hardware). Returns (robot, gripper limits)."""
     from lerobot.robots.rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfig
-    from lerobot.robots.rebot_b601_follower.motor_family import ArmControlMode
+    from lerobot.robots.rebot_b601_follower.motor_family import ArmControlMode, GripperControlMode
 
     from teleop import gripper_limits
 
@@ -53,10 +59,17 @@ def connect_robot(args, cameras: dict[str, str]):
             index = int(dev) if dev.isdigit() else Path(dev)
             cam_cfgs[name] = OpenCVCameraConfig(index_or_path=index, fps=30, width=640, height=480)
 
+    # Gripper as in the dev/roboCrafy inference script (teleoperation/rollout_policy.py):
+    # FORCE_POS (position with a firmware force limit) and its own, larger step limit, so a
+    # full open/close (~365 deg) takes a few commands instead of ~45.
+    step = {n: float(args.max_step_deg) for n in JOINTS[:6]}
+    step["gripper"] = float(args.max_gripper_step_deg)
     config = RebotB601FollowerRobotConfig(
         port=args.port, id=args.robot_id, calibration_dir=Path(args.calibration_dir),
-        joint_limits={"gripper": (lo, hi)}, max_relative_target=args.max_step_deg,
+        joint_limits={"gripper": (lo, hi)}, max_relative_target=step,
         control_mode=ArmControlMode.POS_VEL, pos_vel_velocity=args.motor_vel_deg,
+        gripper_control_mode=GripperControlMode.FORCE_POS,
+        gripper_torque_ratio=args.gripper_torque_ratio,
         cameras=cam_cfgs, disable_torque_on_disconnect=False)
     if args.fake_hardware:
         from teleop.fake_rebot import FakeRebotFollower

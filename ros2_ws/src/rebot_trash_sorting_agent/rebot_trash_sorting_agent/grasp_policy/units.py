@@ -5,7 +5,7 @@ sign as the URDF (checked: every dataset episode starts at motion.yaml's `ready`
 [0, -1.51, -1.30, 1.36, 0, 0] rad, to within 0.5 deg). So deg = degrees(rad).
 
 Gripper: raw gripper degrees depend on each arm's calibration (the dataset arm reads
--365 open / -5 closed, this repo's arm 161 / 507), so the gripper goes through a
+-365 open / -5 closed; this repo's arm, re-measured 2026-11-15, -370 / 0), so the gripper goes through a
 normalised opening: ROS finger_left metres -> fraction open -> dataset degrees.
 """
 

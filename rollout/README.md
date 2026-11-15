@@ -253,8 +253,17 @@ command from the measured position) and pos_vel control with a motor speed cap o
 
 - Arm joints are lerobot degrees, as in the dataset: every rebot_sort_v1 episode starts
   at this repo's ready pose.
-- The gripper is mapped through the opening fraction. This arm reads 161 open / 507
-  closed (`teleoperation/config/gripper_limits.json`); the dataset arm read -365 / -5.
+- The gripper is mapped through the opening fraction, from
+  `teleoperation/config/gripper_limits.json`. That file was re-measured on 2026-11-15:
+  -370 open / 0 closed, about the datasets' -365 / -5. The earlier 161 / 507 no longer
+  matched the arm, so until 2026-11-15 the gripper never moved in a rollout: its reading
+  stayed at 6 deg, and the driver clamped each gripper goal ("Relative goal position
+  magnitude had to be clamped").
+  - If a run's log shows a gripper reading that never changes, re-measure with
+    `teleoperation/tools/measure_gripper.py`.
+  - The gripper runs in FORCE_POS mode (`--gripper-torque-ratio 0.03`) with its own step
+    limit (`--max-gripper-step-deg 40`), as in `teleoperation/rollout_policy.py` on
+    dev/roboCrafy.
 
 ## Inference speed
 

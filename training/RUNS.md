@@ -89,9 +89,16 @@ stop is unexplained; rerun it if the abs strategy looks promising.
 
 SmolVLA on the same datasets was considered and skipped for now.
 
-On the real arm (`rollout/`, 2026-11-15): grasp-abs gripped and lifted 2/2 from held-out
-clip 27. grasp-rel did so 1/4 started runs; in the other three the policy closed the jaw
-in the air and kept descending (ended on the floor limit or the timeout).
+On the real arm (`rollout/`, 2026-11-15), **all results so far are invalid for the
+gripper.** `teleoperation/config/gripper_limits.json` (161 open / 507 closed) no longer
+matched the arm (re-measured: -370 / 0), so every gripper command landed beyond "closed".
+The driver clamped it, and the gripper never moved: its reading stayed at 6 deg in all
+14 runs, keys and towel.
+
+The "gripped and lifted" stops (keys grasp-abs 2/2, keys grasp-rel 1/4, towel
+SmolVLA grasp-rel 1/1) only mean the policy commanded a close and the arm then rose 5 cm:
+the frozen gripper reading looked like a settled jaw. The policies themselves did command
+open at the start and close at the grasp. Rerun all of these with the fixed calibration.
 
 ## Towel grasp runs: ACT and SmolVLA (2026-11-15)
 

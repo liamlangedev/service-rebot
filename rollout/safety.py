@@ -139,7 +139,8 @@ class GripperUnits:
     """Robot gripper degrees (this arm's calibration) <-> dataset gripper degrees.
 
     The dataset arm read -365 open / -5 closed; this arm reads (from
-    teleoperation/config/gripper_limits.json) 161 open / 507 closed. Both go through the
+    teleoperation/config/gripper_limits.json, re-measured 2026-11-15) -370 open / 0 closed;
+    until then the file said 161 / 507, which no longer matched the arm. Both go through the
     opening fraction (1 = open, 0 = closed).
     """
 
