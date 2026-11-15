@@ -1,4 +1,4 @@
-"""The two robot skills the planner is allowed to call.
+"""Composable perception, motion, grasp and place skills for the planner.
 
 ``pick_and_place`` is one long, boring, verifiable sequence:
 
@@ -14,10 +14,12 @@ tests possible.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from rebot_trash_sorting_agent.perception.detector import discovery_vocabulary
 from rebot_trash_sorting_agent.skills.grasp import (
     GraspPlan,
     plan_grasp,
@@ -61,6 +63,8 @@ class SkillRunner:
         annotated_sink: AnnotateSink | None = None,
         front_camera: Any = None,
         height_camera: Any = None,
+        baseline_classes: Sequence[str] = (),
+        holding: dict[str, Any] | None = None,
     ) -> None:
         self.places = places
         self.motion_cfg = motion_cfg
@@ -76,6 +80,8 @@ class SkillRunner:
         self.annotated_sink = annotated_sink
         self.front_camera = front_camera
         self.height_camera = height_camera
+        self.baseline_classes = list(baseline_classes)
+        self.holding = holding if holding is not None else {}
         self._cancelled = False
 
         self._grasp_cfg = dict(motion_cfg.get("grasp") or {})
@@ -98,19 +104,39 @@ class SkillRunner:
     def __call__(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         started = time.monotonic()
         try:
-            if name == "list_objects":
-                payload, is_error = self.list_objects(), False
-            elif name == "pick_and_place":
-                payload = self.pick_and_place(
+            handlers = {
+                "list_objects": lambda: self.list_objects(arguments.get("classes")),
+                "detect_objects": lambda: self.list_objects(arguments.get("classes")),
+                "pick_and_place": lambda: self.pick_and_place(
                     str(arguments.get("object", "")),
                     arguments.get("destination"),
-                )
-                is_error = False
-            elif name == "move_home":
-                payload = self.move_home()
-                is_error = False
-            else:
+                ),
+                "move_above_object": lambda: self.move_above_object(
+                    str(arguments.get("object", "")),
+                    float(arguments.get("clearance_m", 0.10)),
+                ),
+                "move_to_pose": lambda: self.move_to_pose(
+                    ToolPose(
+                        float(arguments["x"]),
+                        float(arguments["y"]),
+                        float(arguments["z"]),
+                        float(arguments.get("yaw_deg", 0)),
+                        float(arguments.get("tilt_deg", 0)),
+                    ),
+                ),
+                "grasp_object": lambda: self.grasp_object(
+                    str(arguments.get("object", "")),
+                    bool(arguments.get("lift", True)),
+                ),
+                "place_object": lambda: self.place_object(arguments.get("destination")),
+                "open_gripper": lambda: self.command_gripper(True),
+                "close_gripper": lambda: self.command_gripper(False),
+                "move_home": self.move_home,
+            }
+            handler = handlers.get(name)
+            if handler is None:
                 raise SkillError(f"unknown skill {name!r}")
+            payload = handler()
         except TaskCancelled as exc:
             return ToolResult(name, {"error": str(exc), "cancelled": True}, True)
         except SkillError as exc:
@@ -118,10 +144,15 @@ class SkillRunner:
         except Exception as exc:  # noqa: BLE001 - a driver error must reach the planner as data
             return ToolResult(name, {"error": f"{type(exc).__name__}: {exc}"}, True)
         payload.setdefault("elapsed_s", round(time.monotonic() - started, 2))
-        return ToolResult(name, payload, is_error)
+        return ToolResult(name, payload, False)
 
     # ------------------------------------------------------------------ list_objects
-    def list_objects(self) -> dict[str, Any]:
+    def list_objects(self, classes: Any = None) -> dict[str, Any]:
+        if classes is not None:
+            vocabulary = discovery_vocabulary(classes, self.baseline_classes)
+            if vocabulary:
+                self.detector.set_vocabulary(vocabulary)
+                self.events.emit("detector_vocabulary", classes=vocabulary)
         frame = self._grab(self.camera)
         if frame is None:
             raise SkillError(
@@ -131,14 +162,25 @@ class SkillRunner:
         objects = self.scene.update(detections, self.table_map)
         height_note = self._update_heights(objects)
         self._publish_annotated(frame, detections)
+        pixels = [
+            {
+                "label": detection.label,
+                "score": round(detection.score, 3),
+                "bbox": list(detection.bbox),
+                "polygon": [
+                    list(point) for point in detection.polygon[:: max(1, math.ceil(len(detection.polygon) / 64))]
+                ],
+            }
+            for detection in detections
+        ]
+        vocabulary = list(getattr(self.detector, "vocabulary", ()))
 
         if self.table_map is None:
             return {
                 "calibrated": False,
                 "objects": [],
-                "detections": [
-                    {"label": d.label, "score": round(d.score, 3), "width_px": round(d.width_px, 1)} for d in detections
-                ],
+                "detections": pixels,
+                "classes": vocabulary,
                 "summary": (
                     "the table camera is not calibrated, so pixels cannot be turned into "
                     "robot positions; run scripts/calibrate_table.py before picking"
@@ -148,23 +190,111 @@ class SkillRunner:
             "calibrated": True,
             "visible": len(objects),
             "height_estimation": height_note,
+            "detections": pixels,
+            "classes": vocabulary,
             "objects": self.scene.as_summaries(),
             "summary": _objects_sentence(objects),
         }
 
     # ------------------------------------------------------------------ pick_and_place
     def pick_and_place(self, label: str, destination: str | None = None) -> dict[str, Any]:
+        grasped = self.grasp_object(label)
+        if self.plan_only:
+            grasped["destination"] = destination
+            grasped["summary"] = f"dry run: would pick {label} and place at {destination or 'a free spot'}"
+            return grasped
+        placed = self.place_object(destination)
+        placed["steps"] = grasped["steps"] + placed["steps"]
+        placed["attempts"] = grasped["attempts"]
+        placed["notes"] = grasped["notes"] + placed["notes"]
+        return placed
+
+    def _object(self, label: str) -> WorldObject:
         if self.table_map is None:
-            raise SkillError("table camera is not calibrated; cannot place an object reliably")
+            raise SkillError("table camera is not calibrated; cannot target an object reliably")
         label = (label or "").strip()
         if not label:
             raise SkillError("no object label given")
-
-        obj = self.scene.find(label)
-        if obj is None:
-            known = ", ".join(sorted({o.label for o in self.scene.all()})) or "nothing"
-            raise SkillError(f"no object labelled {label!r} in the last camera view (saw: {known})")
+        visible = [obj for obj in self.scene.all() if obj.state == "visible"]
+        matches = [obj for obj in visible if obj.label.lower() == label.lower()]
+        if not matches:
+            matches = [obj for obj in visible if label.lower() in obj.label.lower()]
+        if len(matches) != 1:
+            raise SkillError(
+                f"need exactly one visible object matching {label!r}; found {len(matches)}. "
+                "Detect again or clarify the target",
+            )
         self._check_cancel()
+        return matches[0]
+
+    def move_above_object(self, label: str, clearance_m: float = 0.10) -> dict[str, Any]:
+        if not math.isfinite(clearance_m) or not 0.02 <= clearance_m <= 0.25:
+            raise SkillError("clearance_m must be between 0.02 and 0.25 metres")
+        obj = self._object(label)
+        plan = plan_grasp(obj, self.motion_cfg, self._table_z)
+        pose = ToolPose(
+            obj.x,
+            obj.y,
+            max(plan.pre_grasp.z, obj.z + (obj.height_m or 0) + clearance_m),
+            plan.grasp.yaw_deg,
+        )
+        result = self.move_to_pose(pose)
+        result.update(
+            object=obj.label,
+            summary=f"{'dry run: would move' if self.plan_only else 'moved'} above {obj.label}; gripper unchanged",
+        )
+        return result
+
+    def move_to_pose(self, pose: ToolPose) -> dict[str, Any]:
+        self._check_cancel()
+        values = (pose.x, pose.y, pose.z, pose.yaw_deg, pose.tilt_deg)
+        limits = dict(self.motion_cfg.get("tool_limits") or {})
+        if not all(math.isfinite(value) for value in values):
+            raise SkillError("pose coordinates and angles must be finite")
+        if (
+            pose.z < self._table_z + float(limits.get("min_height_m", 0.002))
+            or pose.z > self._table_z + float(limits.get("max_height_m", 0.60))
+            or math.hypot(pose.x, pose.y) > float(limits.get("max_radius_m", 0.65))
+        ):
+            raise SkillError("requested pose is outside configured tool_limits")
+        if not self.motion.ik_feasible(pose):
+            raise SkillError("requested tool pose has no IK solution")
+        result = self.motion.move_to_pose(pose, plan_only=self.plan_only, label="requested tool pose")
+        return {
+            "success": True,
+            "dry_run": self.plan_only,
+            "pose": pose.summary(),
+            "motion": result,
+            "summary": "pose planned" if self.plan_only else "tool moved to requested pose",
+        }
+
+    def command_gripper(self, opening: bool) -> dict[str, Any]:
+        self._check_cancel()
+        if self.plan_only:
+            return {
+                "success": True,
+                "dry_run": True,
+                "summary": f"dry run: would {'open' if opening else 'close'} gripper",
+            }
+        result = self.gripper.open() if opening else self.gripper.close()
+        if opening:
+            held = self.holding.get("object")
+            if held is not None:
+                self.scene.remove(held.label)
+            self.holding.clear()
+        elif result.get("holding") and not self.holding:
+            self.holding.update(object=WorldObject("unknown object", 0, 0, self._table_z), close=result)
+        return {
+            "success": True,
+            "gripper": result,
+            "holding": bool(result.get("holding")) if not opening else False,
+            "summary": "gripper opened" if opening else "gripper closed; inspect holding result",
+        }
+
+    def grasp_object(self, label: str, lift: bool = True) -> dict[str, Any]:
+        if self.holding:
+            raise SkillError("gripper already holds an object; place it or explicitly open the gripper first")
+        obj = self._object(label)
 
         notes: list[str] = []
         if obj.state == "remembered":
@@ -224,8 +354,10 @@ class SkillRunner:
                 self.gripper.open()
                 continue
 
+            self.holding.update(object=obj, plan=candidate_plan, close=close)
             self._check_cancel()
-            steps.append(self.motion.move_to_pose(candidate_plan.lift, label="lift"))
+            if lift:
+                steps.append(self.motion.move_to_pose(candidate_plan.lift, label="lift"))
 
             # A grasp that survives the close can still slide out on the way up. Torque
             # and finger position are re-read here; either dropping is a slip.
@@ -234,6 +366,7 @@ class SkillRunner:
             if hold["slipped"] or not hold["holding"]:
                 attempts.append({"grasp": candidate_plan.grasp.summary(), "close": _grasp_payload(close), "hold": hold})
                 self.gripper.open()
+                self.holding.clear()
                 continue
 
             chosen = candidate_plan
@@ -245,9 +378,42 @@ class SkillRunner:
                 "the detector thought, too wide for the jaw, or out of reach",
             )
 
-        exclude = [o for o in self.scene.all() if o.label != obj.label]
+        self.holding.update(hold=hold)
+        return {
+            "success": True,
+            "object": obj.label,
+            "holding": True,
+            "lifted": lift,
+            "grasp": _grasp_payload(close),
+            "grasp_plan": chosen.summary(),
+            "hold": hold,
+            "attempts": attempts,
+            "steps": steps,
+            "notes": notes,
+            "summary": f"grasped {obj.label}{' and lifted it' if lift else ''}; still holding, not placed",
+        }
+
+    def place_object(self, destination: str | None = None) -> dict[str, Any]:
+        self._check_cancel()
+        if not self.holding:
+            raise SkillError("no held object; grasp an object before placing")
+        obj = self.holding["object"]
+        chosen = self.holding.get("plan")
+        close = self.holding.get("close", {})
+        hold = self.holding.get("hold", {})
+        exclude = [other for other in self.scene.all() if other.label != obj.label]
         target, release, approach, place_notes = self._reachable_place(destination, objects=exclude)
-        notes.extend(place_notes)
+        notes = list(place_notes)
+        if self.plan_only:
+            return {
+                "success": True,
+                "dry_run": True,
+                "object": obj.label,
+                "destination": target.name,
+                "pose": release.summary(),
+                "summary": f"dry run: would place {obj.label} at {target.name}",
+            }
+        steps: list[dict[str, Any]] = []
 
         if approach is not None:
             self._check_cancel()
@@ -256,6 +422,7 @@ class SkillRunner:
         steps.append(self.motion.move_to_pose(release, label=f"release at {target.name}"))
 
         self.gripper.open()
+        self.holding.clear()
         retreat = release.offset(dz=0.12)
         self._safe_retreat(retreat)
         self.scene.remove(obj.label)
@@ -271,9 +438,9 @@ class SkillRunner:
             "object": obj.label,
             "destination": target.name,
             "grasp": {key: close.get(key) for key in ("position", "torque", "torque_delta")},
-            "grasp_plan": chosen.summary(),
+            "grasp_plan": chosen.summary() if chosen else None,
             "hold": hold,
-            "attempts": attempts,
+            "attempts": [],
             "released_at": {"x": round(release.x, 4), "y": round(release.y, 4), "z": round(release.z, 4)},
             "steps": steps,
             "notes": notes,

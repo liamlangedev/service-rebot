@@ -142,8 +142,9 @@ ros2 launch rebot_trash_sorting_agent agent.launch.py \
    joint_states_topic:=/rebotarm/joint_states use_mujoco:=false
 ```
 
-Open **http://127.0.0.1:8090/** for the table/wrist streams, task box, and STOP
-button. There is currently no front-camera dashboard stream; the image is
+Open **http://127.0.0.1:8090/** for the table/front/wrist streams, task box, and STOP
+button. Live views show bounding boxes and segmentation-mask overlays. The
+dashboard follows the agent's active detector vocabulary; front images are also
 published on `/front_camera/image_raw` and consumed for height estimation.
 
 Check the reported dry-run state, then submit a task from another sourced terminal:
@@ -212,3 +213,62 @@ Open **http://127.0.0.1:8090/**. Optional launch flags are
 `randomize:=true seed:=1`, `provider:=mock`, and `use_rviz:=true`. Submit tasks via
 the dashboard or `/agent/task` as above. Stop any real pipeline before launching
 simulation because the default topics and dashboard port are shared.
+
+## Runtime Object Discovery
+
+`perception.classes` in [config/agent.yaml](config/agent.yaml) is a baseline/fallback,
+not a complete list of supported objects. The orchestrator already receives a
+camera image on its first turn. It can supply short object names via
+`detect_objects(classes=["can", "wrapper", "paper cup"])`; `list_objects` accepts
+the same optional argument as a backward-compatible alias. No separate VLM
+discovery API call or detector fine-tuning is required.
+
+Suggestions are normalized, deduplicated and bounded to 32 prompts, reserving
+space for up to 16 baseline classes. Invalid suggestions fall back to baseline
+classes; omitting `classes` leaves the current vocabulary unchanged. Embeddings
+are rebuilt only when the vocabulary changes. Detection uses the same active
+vocabulary for table/front views, while the dashboard synchronizes its background
+detector from `/agent/status`. A suggested name is not proof an object exists:
+motion still requires an unambiguous, visible detector result with calibration.
+
+Detection returns pixel `bbox` and `polygon` fields even without table calibration;
+calibrated object positions and heights are returned when available. The live
+views update independently of tool calls and show these masks and boxes, including
+newly suggested classes. The front MJPEG endpoint is `/front_stream`; `/front.jpg`
+returns a single JPEG. The baseline remains useful when discovery is omitted or
+misses an object. The mock planner retains its fixed pick-and-place policy; use a
+real VLM provider to evaluate natural-language selection of the new skills.
+
+## Composable Robot Skills
+
+The VLM can perform each operation independently, rather than always running a
+complete pick-and-place. Example tasks include "detect the objects", "go above
+the can without grasping", "grasp the bottle and hold it", and "place what you
+are holding in bin_0".
+
+| Tool | Behavior |
+| --- | --- |
+| `detect_objects` / `list_objects` | Detect/segment, optionally extend classes, return observations and overlays; no arm or gripper motion. |
+| `move_above_object` | Move above one visible object, keeping at least the requested `clearance_m` above its estimated top; gripper unchanged. |
+| `move_to_pose` | Move to explicit `base_link` X/Y/Z in metres and optional yaw/tilt in degrees; no gripper action. |
+| `grasp_object` | Approach, close, verify hold and lift; keep holding without placing. Set `lift: false` to omit the lift. |
+| `place_object` | Place the currently held object at a configured destination or free table spot, release, and retreat. |
+| `open_gripper` / `close_gripper` | Operate only the fingers at the current pose; opening releases any held object. |
+| `pick_and_place` | Compose the same grasp and place primitives for a complete sorting task. |
+| `move_home` | Move to the configured folded home pose. |
+
+Held-object state persists between user tasks while `agent_node` remains running,
+so grasp and place can be separate requests. Restarting the node loses this
+software state; it is not continuous hold monitoring. An error after a confirmed
+close preserves the held state rather than assuming the gripper is empty.
+Detection does not move the robot, and move-only requests do not close/open the
+fingers or automatically place anything. Missing, remembered-only, or ambiguous
+object targets are rejected; refresh detection instead of relying on stale data.
+
+Absolute pose moves reject non-finite coordinates and poses outside
+`motion.yaml` `tool_limits`, screen IK, and use MoveIt planning. These simple
+bounds are **not** environmental collision avoidance. In YAML dry-run mode,
+absolute moves plan without execution and grasp/gripper tools do not actuate.
+Do not infer a successful physical grasp from a dry-run result. Without measured
+height, moving above an object uses the existing fallback grasp geometry, which
+cannot guarantee clearance over an object of unknown height.

@@ -1,6 +1,6 @@
 """The planner's tool surface.
 
-Deliberately small: four tools, one call per step. Everything the model can do to
+One tool call per step. Everything the model can do to
 the robot is here, which also means this is the whole safety surface.
 """
 
@@ -10,7 +10,25 @@ from typing import Any
 
 from ..types import ToolSchema
 
+_DETECTION_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "classes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 32,
+            "description": "Optional short object names discovered in the image, e.g. can, bottle, paper cup, wrapper. Extends baseline classes, not an assertion that objects exist. Omit to keep the current vocabulary.",
+        },
+    },
+    "additionalProperties": False,
+}
+
 TOOLS: list[ToolSchema] = [
+    ToolSchema(
+        name="detect_objects",
+        description="Run local detection/segmentation without moving the arm. Suggest classes from the camera image on the first call. Returns pixel boxes/masks, calibrated positions and front-view heights when available, and publishes overlays.",
+        parameters=_DETECTION_PARAMETERS,
+    ),
     ToolSchema(
         name="list_objects",
         description=(
@@ -19,6 +37,77 @@ TOOLS: list[ToolSchema] = [
             "y is to the arm's left). Call this before the first pick and after any move "
             "that could have changed the scene."
         ),
+        parameters=_DETECTION_PARAMETERS,
+    ),
+    ToolSchema(
+        name="move_above_object",
+        description="Move only to a pre-grasp pose above one uniquely detected object. Do not descend, grasp, open or close the gripper. Use when asked to hover or go above an object, not pick it up.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "object": {"type": "string", "description": "Visible detector label returned by detect_objects"},
+                "clearance_m": {
+                    "type": "number",
+                    "minimum": 0.02,
+                    "maximum": 0.25,
+                    "description": "Minimum clearance above measured top, in metres; default 0.10",
+                },
+            },
+            "required": ["object"],
+            "additionalProperties": False,
+        },
+    ),
+    ToolSchema(
+        name="move_to_pose",
+        description="Move only the tool to an explicit pose in base_link: XYZ in metres, yaw/tilt in degrees (default zero, tool down). Does not operate the gripper. Use only supplied coordinates or measured tool results, never guessed coordinates from image pixels. IK and configured tool limits are checked.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "z": {"type": "number"},
+                "yaw_deg": {"type": "number"},
+                "tilt_deg": {"type": "number"},
+            },
+            "required": ["x", "y", "z"],
+            "additionalProperties": False,
+        },
+    ),
+    ToolSchema(
+        name="grasp_object",
+        description="Approach and grasp one detected object, verify hold, and optionally lift (default true). Keeps holding the object; does not place it or return home. Set lift=false when asked only to close on the object without lifting.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "object": {"type": "string"},
+                "lift": {"type": "boolean"},
+            },
+            "required": ["object"],
+            "additionalProperties": False,
+        },
+    ),
+    ToolSchema(
+        name="place_object",
+        description="Place and release the currently held object at a destination, then retreat. Requires a previous successful grasp/close; the held state persists between user tasks. Does not pick another object.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "destination": {
+                    "type": "string",
+                    "description": "Configured bin name or table; omitted means a free spot",
+                },
+            },
+            "additionalProperties": False,
+        },
+    ),
+    ToolSchema(
+        name="open_gripper",
+        description="Open the gripper without moving the arm. Releases any held object at the current position; use only when explicitly requested or intended by the task.",
+        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    ),
+    ToolSchema(
+        name="close_gripper",
+        description="Close the gripper at the current pose without moving the arm. Returns measured holding state; does not establish the identity of an untracked object.",
         parameters={"type": "object", "properties": {}, "additionalProperties": False},
     ),
     ToolSchema(

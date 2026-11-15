@@ -101,6 +101,11 @@ place:
   #: keep the object this far from the walls and other objects
   spot_clearance: 0.06
 
+tool_limits:
+  min_height_m: 0.002           # absolute move_to_pose floor above table; not obstacle avoidance
+  max_height_m: 0.60
+  max_radius_m: 0.65
+
 height_estimation:
   min_height_m: 0.005
   max_height_m: 0.35

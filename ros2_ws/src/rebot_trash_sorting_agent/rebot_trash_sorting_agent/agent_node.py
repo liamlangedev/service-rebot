@@ -71,6 +71,10 @@ class LazyDetector:
         if self._detector is not None:
             self._detector.set_vocabulary(words)
 
+    @property
+    def vocabulary(self) -> list[str]:
+        return list(self._settings.get("classes") or ())
+
     def detect(self, frame: Any):
         if self._error is not None:
             raise RuntimeError(self._error)
@@ -116,6 +120,7 @@ class AgentNode(Node):
         self._runner: SkillRunner | None = None
         self._worker: threading.Thread | None = None
         self._events_tail: deque[dict[str, Any]] = deque(maxlen=60)
+        self._holding: dict[str, Any] = {}
         self._cb = ReentrantCallbackGroup()
 
         self._table_name = self._str_param("table_camera") or "table"
@@ -321,6 +326,8 @@ class AgentNode(Node):
                 wrist_camera=self._wrist_camera,
                 front_camera=self._front_camera,
                 height_camera=self._height_camera,
+                baseline_classes=self._config.perception.get("classes") or (),
+                holding=self._holding,
                 annotated_sink=self._publish_annotated,
             )
             self._runner = runner
@@ -365,6 +372,9 @@ class AgentNode(Node):
             )
         lines.append("objects from the last camera view:")
         lines.append(self._scene.summary_text())
+        lines.append("active detector classes: " + ", ".join(self._detector.vocabulary))
+        held = self._holding.get("object")
+        lines.append(f"gripper holding: {held.label if held else 'nothing confirmed'}")
         return "\n".join(lines)
 
     def capture_jpeg(self) -> bytes | None:
@@ -412,6 +422,8 @@ class AgentNode(Node):
             "wrist_frames": self._wrist_camera.frames_received if self._wrist_camera else 0,
             "front_frames": self._front_camera.frames_received if self._front_camera else 0,
             "height_calibrated": self._height_camera is not None,
+            "detector_classes": self._detector.vocabulary,
+            "holding": self._holding["object"].label if self._holding else None,
             "objects": self._scene.as_summaries(),
             "events": list(self._events_tail)[-12:],
             "updated": round(time.time(), 3),
