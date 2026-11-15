@@ -14,15 +14,28 @@ One script, three strategies. It drives the arm directly through lerobot's reBot
 Run everything from the repo root (`steel_team/`, or this worktree until it is merged) in
 a normal terminal. The keys are read straight from the terminal, so don't pipe the output.
 
-### 0. Set up once per session
+### 0. The launcher
+
+`rollout/run.sh` has the camera devices and the first-run settings built in, and works
+from bash or zsh, from any directory:
 
 ```bash
-P=teleoperation/.venv/bin/python
-FRONT=/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._KD-USB_Cameras_KD-USB_Cameras-video-index0
-WRIST=/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
-HIGH=/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0
-CAMS="--cam front_wide=$FRONT --cam gripper=$WRIST --cam high_oblique=$HIGH"
+rollout/run.sh cameras               # check the cameras
+rollout/run.sh full                  # A. full-task ACT, first run
+rollout/run.sh grasp-rel-approach    # B. grasp-rel, approach only (floor above the table)
+rollout/run.sh grasp-rel             # B. grasp-rel, real grasp
+rollout/run.sh grasp-abs             # grasp-abs (add --device cuda)
+rollout/run.sh dry-run               # grasp-rel on the MuJoCo stand-in, no arm
 ```
+
+Anything after the mode goes to `rollout.py` and overrides the built-in settings, e.g.
+`rollout/run.sh full --max-speed 45 --timeout 40`. If a camera moves to a different USB
+port, set `FRONT=`, `WRIST=` or `HIGH=`.
+
+To call `rollout.py` by hand from zsh, don't keep several flags in one variable
+(`CAMS="--cam a=... --cam b=..."`): unlike bash, zsh doesn't split `$CAMS` on spaces and
+passes it as one argument ("unrecognized arguments"). Write the flags out or use an
+array.
 
 Camera mapping, checked on 2026-11-15 against the dataset views:
 
@@ -37,7 +50,7 @@ The `/dev/v4l/by-id` paths stay the same across replugs; `/dev/videoN` numbers d
 1. **Check the cameras.**
 
    ```bash
-   $P rollout/check_cameras.py $CAMS
+   rollout/run.sh cameras
    ```
 
    Open `rollout/logs/cameras.jpg` next to `rollout/camera_reference.jpg` (the dataset
@@ -50,9 +63,8 @@ The `/dev/v4l/by-id` paths stay the same across replugs; `/dev/videoN` numbers d
    root (the script refuses to connect without it, so the motors are never re-zeroed).
    Keep a hand near the power switch for every run.
 
-3. **Optional dry run** without the arm, to see the prompts:
-   `$P rollout/rollout.py grasp-rel --fake-hardware --auto-start --arrive-tol-deg 15 --max-lag-deg 40`
-   (needs a local copy of rebot_sort_v1 for the fake camera frames; see "Dry run" below).
+3. **Optional dry run** without the arm, to see the prompts: `rollout/run.sh dry-run`. The
+   first time, it downloads rebot_sort_v1 (~900 MB) for the fake camera frames.
 
 ### A. Full-task ACT
 
@@ -64,7 +76,7 @@ y -0.22 to -0.30 m in the base frame; compare the `front_wide` view in
 **First run, slow, with a short timeout:**
 
 ```bash
-$P rollout/rollout.py full $CAMS --max-speed 25 --timeout 20
+rollout/run.sh full        # = rollout.py full <3 cameras> --max-speed 25 --timeout 20
 ```
 
 What happens:
@@ -93,7 +105,7 @@ demo spot, so start in the demo spot, then move them.
 the approach first):
 
 ```bash
-$P rollout/rollout.py grasp-rel --cam gripper=$WRIST --max-speed 20 --max-offset 15 --min-tcp-z 0.13
+rollout/run.sh grasp-rel-approach   # = grasp-rel <wrist camera> --max-speed 20 --max-offset 15 --min-tcp-z 0.13
 ```
 
 What happens:
@@ -121,7 +133,7 @@ first run: it shows the approach is aimed right. Then run with the default floor
 so it can actually grasp:
 
 ```bash
-$P rollout/rollout.py grasp-rel --cam gripper=$WRIST --max-speed 30 --max-offset 20
+rollout/run.sh grasp-rel            # = grasp-rel <wrist camera> --max-speed 30 --max-offset 20
 ```
 
 Then move the keys: 5, 10 and 15 cm away from the demo spot, rotated 45 and 90 deg.
@@ -157,7 +169,7 @@ Every run writes `rollout/logs/<time>_<mode>.json` (outcome, events, arguments) 
 ## grasp-abs
 
 ```bash
-$P rollout/rollout.py grasp-abs $CAMS --start-episode 27 --device cuda
+rollout/run.sh grasp-abs --device cuda     # clip 27; --start-episode N for another
 ```
 
 It prints the clip's TCP position (x, y in the base frame); put the keys under the
@@ -213,9 +225,7 @@ recorded frames from a rebot_sort_v1 episode as the cameras (open loop: the imag
 react to the arm). Its motors sag under gravity, so loosen the arrival and lag checks:
 
 ```bash
-hf download RoboCrafty/rebot_sort_v1 --repo-type dataset --local-dir /tmp/rebot_sort_v1
-$P rollout/rollout.py grasp-rel --fake-hardware --auto-start --arrive-tol-deg 15 --max-lag-deg 40 \
-   --fake-images-root /tmp/rebot_sort_v1 --fake-episode 32 --fake-start-frame 72
+rollout/run.sh dry-run      # downloads rebot_sort_v1 to ~/.cache/rebot_sort_v1 once (DATASET_ROOT= to change)
 ```
 
 Safety tests: `cd rollout && python3 -m pytest -q test_safety.py`.
