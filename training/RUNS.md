@@ -114,7 +114,26 @@ ACT settings as for the keys (`training_gripper/train.sh`). SmolVLA
 camera1/2/3 (gripper -> camera2), batch 64 x 5k steps, cosine warmup 300 / decay 5k, eval
 every 500 steps, 8 workers, rtx-pro-6000. Model repos are private.
 
-Results: running.
+All four completed 5k steps (models private, checkpoints every 1k). Eval loss on the 3
+held-out grasps:
+
+| step | ACT rel | ACT abs | SmolVLA rel | SmolVLA abs |
+|---|---|---|---|---|
+| 500 | 0.303 | 0.305 | 0.456 | 0.441 |
+| 1000 | 0.260 | 0.306 | **0.469** | **0.575** |
+| 2000 | 0.253 | 0.275 | 0.588 | 0.620 |
+| 3000 | 0.250 | 0.269 | 0.703 | 0.674 |
+| 4000 | 0.242 | **0.267** | 0.759 | 0.853 |
+| 5000 | **0.239** | 0.270 | 0.723 | 0.920 |
+
+- **ACT** keeps improving (rel) or flattens (abs) on held-out grasps: use the final models.
+- **SmolVLA overfits**: eval loss rises from step 500 while train loss falls (rel final
+  train loss 0.044). About 30 short clips from one towel position are not enough for a
+  450M fine-tune at 5k steps. Use checkpoint `001000`, the earliest saved. For a rerun:
+  fewer steps (~1k), save every 250, or freeze more of the model.
+- SmolVLA's flow-matching eval loss and ACT's L1+KL loss are not comparable with each
+  other.
+- `rollout/run.sh towel-*` loads: ACT final, SmolVLA `checkpoints/001000`.
 
 ## Aborted runs
 

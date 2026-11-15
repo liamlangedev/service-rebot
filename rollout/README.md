@@ -178,6 +178,49 @@ waits for `a` -> grasps -> stops once gripped and lifted. Clips 27-29 (source ep
 32-34) were held out from training; 0-26 were trained on. It needs `--device cuda` or a
 fast CPU: 3-camera inference takes ~1.1 s on the dev laptop, longer than its 1 s chunks.
 
+## Towel grasp models
+
+Trained on the grasps of `RoboCrafty/rebot_sort_towel2` (`training/RUNS.md`), with the
+prompt "pick up the towel". All the towel demos grasp in one spot: the TCP about 43 cm in
+front of the base and 24 cm to its right (x 0.40-0.47 m, y -0.29 to -0.19 m). That is
+further out than the keys.
+
+| mode | model | loads | cameras | how it starts |
+|---|---|---|---|---|
+| `towel-act-rel` | `niru-5/act_rebot_grasp_towel_rel` | final | gripper | you place the arm above the towel (`h`), then `a` |
+| `towel-smolvla-rel` | `niru-5/smolvla_rebot_grasp_towel_rel_2026-11-15_14-38-20` | `checkpoints/001000` | gripper (as `camera2`) | same |
+| `towel-act-abs` | `niru-5/act_rebot_grasp_towel_abs` | final | all three | drives to held-out clip 29's start pose, then `a` |
+| `towel-smolvla-abs` | `niru-5/smolvla_rebot_grasp_towel_abs_2026-11-15_14-38-42` | `checkpoints/001000` | all three | same |
+
+The SmolVLA runs overfit (eval loss rising after step 500-1000), so they load the earliest
+saved checkpoint. Pick another with `CKPT`, e.g. `CKPT=003000 rollout/run.sh towel-smolvla-rel`.
+
+Suggested order, each with the towel folded flat on the table:
+
+1. **`rollout/run.sh towel-act-abs`**: the towel goes where the demos had it.
+   - The script prints the clip's TCP x, y; put the towel under the gripper there.
+   - The arm drives to the ready pose, then over 5 s to the clip's start pose. Check that
+     the towel is under the gripper.
+   - Press `a`. It should descend, close and lift, then stop with
+     `gripped and lifted 5.x cm`. Press `q` to quit.
+   - Other held-out clips: `--start-episode 30` or `31`.
+2. **`rollout/run.sh towel-act-rel`**: towel in the demo spot first.
+   - Press `h` with a hand under the arm, place the gripper ~5 cm above the towel with the
+     wrist camera on it, press `h` to lock, then `a`.
+   - Then move the towel 5, 10 and 15 cm and rotate it. Place the arm above it each time.
+3. **`rollout/run.sh towel-smolvla-abs`** and **`towel-smolvla-rel`**: the same two
+   procedures with SmolVLA. Its inference is slower than ACT's: use `--device cuda` if
+   there is a GPU, and watch for `chunk ran out` in the output.
+
+For a first run, add `--max-speed 20`. The usual keys and safety limits apply; the towel
+demos stay inside them (reach up to 0.534 m against the 0.55 m cap, lowest TCP 0.128 m
+against the 0.120 m floor).
+
+The first run of each mode downloads its model (SmolVLA checkpoints are about 1-2 GB).
+
+SmolVLA needs `transformers`. The teleop environment's `lerobot` extra now includes
+`lerobot[smolvla]`, so `uv sync --extra lerobot` in `teleoperation/` installs it.
+
 ## Safety limits
 
 Applied to every command, in this order (`safety.py`, defaults in brackets):

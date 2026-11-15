@@ -46,18 +46,26 @@ case "$mode" in
   grasp-abs)
     exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" --start-episode 27 "$@" ;;
   towel-act-rel)
+    # final model (eval loss 0.239, the best); CKPT=00N000 for an earlier checkpoint
     exec "$PY" rollout/rollout.py grasp-rel "${WRIST_CAM[@]}" --policy niru-5/act_rebot_grasp_towel_rel \
+      ${CKPT:+--policy-subfolder "checkpoints/$CKPT/pretrained_model"} \
       --task "pick up the towel" --max-speed 30 --max-offset 20 "$@" ;;
   towel-smolvla-rel)
+    # checkpoint 1000 (eval loss 0.469); it rose to 0.723 by the final step (overfit)
     exec "$PY" rollout/rollout.py grasp-rel "${WRIST_CAM[@]}" \
       --policy "${SMOLVLA_TOWEL_REL:-niru-5/smolvla_rebot_grasp_towel_rel_2026-11-15_14-38-20}" \
+      --policy-subfolder "checkpoints/${CKPT:-001000}/pretrained_model" \
       --use-cams camera2 --task "pick up the towel" --max-speed 30 --max-offset 20 "$@" ;;
   towel-act-abs)
+    # final model (eval loss 0.270; flat from 3k); CKPT=00N000 for an earlier checkpoint
     exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" --policy niru-5/act_rebot_grasp_towel_abs \
+      ${CKPT:+--policy-subfolder "checkpoints/$CKPT/pretrained_model"} \
       --start-dataset niru-5/rebot_grasp_towel_abs --start-episode 29 --task "pick up the towel" "$@" ;;
   towel-smolvla-abs)
+    # checkpoint 1000 (eval loss 0.575); it rose to 0.920 by the final step (overfit)
     exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" \
       --policy "${SMOLVLA_TOWEL_ABS:-niru-5/smolvla_rebot_grasp_towel_abs_2026-11-15_14-38-42}" \
+      --policy-subfolder "checkpoints/${CKPT:-001000}/pretrained_model" \
       --start-dataset niru-5/rebot_grasp_towel_abs --start-episode 29 --task "pick up the towel" "$@" ;;
   dry-run)
     src="${DATASET_ROOT:-$HOME/.cache/rebot_sort_v1}"
