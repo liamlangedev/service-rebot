@@ -58,18 +58,18 @@ gripper:
 
 grasp:
   #: The object's height is not observable from one RGB view on a plane, so try a
-  #: short ladder of pinch heights above the table, low first. If the jaws close on
-  #: nothing the skill retreats and tries the next rung, which is also how a person
-  #: recovers from grabbing too low. No per-class dimensions are involved.
-  pinch_heights_m: [0.03, 0.05]
+  #: short ladder of pinch heights above the table, high first so tall objects
+  #: (e.g. cans) are not crushed by the gripper base. If the jaws close on nothing
+  #: the skill retreats and tries the next rung. No per-class dimensions are involved.
+  pinch_heights_m: [0.06, 0.04]
   #: stop after this many reachable candidates (2 heights x 2 yaws = up to 4)
-  max_attempts: 3
+  max_attempts: 4
   #: the TCP (SRDF chain tip) sits at the fingertip, which is this far below the pinch
-  tcp_below_pinch: 0.020
+  tcp_below_pinch: 0.010
   #: used for the width warning when the mask's bottom edge is too short to measure
   assumed_width_m: 0.04
   #: pre-grasp pose: pinch this far above the grab point
-  pre_grasp_clearance: 0.12
+  pre_grasp_clearance: 0.10
   #: lift after closing: pinch this far above the grab point
   lift_clearance: 0.10
   #: finger rotations tried, in this order (the measured yaw is always first)
@@ -103,7 +103,7 @@ place:
 wrist_correction:
   #: Final XY correction from the wrist camera. Off until the camera is mounted and
   #: the axis mapping is checked; see README "wrist correction".
-  enabled: false
+  enabled: true
   camera: wrist
   #: metres of base-frame motion per pixel of image error, at the grasp height
   m_per_px: 0.00025
