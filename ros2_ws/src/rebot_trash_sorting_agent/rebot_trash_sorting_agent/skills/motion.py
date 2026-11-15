@@ -11,6 +11,7 @@ node's executor keeps spinning while a motion runs.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from collections.abc import Sequence
@@ -32,13 +33,23 @@ class MoveItClient:
 
         self._node = node
         self._Action = MoveGroup
-        self._cfg = dict(cfg)
+        self._cfg = {**cfg, **dict(cfg.get("move_group") or {})}
+        cfg = self._cfg
         self._group = str(cfg.get("group", "arm"))
         self._tip = str(cfg.get("tip_link", "gripper_tcp"))
         self._frame = str(cfg.get("base_frame", "base_link"))
         self._action_name = str(cfg.get("action", "/move_action"))
-        self._velocity = float(cfg.get("velocity_scaling", 0.15))
-        self._acceleration = float(cfg.get("acceleration_scaling", 0.15))
+        self._velocity = _scaling(cfg.get("velocity_scaling", 0.15))
+        self._acceleration = _scaling(cfg.get("acceleration_scaling", 0.15))
+        self._speed_profiles = {"default": (self._velocity, self._acceleration)}
+        for name, profile in (cfg.get("speed_profiles") or {}).items():
+            if name == "default":
+                raise ValueError("set default speed with velocity_scaling and acceleration_scaling")
+            self._speed_profiles[str(name)] = (
+                _scaling(profile.get("velocity_scaling", self._velocity)),
+                _scaling(profile.get("acceleration_scaling", self._acceleration)),
+            )
+        self._speed_profiles.setdefault("travel", self._speed_profiles["default"])
         self._attempts = int(cfg.get("num_planning_attempts", 8))
         self._planning_time = float(cfg.get("allowed_planning_time", 5.0))
         self._planner_id = str(cfg.get("planner_id", "") or "")
@@ -71,20 +82,22 @@ class MoveItClient:
         if handle is not None:
             handle.cancel_goal_async()
 
-    def move_named(self, name: str, plan_only: bool = False) -> dict[str, Any]:
-        return self.move_to_joints(self.named_pose(name), plan_only=plan_only, label=name)
+    def move_named(self, name: str, plan_only: bool = False, *, speed_profile: str = "default") -> dict[str, Any]:
+        return self.move_to_joints(self.named_pose(name), plan_only=plan_only, label=name, speed_profile=speed_profile)
 
     def move_to_joints(
         self,
         positions: Sequence[float],
         plan_only: bool = False,
         label: str = "joints",
+        *,
+        speed_profile: str = "default",
     ) -> dict[str, Any]:
         from moveit_msgs.msg import Constraints, JointConstraint
 
         if len(positions) != 6:
             raise MotionError(f"expected 6 joint values, got {len(positions)}")
-        goal = self._goal(plan_only)
+        goal = self._goal(plan_only, speed_profile)
         constraints = Constraints()
         for index, value in enumerate(positions, start=1):
             constraints.joint_constraints.append(
@@ -101,8 +114,10 @@ class MoveItClient:
         result["joints"] = [round(float(v), 4) for v in positions]
         return result
 
-    def move_to_pose(self, pose: ToolPose, plan_only: bool = False, label: str = "pose") -> dict[str, Any]:
-        goal = self._goal(plan_only)
+    def move_to_pose(
+        self, pose: ToolPose, plan_only: bool = False, label: str = "pose", *, speed_profile: str = "default"
+    ) -> dict[str, Any]:
+        goal = self._goal(plan_only, speed_profile)
         goal.request.goal_constraints = [self._pose_constraints(pose)]
         result = self._send(goal, label=label, plan_only=plan_only)
         result["pose"] = pose.summary()
@@ -143,14 +158,17 @@ class MoveItClient:
 
         return GetPositionIK
 
-    def _goal(self, plan_only: bool):
+    def _goal(self, plan_only: bool, speed_profile: str = "default"):
+        if speed_profile not in self._speed_profiles:
+            raise MotionError(f"unknown speed profile {speed_profile!r}")
+        velocity, acceleration = self._speed_profiles[speed_profile]
         goal = self._Action.Goal()
         request = goal.request
         request.group_name = self._group
         request.num_planning_attempts = self._attempts
         request.allowed_planning_time = self._planning_time
-        request.max_velocity_scaling_factor = self._velocity
-        request.max_acceleration_scaling_factor = self._acceleration
+        request.max_velocity_scaling_factor = velocity
+        request.max_acceleration_scaling_factor = acceleration
         if self._planner_id:
             request.planner_id = self._planner_id
         goal.planning_options.plan_only = bool(plan_only or not self._cfg.get("execute", True))
@@ -223,11 +241,20 @@ class MoveItClient:
             raise MotionError(f"{label}: MoveIt error code {code} ({_error_name(code)})")
         return {
             "label": label,
+            "velocity_scaling": goal.request.max_velocity_scaling_factor,
+            "acceleration_scaling": goal.request.max_acceleration_scaling_factor,
             "planned": bool(goal.planning_options.plan_only),
             "duration_s": elapsed,
             "executed": not goal.planning_options.plan_only,
             "planning_time_s": round(float(wrapped.result.planning_time), 3),
         }
+
+
+def _scaling(value: Any) -> float:
+    scale = float(value)
+    if not math.isfinite(scale) or not 0.0 < scale <= 1.0:
+        raise ValueError("motion speed scaling must be finite and in (0, 1]")
+    return scale
 
 
 def _to_msg_pose(pose: ToolPose):

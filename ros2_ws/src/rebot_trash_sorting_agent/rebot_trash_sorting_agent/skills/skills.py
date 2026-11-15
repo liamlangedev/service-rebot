@@ -259,7 +259,12 @@ class SkillRunner:
             raise SkillError("requested pose is outside configured tool_limits")
         if not self.motion.ik_feasible(pose):
             raise SkillError("requested tool pose has no IK solution")
-        result = self.motion.move_to_pose(pose, plan_only=self.plan_only, label="requested tool pose")
+        result = self.motion.move_to_pose(
+            pose,
+            plan_only=self.plan_only,
+            label="requested tool pose",
+            speed_profile="default" if self.holding else "travel",
+        )
         return {
             "success": True,
             "dry_run": self.plan_only,
@@ -336,7 +341,9 @@ class SkillRunner:
         hold: dict[str, Any] = {}
         for candidate_plan in plans:
             self._check_cancel()
-            steps.append(self.motion.move_to_pose(candidate_plan.pre_grasp, label="above object"))
+            steps.append(
+                self.motion.move_to_pose(candidate_plan.pre_grasp, label="above object", speed_profile="travel")
+            )
             # Open here: it drops nothing important (we are above the target) and it gives
             # the torque monitor a free-air baseline before the close.
             self.gripper.open()
@@ -459,7 +466,7 @@ class SkillRunner:
                 "joints": self.motion.named_pose("home"),
                 "summary": "dry run: would go home",
             }
-        result = self.motion.move_named("home")
+        result = self.motion.move_named("home", speed_profile="default" if self.holding else "travel")
         return {"success": True, "motion": result, "summary": "arm is at the home pose"}
 
     # ------------------------------------------------------------------ planning
@@ -643,7 +650,7 @@ class SkillRunner:
 
     def _safe_retreat(self, pose: ToolPose) -> None:
         try:
-            self.motion.move_to_pose(pose, label="retreat")
+            self.motion.move_to_pose(pose, label="retreat", speed_profile="default" if self.holding else "travel")
         except Exception as exc:  # noqa: BLE001 - never hide the original failure
             self.events.emit("retreat_failed", error=str(exc), pose=pose.summary())
 

@@ -46,6 +46,54 @@ def test_move_above_does_not_grasp_or_place():
     assert calls[0][1].z >= 0.23
 
 
+def test_unloaded_moves_are_faster_but_held_moves_remain_conservative():
+    skill, calls = runner()
+    pose = {"x": 0.2, "y": 0.0, "z": 0.2}
+    assert not skill("move_to_pose", pose).is_error
+    assert calls[-1][2]["speed_profile"] == "travel"
+    skill.holding["object"] = WorldObject("can", 0.2, 0, 0)
+    assert not skill("move_to_pose", pose).is_error
+    assert calls[-1][2]["speed_profile"] == "default"
+
+
+def test_grasp_approach_fast_contact_lift_and_carry_slow_retreat_fast():
+    from rebot_trash_sorting_agent.skills.poses import ToolPose
+    from rebot_trash_sorting_agent.types import PlaceTarget
+
+    skill, calls = runner()
+    release = ToolPose(0.2, 0.3, 0.2)
+    skill._reachable_place = lambda destination, objects: (
+        PlaceTarget("bin_0", 0.2, 0.3, 0.2, kind="bin"),
+        release,
+        release.offset(dz=0.1),
+        [],
+    )
+    result = skill("pick_and_place", {"object": "can", "destination": "bin_0"})
+    assert not result.is_error
+    profiles = {call[2]["label"]: call[2].get("speed_profile", "default") for call in calls if call[0] == "move"}
+    assert profiles == {
+        "above object": "travel",
+        "grasp": "default",
+        "lift": "default",
+        "above bin_0": "default",
+        "release at bin_0": "default",
+        "retreat": "travel",
+    }
+
+
+def test_home_speed_depends_on_holding_and_dry_run_still_only_plans():
+    skill, calls = runner()
+    skill.motion.move_named = lambda name, **kwargs: calls.append((name, kwargs)) or {}
+    assert not skill("move_home", {}).is_error
+    assert calls[-1][1]["speed_profile"] == "travel"
+    skill.holding["object"] = WorldObject("can", 0.2, 0, 0)
+    assert not skill("move_home", {}).is_error
+    assert calls[-1][1]["speed_profile"] == "default"
+    dry_skill, dry_calls = runner(plan_only=True)
+    assert not dry_skill("move_to_pose", {"x": 0.2, "y": 0.0, "z": 0.2}).is_error
+    assert dry_calls[-1][2]["plan_only"] is True
+
+
 def test_grasp_is_standalone_and_holding_survives_runner_recreation():
     state = {}
     skill, calls = runner(holding=state)
@@ -171,7 +219,7 @@ def test_detection_accepts_classes_and_returns_pixel_geometry_without_calibratio
                 ToolCall("detect_objects", {"classes": ["wrapper", "can"]}),
                 ToolCall("move_above_object", {"object": "can"}),
                 ToolCall("task_done", {"success": True, "summary": "hovering above can"}),
-            ]
+            ],
         )
         session = SimpleNamespace(
             send=lambda parts: LLMResponse(tool_calls=[next(pending)]),

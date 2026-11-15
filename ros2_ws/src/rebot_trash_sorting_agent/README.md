@@ -272,3 +272,19 @@ absolute moves plan without execution and grasp/gripper tools do not actuate.
 Do not infer a successful physical grasp from a dry-run result. Without measured
 height, moving above an object uses the existing fallback grasp geometry, which
 cannot guarantee clearance over an object of unknown height.
+
+## Motion Speed
+
+Speed settings are read from `move_group` in [config/motion.yaml](config/motion.yaml).
+The default velocity/acceleration scales remain `0.15` / `0.15` for grasp descent,
+lift, failed-grasp recovery, and carrying to a destination. The `speed_profiles.travel`
+settings are `0.30` / `0.20` for unloaded coordinate/home moves, travel to pre-grasp,
+and retreat after release. When the agent tracks a held object, coordinate and home
+moves keep the default speed. Gripper closing behavior and joint limits are unchanged.
+
+These are fractions of configured joint limits, not TCP speeds or guaranteed
+duration reductions. Values must be finite and greater than zero, at most one.
+Motion results include the selected velocity/acceleration scales. Restart the agent
+to load changes; old configs without a travel profile retain the default speed.
+Test unloaded travel in a clear workspace first: faster motion does not add obstacle
+avoidance, and software held-object state is not a substitute for slip monitoring.
