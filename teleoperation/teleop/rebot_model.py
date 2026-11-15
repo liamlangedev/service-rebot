@@ -28,6 +28,15 @@ HOME_QPOS = np.array([0.0, -1.2, -1.2, 0.0, 0.0, 0.0])
 
 GRIPPER_MAX = 0.05  # finger_left slide range in the MJCF [m]
 
+# The real arm has Seeed's soft (Fin-Ray) gripper fingers, not the hard ones in the
+# MJCF. Meshes from the ROS stack (classic_real: rebot_trash_sorting/meshes/soft_gripper,
+# built from Seeed's CAD), in the finger link frames. Their tips reach 2.86 cm past
+# the hard fingertips (end_link x = 0): at the ready pose the fingertips are ~11.5 cm
+# above the table, as measured on the real arm.
+SOFT_GRIPPER_DIR = ROOT / "meshes" / "soft_gripper"
+SOFT_TIP_X = 0.02858
+FINGERTIP_SITE = "fingertip"  # = gripper_tcp in the ROS URDF (soft gripper)
+
 # (kp, kv, max torque Nm). Torque limits roughly follow the Damiao motors:
 # 4340P on joints 1-3, smaller motors on the wrist.
 _SERVO_GAINS = {
@@ -66,7 +75,7 @@ _MATERIAL_RGBA = {
 }
 
 
-def build_spec(mjcf_path: Path = DM_MJCF) -> mujoco.MjSpec:
+def build_spec(mjcf_path: Path = DM_MJCF, gripper: str = "soft") -> mujoco.MjSpec:
     if not mjcf_path.exists():
         raise FileNotFoundError(
             f"{mjcf_path} not found. Run ./scripts/setup_assets.sh first."
@@ -118,9 +127,19 @@ def build_spec(mjcf_path: Path = DM_MJCF) -> mujoco.MjSpec:
                         fromto=np.concatenate([np.zeros(3), 0.06 * axis]),
                         rgba=rgba, contype=0, conaffinity=0, group=2)
 
-    # Grasp point between the finger pads, 7 cm ahead of the palm `tcp` site
-    # (tcp is at end_link x = -0.105; the finger pads span about x = -0.06 .. 0).
-    spec.body("end_link").add_site(name=GRASP_SITE, pos=[-0.035, 0, 0], size=[0.006],
+    if gripper == "soft":
+        _use_soft_fingers(spec)
+        # Pinch point 2 cm behind the soft fingertip (the ROS stack's convention,
+        # motion.yaml grasp.tcp_below_pinch), and the fingertip itself.
+        grasp_x = SOFT_TIP_X - 0.020
+        spec.body("end_link").add_site(name=FINGERTIP_SITE, pos=[SOFT_TIP_X, 0, 0],
+                                       size=[0.004], rgba=[1, 0.34, 0.16, 1])
+    elif gripper == "hard":
+        # Between the hard finger pads (they span about x = -0.06 .. 0).
+        grasp_x = -0.035
+    else:
+        raise ValueError(f"gripper must be 'soft' or 'hard', not {gripper!r}")
+    spec.body("end_link").add_site(name=GRASP_SITE, pos=[grasp_x, 0, 0], size=[0.006],
                                    rgba=[0.2, 0.8, 0.3, 1])
 
     # Cameras for dataset recording (the MJCF already has `overhead_rgb`).
@@ -130,6 +149,38 @@ def build_spec(mjcf_path: Path = DM_MJCF) -> mujoco.MjSpec:
     spec.body("end_link").add_camera(name="wrist", pos=[-0.13, 0, 0.05], fovy=80,
                                      quat=_lookat_quat([-0.13, 0, 0.05], [0.15, 0, 0], [0, 0, 1]))
     return spec
+
+
+def _use_soft_fingers(spec: mujoco.MjSpec):
+    """Swap Seeed's hard finger bodies for the soft (Fin-Ray) gripper fingers and
+    mounts, keeping the carriages, travel stops and racks (as the ROS URDF does)."""
+    for side in ("left", "right"):
+        body = spec.body(f"finger_{side}_link")
+        for name in (f"finger_{side}_body_visual", f"finger_{side}_front_collision",
+                     f"finger_{side}_mid_collision", f"finger_{side}_rear_collision"):
+            spec.delete(spec.geom(name))
+        template = None  # contact settings copied from Seeed's finger collision geoms
+        for g in body.geoms:
+            if g.name == f"finger_{side}_carriage_collision":
+                template = g
+        for part, material in (("soft_mount", "gripper_seeed_yellow_mat"),
+                               ("soft_finger", "gripper_finger_black_mat")):
+            mesh = f"{side}_{part}"
+            spec.add_mesh(name=mesh, file=str(SOFT_GRIPPER_DIR / f"{mesh}.stl"))
+            body.add_geom(name=f"finger_{side}_{part}_visual", type=mujoco.mjtGeom.mjGEOM_MESH,
+                          meshname=mesh, material=material, contype=0, conaffinity=0)
+        # Collide with the finger itself (MuJoCo uses the convex hull: the Fin-Ray
+        # wedge with its flat gripping face). The ROS collision mesh also covers the
+        # mount/carriage area across the jaw, and its hull would fill the gap
+        # between the fingers.
+        g = body.add_geom(name=f"finger_{side}_soft_collision", type=mujoco.mjtGeom.mjGEOM_MESH,
+                          meshname=f"{side}_soft_finger", rgba=[0.18, 0.22, 0.21, 0.2],
+                          mass=0.01, group=3)
+        g.contype, g.conaffinity, g.condim = 1, 1, 6
+        g.friction = [1.5, 0.04, 0.01]   # soft rubber pads, like Seeed's finger pads
+        g.solref = template.solref if template is not None else [0.002, 1]
+        g.solimp = template.solimp if template is not None else [0.98, 0.995, 0.0005, 0.5, 2]
+        g.margin = 0.00015
 
 
 def _lookat_quat(pos, target, up):

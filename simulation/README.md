@@ -5,8 +5,10 @@
 `rebot_sim` is a MuJoCo replica of the team's real reBot B601-DM workspace, built from
 measurements and photos of the setup (`reference_photos/`):
 
-- **Robot:** Seeed's reBot B601-DM model with the teleop servos, gripper and IK, clamped
-  on its base plate 38 cm from the right wall and flush with the near wall.
+- **Robot:** Seeed's reBot B601-DM model with the teleop servos and IK, and the **soft
+  (Fin-Ray) gripper** the real arm has. It's clamped on its base plate 38 cm from the right
+  wall and flush with the near wall. At the ready pose the fingertips are 11.6 cm above the
+  table; 11 cm was measured on the real arm.
 - **Workspace:** a 98 × 84 cm wood table (texture taken from the photos) with 37 cm walls:
   cardboard behind and right of the robot, a black board on the left.
 - **Bin:** the white foam bin, 25 × 40 × 12 cm, with two compartments. The drop targets
@@ -63,11 +65,11 @@ from rebot_sim import RealSetupEnv
 env = RealSetupEnv()                        # RealSetupEnv(config="my_setup.json", objects=False)
 env.reset(randomize=True, seed=0)           # objects at random spots in spawn_region
 can = env.object_pos("can")                 # world position of the can's base
-env.move_grasp_to(can + [0, 0, 0.25])       # IK move, gripper pointing down (TOP_DOWN)
+env.move_grasp_to(can + [0, 0, 0.20])       # IK move of the pinch point, gripper down (TOP_DOWN)
 env.move_grasp_to(can + [0, 0, 0.06]); env.set_gripper(env.GRIPPER_CLOSED)
-env.move_grasp_to(env.bin_pos("bin_0") + [0, 0, 0.30]); env.set_gripper(env.GRIPPER_OPEN)
+env.move_grasp_to(env.bin_pos("bin_0") + [0, 0, 0.25]); env.set_gripper(env.GRIPPER_OPEN)
 env.in_bin("can", "bin_0")                  # -> True
-rgb = env.render("cam_corner")              # 480x640x3 uint8
+rgb = env.render("wrist")                   # 1080x1920x3 uint8 (the camera's real size; others 480x640)
 env.step(q_arm, gripper)                    # or drive the joints yourself (100 Hz ticks)
 ```
 
@@ -136,7 +138,7 @@ All measurements are in **`rebot_sim/real_setup.json`**, in workspace coordinate
 | Bin wall / floor thickness | 2.5 cm / 2 cm | **estimated** |
 | `cam_far` | LeRobot camera, far edge: 35 cm from the left, 31 cm high; fovy 66° (16:9) | fitted to the real frame (matches the hand measurement) |
 | `cam_corner` | Logitech C920 on the gooseneck: 83 cm from the left, 61 cm from the near wall, 54 cm high; fovy 43° | real arm's table homography + the real frame |
-| `wrist` | on the gripper, centred between the fingers, 9 cm behind and 3 cm above the fingertips; fovy 67° | matched by eye to the real frame |
+| `wrist` | on the gripper, centred between the fingers, 5.6 cm behind and 5.6 cm above the hard-finger tip line, tilted 33° towards the fingers; fovy 64°; recorded at 1920×1080 | fitted to the real frame's soft-finger silhouette (IoU 0.90) |
 | Walls | 37 cm (cardboard near/right, black board left) | measured |
 | Can | 13 cm tall, 4.5 cm diameter, 15 g | measured |
 | Paper cup | 11 cm tall, 9 cm top diameter (6 cm bottom, estimated), 8 g | measured |
@@ -198,8 +200,9 @@ Without the board, the camera poses come from real frames (`reference_photos/cam
   (the robot mesh already has it), so the table moved up 12 mm to z = 0. And the bin sits
   5 cm closer to the robot than the sketch had it. With both fixed, the center camera fits
   to 35 cm from the left and 31 cm high, which matches the hand measurement (36 cm, 30 cm).
-- The gripper camera sees no fixed landmarks, so its mount was matched by rendering
-  candidates next to the real frame.
+- The gripper camera sees no fixed landmarks. `tools/fit_wrist_camera.py` fits its mount,
+  field of view and the finger opening, by matching the sim's soft-finger silhouette to the
+  dark fingers in the real frame (0.90 IoU).
 - `tools/compare_cameras.py` renders the image above (real | sim | sim + real edges).
 - The test `test_cameras_match_real_frames` checks that every landmark projects through
   the compiled sim cameras to within 30 px of the real frame.

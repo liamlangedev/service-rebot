@@ -130,6 +130,24 @@ def test_fake_capture_session_recovers_cameras():
         shutil.rmtree(out, ignore_errors=True)
 
 
+def test_ready_pose_fingertips_11cm_above_table():
+    """Measured on the real arm (soft gripper): at the ready pose the fingertips
+    are 11 cm above the table."""
+    from teleop.rebot_real import READY_QPOS
+    e = env()
+    e.mirror(READY_QPOS, 0.0)
+    tip = e.data.site("fingertip").xpos
+    assert abs(tip[2] - e.ws.table_z - 0.11) < 0.01, tip
+    e.reset()
+
+
+def test_wrist_camera_full_resolution():
+    e = env()
+    assert e.info.camera_resolutions["wrist"] == (1920, 1080)
+    assert e.render("wrist").shape == (1080, 1920, 3)
+    assert e.render("cam_corner").shape == (480, 640, 3)
+
+
 def test_objects_rest_upright_on_table():
     e = env()
     e.step(n=50)

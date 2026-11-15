@@ -128,8 +128,11 @@ def main():
         from teleop.lerobot_recorder import LeRobotRecorder
         root = args.dataset_root or os.path.join(
             "datasets", f"{args.repo_id.split('/')[-1]}_{time.strftime('%Y%m%d_%H%M%S')}")
+        # Cameras with a real resolution in the scene config (the wrist camera at
+        # 1920x1080 in --scene real) are recorded at that size, the rest at 640x480.
+        sizes = sim.scene_info.camera_resolutions if sim.scene_info else None
         recorder = LeRobotRecorder(m, args.repo_id, root, args.fps, args.task,
-                                   cameras=args.cameras.split(","))
+                                   cameras=args.cameras.split(","), sizes=sizes)
         if args.autostart:
             recorder.start()
 

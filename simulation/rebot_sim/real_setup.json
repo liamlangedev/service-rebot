@@ -1,5 +1,5 @@
 {
-  "version": "1.3",
+  "version": "1.4",
   "_version_comment": "bump when the measured setup changes (rebot_sim.scene_version())",
   "_comment": [
     "Real hackathon setup of the reBot B601 (measured, see reference_photos/).",
@@ -14,8 +14,7 @@
     "bin.wall",
     "bin.floor",
     "bin.from_left (from the table homography, see bin._comment)",
-    "objects.cup.bottom_radius",
-    "wrist_camera.* (matched by eye, no fixed landmarks in view)"
+    "objects.cup.bottom_radius"
   ],
   "workspace": {
     "width": 0.98,
@@ -107,23 +106,28 @@
     }
   ],
   "wrist_camera": {
-    "_comment": "camera mounted on the reBot gripper (the teleop model's `wrist`). pos/look_at are in the end_link frame: +x = along the fingers (fingertips at x=0), +y = finger travel, +z = away from the finger plane",
+    "_comment": "camera on the reBot gripper (the teleop model's `wrist`), recorded at full 1920x1080. pos/look_at in the end_link frame: +x along the fingers (hard-finger tips at x=0, the soft fingertips at x=0.0286), +y finger travel, +z away from the finger plane.",
     "pos": [
-      -0.09,
+      -0.0564,
       0.0,
-      0.03
+      0.0563
     ],
     "look_at": [
-      0.02,
+      0.0272,
       0.0,
-      -0.012
+      0.0014
     ],
     "aspect": [
       16,
       9
     ],
-    "fovy": 67.0,
-    "_calibrated": "matched by eye to reference_photos/cameras/gripper_camera_view.jpeg"
+    "fovy": 63.6,
+    "_calibrated": "tools/fit_wrist_camera.py: soft-finger silhouette vs gripper_camera_view.jpeg (IoU 0.90)",
+    "roll_deg": 0.0,
+    "resolution": [
+      1920,
+      1080
+    ]
   },
   "spawn_region": {
     "_comment": "where RealSetupEnv.randomize_objects() may put objects (workspace coords)",

@@ -38,6 +38,7 @@ def main():
         if cam == "wrist":  # gripper down, a few cm above the table, like the photo
             env.move_grasp_to(np.array([0.30, 0.0, env.ws.table_z + 0.09]), TOP_DOWN,
                               speed=0.5, settle=0.5)
+            env.set_gripper(0.039)  # finger opening in the photo (tools/fit_wrist_camera.py)
         real = cv2.resize(cv2.imread(str(SIM / "reference_photos" / "cameras" / photo)), (w, h))
         sim = cv2.cvtColor(env.render(cam, w, h), cv2.COLOR_RGB2BGR)
         edges = cv2.Canny(cv2.GaussianBlur(cv2.cvtColor(real, cv2.COLOR_BGR2GRAY), (5, 5), 0),

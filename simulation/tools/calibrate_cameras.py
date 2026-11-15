@@ -19,6 +19,8 @@ The base plate is part of the robot's mesh (20 x 14 x 1.4 cm, centred on joint 1
   uv run --project ../teleoperation tools/calibrate_cameras.py           # fit + report
   uv run --project ../teleoperation tools/calibrate_cameras.py --write   # update real_setup.json
   uv run --project ../teleoperation tools/calibrate_cameras.py --overlay out/  # draw on photos
+
+The wrist camera has no fixed landmarks in view: see tools/fit_wrist_camera.py.
 """
 import argparse
 import json
@@ -51,15 +53,6 @@ TABLE_H = np.array([0.0004667, 0.00115046, -0.42378476,
                     -0.00020751, 0.00100864, 1.0]).reshape(3, 3)
 TABLE_H_SIZE = (1280, 720)
 TABLE_H_REGION = dict(x=(0.15, 0.45), y=(-0.20, 0.20))  # where the marks were
-
-# The gripper camera sees no fixed landmarks, so it was matched by rendering
-# candidate mounts next to reference_photos/cameras/gripper_camera_view.jpeg
-# (fingers entering from the bottom corners, tips at mid-height). end_link frame:
-# +x along the fingers (tips at 0), +y finger travel, +z away from the finger plane.
-WRIST = {"pos": [-0.09, 0.0, 0.03], "look_at": [0.02, 0.0, -0.012], "fovy": 67.0,
-         "aspect": [16, 9],
-         "_calibrated": "matched by eye to reference_photos/cameras/gripper_camera_view.jpeg"}
-
 
 def plate(corner: str, top: bool):
     """Base-plate corner, corner in {ne, nw, fe, fw} (near/far, east/west)."""
@@ -304,8 +297,6 @@ def main():
             cam["_calibrated"] = ("tools/calibrate_cameras.py: reference_photos/cameras"
                                   + (" + the real arm's table homography (classic_real)"
                                      if cam["name"] == "cam_corner" else ""))
-        cfg["wrist_camera"].pop("fov_diagonal_deg", None)
-        cfg["wrist_camera"].update(WRIST)
         path.write_text(json.dumps(cfg, indent=2) + "\n")
         print(f"updated {path}")
 

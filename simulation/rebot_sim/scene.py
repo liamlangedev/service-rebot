@@ -111,6 +111,8 @@ class SceneInfo:
     bin_sites: list[str] = field(default_factory=list)
     cameras: list[str] = field(default_factory=list)
     objects: list[str] = field(default_factory=list)
+    # Image size (width, height) of the real camera, where the config gives one.
+    camera_resolutions: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
@@ -142,6 +144,9 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
         if "pos" in wc:
             cam.pos = wc["pos"]
             cam.quat = _camera_quat(wc["pos"], wc["look_at"], wc.get("roll_deg", 0.0))
+    for c in cfg["cameras"] + [{"name": "wrist", **cfg.get("wrist_camera", {})}]:
+        if c.get("resolution"):
+            info.camera_resolutions[c["name"]] = tuple(c["resolution"])
     if with_objects:
         info.objects = [_add_object(spec, ws, o, cfg) for o in cfg.get("objects", [])]
     return info

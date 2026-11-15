@@ -20,12 +20,18 @@ from teleop.lerobot_mapping import FEATURE_NAMES, ROBOT_TYPE, sim_to_lerobot
 
 class LeRobotRecorder:
     def __init__(self, model: mujoco.MjModel, repo_id: str, root: Path, fps: int,
-                 task: str, cameras: list[str], height: int = 480, width: int = 640):
+                 task: str, cameras: list[str], height: int = 480, width: int = 640,
+                 sizes: dict[str, tuple[int, int]] | None = None):
+        """sizes: per-camera (width, height) overriding height/width, e.g. the
+        wrist camera at its full 1920x1080."""
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
         self.task = task
         self.cameras = cameras
-        self.renderer = mujoco.Renderer(model, height, width)
+        self.sizes = {cam: tuple((sizes or {}).get(cam, (width, height))) for cam in cameras}
+        self.renderers = {}
+        for size in set(self.sizes.values()):
+            self.renderers[size] = mujoco.Renderer(model, size[1], size[0])
         features = {
             "observation.state": {"dtype": "float32", "shape": (len(FEATURE_NAMES),),
                                   "names": FEATURE_NAMES},
@@ -34,7 +40,7 @@ class LeRobotRecorder:
         }
         for cam in cameras:
             features[f"observation.images.{cam}"] = {
-                "dtype": "video", "shape": (height, width, 3),
+                "dtype": "video", "shape": (self.sizes[cam][1], self.sizes[cam][0], 3),
                 "names": ["height", "width", "channels"]}
 
         root = Path(root)
@@ -60,8 +66,9 @@ class LeRobotRecorder:
             "task": self.task,
         }
         for cam in self.cameras:
-            self.renderer.update_scene(data, cam)
-            frame[f"observation.images.{cam}"] = self.renderer.render().copy()
+            renderer = self.renderers[self.sizes[cam]]
+            renderer.update_scene(data, cam)
+            frame[f"observation.images.{cam}"] = renderer.render().copy()
         self.dataset.add_frame(frame)
         self.n_frames += 1
 
