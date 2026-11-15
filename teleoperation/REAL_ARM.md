@@ -11,6 +11,7 @@ Run everything from this folder with the repo's root venv (`steel_team/.venv`: l
 | `record_episodes.py` | **Main recorder.** Right = start/save, Left = discard, Esc = finish. `--resume` appends |
 | `record_rebot.py` | Same idea through stock `lerobot-record` (fewer features; prefer `record_episodes.py`) |
 | `go_ready.py` | Move the arm to the ready pose (gripper pointing down), then hold |
+| `rollout_policy.py` | **Run a trained policy** (ACT, SmolVLA, ...) on the arm through the 200 Hz MIT loop |
 | `push_dataset.py` | Upload a local dataset to the Hugging Face Hub |
 | `sim_teleop.py` | Same Leap/IK pipeline in MuJoCo (`--input leap`); use it to check hand axes safely |
 | `tools/measure_gripper.py` | Measure the gripper's real open/closed angles → `config/gripper_limits.json` |
@@ -102,6 +103,45 @@ Ctrl-C at that prompt exits immediately and the arm goes limp: support it.
 `action` = the joint-position targets the 200 Hz loop last sent (degrees, 6 joints + gripper, raw motor frame).
 `observation.state` = measured joint angles, same names. Images: one video per camera. The action leads the state by roughly 50-100 ms.
 Inference must go through the same 200 Hz MIT loop (same gains and feed-forward), not plain lerobot `send_action`.
+
+## Run a trained policy
+
+`rollout_policy.py` loads a checkpoint (weights, normalization and camera renaming come from the checkpoint), reads the
+cameras and joints, runs the policy at 30 Hz, and the 200 Hz loop interpolates and drives the motors with the same
+gains used while recording. No Leap needed. Start with a dry run (no robot, fake images) to check the model loads:
+
+```bash
+python rollout_policy.py --policy niru-5/act_rebot_sort_v1 --dry-run
+python rollout_policy.py --policy niru-5/smolvla_rebot_sort_v1_2026-11-15_02-15-27 --dry-run
+```
+
+Then on the arm (the cameras must be captured at **640x480**, the size of the v1 training data; this is the default here):
+
+```bash
+# ACT: language is ignored
+python rollout_policy.py --port /dev/tty.usbmodem00000000050C1 --policy niru-5/act_rebot_sort_v1 \
+    --duration 30 --n-action-steps 50
+
+# SmolVLA: the prompt matters, use the training wording exactly
+python rollout_policy.py --port /dev/tty.usbmodem00000000050C1 \
+    --policy niru-5/smolvla_rebot_sort_v1_2026-11-15_02-15-27 \
+    --task "pickup the keys and put it in the designated bin" --duration 30
+```
+
+Keys: **Right** start / stop early, **Esc** quit, **S** stop in place, **G** resume, **H** ready pose. Each run starts at the ready pose
+and returns to it. Other checkpoints of a repo: `--subfolder checkpoints/010500/pretrained_model`.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--n-action-steps` | model chunk (ACT 100, SmolVLA 50) | actions executed per policy call; smaller = reacts faster to what it sees |
+| `--max-step-deg` | 4 | largest change of any joint target per policy step (4 deg x 30 Hz = 120 deg/s); first safety limit, lower it for the first runs |
+| `--device` | auto | cuda > mps > cpu; SmolVLA takes ~0.25 s per chunk on this Mac's MPS |
+| `--duration` | 30 | seconds per run; `--runs N` stops after N runs |
+| `--mit.*` | the recording values (kp 3, kd 3, wrist 0.4, friction 1.3) | keep equal to what you recorded with |
+
+First runs: put the keys and bin in the training layout, keep a hand on the power switch, start with `--max-step-deg 2`.
+The policy can only do what the 640x480-camera, `front_wide` / `gripper` / `high_oblique` data showed it; a different camera
+position or crop will degrade it. A dataset recorded with `record_episodes.py` now (16:9, 640x360) does not match these policies.
 
 ## Push to the Hub
 
