@@ -17,10 +17,14 @@ def runner(plan_only=False, holding=None):
             calls.append(("move", pose, kwargs)) or {"executed": not kwargs.get("plan_only", False)}
         ),
     )
+    motion.move_cartesian = motion.move_to_pose
     gripper = SimpleNamespace(
         open=lambda: calls.append(("open",)) or {},
         close=lambda: calls.append(("close",)) or {"holding": True, "position": 0.02},
         check_hold=lambda reference: {"holding": True, "slipped": False},
+        stable_hold=lambda reference=None: {"holding": True, "slipped": False, "position": 0.02},
+        hold_snapshot=lambda reference: {"holding": True},
+        hold_guard=lambda reference: lambda: None,
     )
     skill = SkillRunner(
         places={"table": {"z": 0}},
@@ -74,10 +78,11 @@ def test_grasp_approach_fast_contact_lift_and_carry_slow_retreat_fast():
     assert profiles == {
         "above object": "travel",
         "grasp": "default",
+        "verification lift": "default",
         "lift": "default",
         "above bin_0": "default",
         "release at bin_0": "default",
-        "retreat": "travel",
+        "retreat": "default",
     }
 
 

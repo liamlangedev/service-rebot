@@ -18,7 +18,12 @@ def make_client(monkeypatch):
             wait_for_server=lambda **kwargs: True,
         ),
     )
-    node = SimpleNamespace(create_client=lambda *args, **kwargs: object())
+    from builtin_interfaces.msg import Time
+
+    node = SimpleNamespace(
+        create_client=lambda *args, **kwargs: object(),
+        get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(to_msg=Time)),
+    )
     return lambda cfg: MoveItClient(node, cfg)
 
 
@@ -64,8 +69,8 @@ def test_travel_profile_does_not_change_subsequent_default_goals(make_client):
                 "velocity_scaling": 0.15,
                 "acceleration_scaling": 0.15,
                 "speed_profiles": {"travel": {"velocity_scaling": 0.3, "acceleration_scaling": 0.2}},
-            }
-        }
+            },
+        },
     )
     travel = client._goal(True, "travel")
     assert travel.request.max_velocity_scaling_factor == pytest.approx(0.3)
@@ -99,7 +104,7 @@ def test_public_pose_and_named_moves_forward_speed_profiles(make_client):
             "move_group": {
                 "speed_profiles": {"travel": {"velocity_scaling": 0.3, "acceleration_scaling": 0.2}},
             },
-        }
+        },
     )
     goals = []
     client._send = lambda goal, **kwargs: goals.append(goal) or {}
@@ -108,3 +113,48 @@ def test_public_pose_and_named_moves_forward_speed_profiles(make_client):
     client.move_named("home", speed_profile="travel")
     client.move_to_pose(ToolPose(0.2, 0, 0.05))
     assert [goal.request.max_velocity_scaling_factor for goal in goals] == pytest.approx([0.3, 0.3, 0.15])
+
+
+def cartesian_response(fraction=1.0, jump=0.05, timed=True):
+    from builtin_interfaces.msg import Duration
+    from moveit_msgs.srv import GetCartesianPath
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+    response = GetCartesianPath.Response()
+    response.error_code.val = 1
+    response.fraction = fraction
+    response.solution.joint_trajectory = JointTrajectory(
+        joint_names=["joint1"],
+        points=[
+            JointTrajectoryPoint(positions=[0.0], time_from_start=Duration()),
+            JointTrajectoryPoint(positions=[jump], time_from_start=Duration(sec=1 if timed else 0)),
+        ],
+    )
+    return response
+
+
+@pytest.mark.parametrize(
+    "response", [cartesian_response(0.9), cartesian_response(jump=0.8), cartesian_response(timed=False)]
+)
+def test_cartesian_rejects_partial_jumping_or_untimed_paths(make_client, response):
+    from rebot_trash_sorting_agent.skills.motion import MotionError
+    from rebot_trash_sorting_agent.skills.poses import ToolPose
+
+    client = make_client({})
+    client._call_service = lambda *args: response
+    with pytest.raises(MotionError):
+        client.move_cartesian(ToolPose(0.2, 0.0, 0.1))
+
+
+def test_cartesian_requests_collision_checks_orientation_and_safe_timing(make_client):
+    from rebot_trash_sorting_agent.skills.poses import ToolPose
+
+    client = make_client({})
+    requests = []
+    client._call_service = lambda service, request: requests.append(request) or cartesian_response()
+    result = client.move_cartesian(ToolPose(0.2, 0.0, 0.1), plan_only=True)
+    assert result["planned"] and not result["executed"]
+    assert requests[0].avoid_collisions
+    assert requests[0].path_constraints.orientation_constraints
+    assert requests[0].max_cartesian_speed == pytest.approx(0.025)
+    assert requests[0].max_velocity_scaling_factor == pytest.approx(0.15)

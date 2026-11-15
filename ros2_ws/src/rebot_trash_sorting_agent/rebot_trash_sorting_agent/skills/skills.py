@@ -24,6 +24,7 @@ from rebot_trash_sorting_agent.skills.grasp import (
     GraspPlan,
     plan_grasp,
 )
+from rebot_trash_sorting_agent.skills.gripper import HoldLost
 from rebot_trash_sorting_agent.skills.place import resolve_place
 from rebot_trash_sorting_agent.skills.poses import ToolPose
 from rebot_trash_sorting_agent.types import (
@@ -65,6 +66,7 @@ class SkillRunner:
         height_camera: Any = None,
         baseline_classes: Sequence[str] = (),
         holding: dict[str, Any] | None = None,
+        planning_scene: Any = None,
     ) -> None:
         self.places = places
         self.motion_cfg = motion_cfg
@@ -75,18 +77,20 @@ class SkillRunner:
         self.gripper = gripper
         self.events = events
         self.table_map = table_map
-        self.plan_only = bool(plan_only)
+        self.plan_only = bool(plan_only or not (motion_cfg.get("move_group") or {}).get("execute", True))
         self.wrist_camera = wrist_camera
         self.annotated_sink = annotated_sink
         self.front_camera = front_camera
         self.height_camera = height_camera
         self.baseline_classes = list(baseline_classes)
         self.holding = holding if holding is not None else {}
+        self.planning_scene = planning_scene
         self._cancelled = False
 
         self._grasp_cfg = dict(motion_cfg.get("grasp") or {})
         self._place_cfg = dict(motion_cfg.get("place") or {})
         self._wrist_cfg = dict(motion_cfg.get("wrist_correction") or {})
+        self._watch_cfg = dict(motion_cfg.get("visual_verification") or {})
         self._table_z = float((places.get("table") or {}).get("z", -0.012))
 
     # ------------------------------------------------------------------ control
@@ -99,6 +103,32 @@ class SkillRunner:
     def _check_cancel(self) -> None:
         if self._cancelled:
             raise TaskCancelled("stopped by the operator")
+
+    def _sync_scene(self) -> None:
+        if self.planning_scene is not None and not self.holding:
+            self.planning_scene.sync(self.scene.all())
+
+    def _hold_guard(self):
+        if not self.holding or self.plan_only:
+            return None
+        if self.holding.get("uncertain"):
+            raise SkillError("holding state is uncertain; inspect the object before further motion")
+        reference = self.holding.get("hold") or self.holding.get("close") or {}
+        snapshot = self.gripper.hold_snapshot(reference)
+        if not snapshot["holding"]:
+            self.holding["uncertain"] = True
+            raise HoldLost("holding check failed before motion; inspect before retry")
+        monitor = self.gripper.hold_guard(reference)
+
+        def check() -> None:
+            self._check_cancel()
+            try:
+                monitor()
+            except HoldLost:
+                self.holding["uncertain"] = True
+                raise
+
+        return check
 
     # ------------------------------------------------------------------ dispatch
     def __call__(self, name: str, arguments: dict[str, Any]) -> ToolResult:
@@ -139,6 +169,18 @@ class SkillRunner:
             payload = handler()
         except TaskCancelled as exc:
             return ToolResult(name, {"error": str(exc), "cancelled": True}, True)
+        except HoldLost as exc:
+            self.events.emit("hold_lost", error=str(exc))
+            return ToolResult(
+                name,
+                {
+                    "error": str(exc),
+                    "holding_uncertain": True,
+                    "retryable": False,
+                    "summary": "motion stopped; gripper kept closed; inspect before recovery",
+                },
+                True,
+            )
         except SkillError as exc:
             return ToolResult(name, {"error": str(exc)}, True)
         except Exception as exc:  # noqa: BLE001 - a driver error must reach the planner as data
@@ -259,11 +301,13 @@ class SkillRunner:
             raise SkillError("requested pose is outside configured tool_limits")
         if not self.motion.ik_feasible(pose):
             raise SkillError("requested tool pose has no IK solution")
+        self._sync_scene()
         result = self.motion.move_to_pose(
             pose,
             plan_only=self.plan_only,
             label="requested tool pose",
             speed_profile="default" if self.holding else "travel",
+            guard=self._hold_guard(),
         )
         return {
             "success": True,
@@ -281,9 +325,15 @@ class SkillRunner:
                 "dry_run": True,
                 "summary": f"dry run: would {'open' if opening else 'close'} gripper",
             }
+        release_pose = None
+        if opening and self.planning_scene is not None and self.planning_scene.held is not None:
+            release_pose = self.planning_scene.current_pose()
         result = self.gripper.open() if opening else self.gripper.close()
         if opening:
             held = self.holding.get("object")
+            if release_pose is not None:
+                self.planning_scene.detach(release_pose)
+                self.planning_scene.allow_target_contact(held, False)
             if held is not None:
                 self.scene.remove(held.label)
             self.holding.clear()
@@ -310,12 +360,6 @@ class SkillRunner:
         plans, grasp_notes = self._reachable_grasps(obj)
         notes.extend(grasp_notes)
 
-        dx, dy, wrist_note = self._wrist_correction(obj)
-        if wrist_note:
-            notes.append(wrist_note)
-            if dx or dy:
-                plans = [plan.offset(dx=dx, dy=dy) for plan in plans]
-
         first = plans[0]
         plan = {
             "object": obj.label,
@@ -339,43 +383,90 @@ class SkillRunner:
         chosen: GraspPlan | None = None
         close: dict[str, Any] = {}
         hold: dict[str, Any] = {}
-        for candidate_plan in plans:
+        max_attempts = max(1, int(self._grasp_cfg.get("max_attempts", 4)))
+        for attempt_index in range(max_attempts):
+            if attempt_index:
+                self.list_objects()
+                obj = self._object(label)
+                plans, refreshed_notes = self._reachable_grasps(obj)
+                notes.extend(refreshed_notes)
+            candidate_plan = plans[min(attempt_index, len(plans) - 1)]
             self._check_cancel()
+            self._sync_scene()
             steps.append(
-                self.motion.move_to_pose(candidate_plan.pre_grasp, label="above object", speed_profile="travel")
+                self.motion.move_to_pose(candidate_plan.pre_grasp, label="above object", speed_profile="travel"),
             )
+            before_open = self._wrist_feature(obj.label)
             # Open here: it drops nothing important (we are above the target) and it gives
             # the torque monitor a free-air baseline before the close.
             self.gripper.open()
             self._check_cancel()
-            steps.append(self.motion.move_to_pose(candidate_plan.grasp, label="grasp"))
+            after_open = self._wrist_feature(obj.label)
+            if before_open is not None and after_open is not None:
+                from rebot_trash_sorting_agent.perception.grasp_watch import same_stationary_target
+
+                if not same_stationary_target(
+                    before_open,
+                    after_open,
+                    float(self._watch_cfg.get("max_shift_fraction", 0.035)),
+                    float(self._watch_cfg.get("max_area_ratio", 1.6)),
+                ):
+                    attempts.append(
+                        {"grasp": candidate_plan.grasp.summary(), "reason": "target shifted before descent"}
+                    )
+                    self.events.emit(
+                        "grasp_retry", attempt=attempt_index + 1, reason="wrist target moved; re-detecting"
+                    )
+                    continue
+            if self.planning_scene is not None:
+                self.planning_scene.allow_target_contact(obj)
+            steps.append(self.motion.move_cartesian(candidate_plan.grasp, label="grasp"))
             self._check_cancel()
 
             close = self.gripper.close()
-            if not close.get("holding"):
+            hold = self.gripper.stable_hold() if close.get("holding") else {"holding": False}
+            if not hold.get("holding"):
                 attempts.append({"grasp": candidate_plan.grasp.summary(), "close": _grasp_payload(close)})
-                # Retreat with the jaws still closed: if the torque test missed a soft
-                # object, it comes up rather than being knocked off the table by an
-                # opening jaw.
-                self.motion.move_to_pose(candidate_plan.pre_grasp, label="retreat after empty grasp")
                 self.gripper.open()
+                self.motion.move_cartesian(candidate_plan.pre_grasp, label="retreat after empty grasp")
+                if self.planning_scene is not None:
+                    self.planning_scene.allow_target_contact(obj, False)
+                self.events.emit("grasp_retry", attempt=attempt_index + 1, reason="no stable hold; re-detecting")
                 continue
 
-            self.holding.update(object=obj, plan=candidate_plan, close=close)
+            self.holding.update(object=obj, plan=candidate_plan, close=close, hold=hold, pose=candidate_plan.grasp)
+            if self.planning_scene is not None:
+                self.planning_scene.attach(obj, candidate_plan.grasp)
             self._check_cancel()
             if lift:
-                steps.append(self.motion.move_to_pose(candidate_plan.lift, label="lift"))
-
-            # A grasp that survives the close can still slide out on the way up. Torque
-            # and finger position are re-read here; either dropping is a slip.
-            hold = self.gripper.check_hold(close)
+                verify_distance = float(self._grasp_cfg.get("verification_lift_m", 0.025))
+                if not 0.005 <= verify_distance <= 0.05:
+                    raise SkillError("verification_lift_m must be between 0.005 and 0.05")
+                verify_pose = candidate_plan.grasp.offset(dz=verify_distance)
+                steps.append(
+                    self.motion.move_cartesian(verify_pose, label="verification lift", guard=self._hold_guard())
+                )
+                self.holding["pose"] = verify_pose
+                hold = self.gripper.stable_hold(self.holding["hold"])
+                if not hold["holding"]:
+                    self.holding["uncertain"] = True
+                    raise HoldLost("verification lift did not retain a stable hold; stopped without releasing")
+                try:
+                    self._wrist_feature(obj.label)
+                except SkillError as exc:
+                    self.holding["uncertain"] = True
+                    raise HoldLost("wrist cannot verify target after lift; stopped for inspection") from exc
+                self.holding["hold"] = hold
+                lift_pose = candidate_plan.lift
+                if self.planning_scene is not None:
+                    lift_pose = self.planning_scene.carry_pose(
+                        lift_pose, [other for other in self.scene.all() if other is not obj]
+                    )
+                if lift_pose.z < verify_pose.z:
+                    lift_pose = verify_pose
+                steps.append(self.motion.move_cartesian(lift_pose, label="lift", guard=self._hold_guard()))
+                self.holding["pose"] = lift_pose
             self.events.emit("grasp_hold", object=obj.label, **hold)
-            if hold["slipped"] or not hold["holding"]:
-                attempts.append({"grasp": candidate_plan.grasp.summary(), "close": _grasp_payload(close), "hold": hold})
-                self.gripper.open()
-                self.holding.clear()
-                continue
-
             chosen = candidate_plan
             break
 
@@ -410,6 +501,16 @@ class SkillRunner:
         hold = self.holding.get("hold", {})
         exclude = [other for other in self.scene.all() if other.label != obj.label]
         target, release, approach, place_notes = self._reachable_place(destination, objects=exclude)
+        if self.planning_scene is not None:
+            surface = (
+                float((self.places.get("bin") or {}).get("rim_z", 0.12)) if target.kind == "bin" else self._table_z
+            )
+            release = self.planning_scene.release_pose(release, surface)
+            approach = self.planning_scene.carry_pose(release.offset(dz=0.05), exclude)
+            if not self.motion.ik_feasible(release) or not self.motion.ik_feasible(approach):
+                raise SkillError("no reachable placement with held-object clearance; refusing direct release fallback")
+        if approach is None:
+            raise SkillError("no reachable place approach; refusing direct descent")
         notes = list(place_notes)
         if self.plan_only:
             return {
@@ -424,14 +525,20 @@ class SkillRunner:
 
         if approach is not None:
             self._check_cancel()
-            steps.append(self.motion.move_to_pose(approach, label=f"above {target.name}"))
+            steps.append(self.motion.move_to_pose(approach, label=f"above {target.name}", guard=self._hold_guard()))
+            self.holding["pose"] = approach
         self._check_cancel()
-        steps.append(self.motion.move_to_pose(release, label=f"release at {target.name}"))
+        steps.append(self.motion.move_cartesian(release, label=f"release at {target.name}", guard=self._hold_guard()))
+        self.holding["pose"] = release
 
         self.gripper.open()
+        if self.planning_scene is not None:
+            self.planning_scene.detach(release)
         self.holding.clear()
         retreat = release.offset(dz=0.12)
         self._safe_retreat(retreat)
+        if self.planning_scene is not None:
+            self.planning_scene.allow_target_contact(obj, False)
         self.scene.remove(obj.label)
 
         if self.motion_cfg.get("place", {}).get("return_home_after_pick"):
@@ -466,7 +573,10 @@ class SkillRunner:
                 "joints": self.motion.named_pose("home"),
                 "summary": "dry run: would go home",
             }
-        result = self.motion.move_named("home", speed_profile="default" if self.holding else "travel")
+        self._sync_scene()
+        result = self.motion.move_named(
+            "home", speed_profile="default" if self.holding else "travel", guard=self._hold_guard()
+        )
         return {"success": True, "motion": result, "summary": "arm is at the home pose"}
 
     # ------------------------------------------------------------------ planning
@@ -586,6 +696,19 @@ class SkillRunner:
         return f"front_camera: estimated {len(estimates)}/{len(objects)} heights ({source})"
 
     # ------------------------------------------------------------------ wrist correction
+    def _wrist_feature(self, label: str):
+        if not self._watch_cfg.get("enabled", False):
+            return None
+        from rebot_trash_sorting_agent.perception.grasp_watch import target_feature
+
+        frame = self._grab(self.wrist_camera, fresh_timeout=1.0)
+        if frame is None:
+            raise SkillError("visual verification enabled but no fresh wrist frame")
+        try:
+            return target_feature(self._detect(frame), label, (frame.shape[1], frame.shape[0]))
+        except ValueError as exc:
+            raise SkillError(str(exc)) from exc
+
     def _wrist_correction(self, obj: WorldObject) -> tuple[float, float, str | None]:
         if not self._wrist_cfg.get("enabled", False) or self.wrist_camera is None:
             return 0.0, 0.0, None
@@ -650,7 +773,7 @@ class SkillRunner:
 
     def _safe_retreat(self, pose: ToolPose) -> None:
         try:
-            self.motion.move_to_pose(pose, label="retreat", speed_profile="default" if self.holding else "travel")
+            self.motion.move_cartesian(pose, label="retreat", guard=self._hold_guard())
         except Exception as exc:  # noqa: BLE001 - never hide the original failure
             self.events.emit("retreat_failed", error=str(exc), pose=pose.summary())
 

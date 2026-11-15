@@ -128,3 +128,19 @@ wrist_correction:
   #: if the first test run corrects the wrong way.
   u_to_base: [0.0, 1.0]         # [x, y]
   v_to_base: [1.0, 0.0]
+
+planning_scene:
+  #: MoveIt collision-object sync, finger-contact gating, and held-object clearance.
+  enabled: false
+  touch_links: [finger_left_link, finger_right_link]
+  padding_m: 0.01
+  unknown_width_m: 0.10
+  unknown_height_m: 0.25
+  carry_clearance_m: 0.04
+  release_clearance_m: 0.015
+
+visual_verification:
+  #: Wrist-camera stationary-target check before grasping.
+  enabled: false
+  max_shift_fraction: 0.035
+  max_area_ratio: 1.6

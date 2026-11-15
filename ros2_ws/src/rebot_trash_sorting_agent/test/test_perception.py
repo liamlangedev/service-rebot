@@ -28,3 +28,19 @@ def test_overlay_draws_mask_interior_and_keeps_original_frame():
     assert rendered[65, 60, 1] > 0
     assert rendered[50, 20, 1] > 0
     assert not original.any()
+
+
+def test_wrist_check_is_resolution_independent_and_rejects_missing_target():
+    import pytest
+    from rebot_trash_sorting_agent.perception.grasp_watch import same_stationary_target, target_feature
+
+    detection = Detection("can", 0.9, (20, 20, 60, 80))
+    before = target_feature([detection], "can", (100, 100))
+    scaled = target_feature([Detection("can", 0.9, (40, 40, 120, 160))], "can", (200, 200))
+    assert same_stationary_target(before, scaled)
+    shifted = target_feature([Detection("can", 0.9, (40, 20, 80, 80))], "can", (100, 100))
+    assert not same_stationary_target(before, shifted)
+    with pytest.raises(ValueError, match="ambiguous"):
+        target_feature([detection, detection], "can", (100, 100))
+    with pytest.raises(ValueError, match="missing"):
+        target_feature([detection], "bottle", (100, 100))

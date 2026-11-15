@@ -50,6 +50,7 @@ from rebot_trash_sorting_agent.perception.scene import (
 from rebot_trash_sorting_agent.perception.table_map import TableMap
 from rebot_trash_sorting_agent.skills.gripper import GripperClient
 from rebot_trash_sorting_agent.skills.motion import MoveItClient
+from rebot_trash_sorting_agent.skills.planning_scene import PlanningSceneClient
 from rebot_trash_sorting_agent.skills.skills import SkillRunner
 from rebot_trash_sorting_agent.types import TaskResult
 from rebot_trash_sorting_agent.vlm.json_tools import encode_jpeg
@@ -160,6 +161,12 @@ class AgentNode(Node):
         front_map = self._config.table_map("front_camera") if front_cfg else None
         self._height_camera = HeightCamera.from_mapping((front_map or {}).get("height_camera"))
         self._motion = MoveItClient(self, self._config.motion)
+        scene_cfg = dict(self._config.motion.get("planning_scene") or {})
+        self._planning_scene = (
+            PlanningSceneClient(self, self._motion, scene_cfg, self._config.places)
+            if scene_cfg.get("enabled", False)
+            else None
+        )
         self._gripper = GripperClient(self, dict(self._config.motion.get("gripper") or {}))
 
         self._status_pub = self.create_publisher(
@@ -329,6 +336,7 @@ class AgentNode(Node):
                 height_camera=self._height_camera,
                 baseline_classes=self._config.perception.get("classes") or (),
                 holding=self._holding,
+                planning_scene=self._planning_scene,
                 annotated_sink=self._publish_annotated,
             )
             self._runner = runner
