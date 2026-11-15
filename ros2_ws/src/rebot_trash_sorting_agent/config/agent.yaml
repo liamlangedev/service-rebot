@@ -21,7 +21,7 @@ vlm:
 perception:
   model: ${models}/yoloe-26l-seg.pt
   text_encoder: mobileclip2_b.ts
-  device: cpu                   # cpu | cuda:0
+  device: auto                  # auto (cuda:0 with cpu fallback) | cuda:0 | cpu
   conf: 0.12
   # The detector is open-vocabulary. The task sentence supplies the nouns and is
   # expanded into colour prompts at run time ("can" -> "red can", "white cup", ...).
@@ -30,7 +30,12 @@ perception:
   # orientation are measured from the mask through the table homography.
   classes:
     - can
+    - soda can
+    - aluminum can
     - cup
+    - bottle
+    - plastic bottle
+    - water bottle
   max_side: 1024                # longest image side sent to the VLM
   jpeg_quality: 85
   #: used to merge successive detections of the same object

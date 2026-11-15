@@ -36,6 +36,8 @@ def generate_launch_description() -> LaunchDescription:
                                   description="publish the measured table/walls/bin into the planning scene"),
             DeclareLaunchArgument("use_camera_driver", default_value="true",
                                   description="start camera_node for V4L2 devices (false when MuJoCo publishes cameras)"),
+            DeclareLaunchArgument("use_mujoco", default_value="true",
+                                  description="start MuJoCo 3D view (mirror-only when real cameras are active)"),
             DeclareLaunchArgument("table_camera", default_value="table",
                                   description="camera name from cameras.yaml used by the agent"),
             DeclareLaunchArgument("host", default_value="127.0.0.1",
@@ -44,6 +46,16 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("joint_states_topic", default_value="/joint_states",
                                   description="real arm publishes /rebotarm/joint_states"),
 
+            Node(
+                package="rebot_trash_sorting_agent",
+                executable="mujoco_sim_node",
+                name="mujoco_sim_node",
+                output="screen",
+                additional_env={"MUJOCO_GL": "egl"},
+                parameters=[{"mirror_only": True}],
+                remappings=[("/joint_states", LaunchConfiguration("joint_states_topic"))],
+                condition=IfCondition(LaunchConfiguration("use_mujoco")),
+            ),
             Node(
                 package="rebot_trash_sorting_agent",
                 executable="camera_node",

@@ -20,7 +20,6 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 
 from .config import Config
 from .ros_image import bgr_to_imgmsg
@@ -48,8 +47,8 @@ class CameraStream:
 
         self._bridge = None
         self._Image = Image
-        self.image_pub = node.create_publisher(Image, self.topic, qos_profile_sensor_data)
-        self.info_pub = node.create_publisher(CameraInfo, self.info_topic, qos_profile_sensor_data)
+        self.image_pub = node.create_publisher(Image, self.topic, 10)
+        self.info_pub = node.create_publisher(CameraInfo, self.info_topic, 10)
         self._info = self._camera_info(float(cfg.get("fov_deg", 75.0)))
 
         self._cap = None

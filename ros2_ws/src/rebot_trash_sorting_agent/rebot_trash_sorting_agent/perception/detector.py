@@ -98,7 +98,7 @@ class YoloeDetector:
         self.model_path = model_path
         self.classes = [str(c) for c in (settings.get("classes") or ["can", "cup"])]
         self.conf = float(settings.get("conf", 0.15))
-        self.device = str(settings.get("device", "cpu"))
+        self.device = _resolve_device(str(settings.get("device", "auto")))
         self.text_encoder = settings.get("text_encoder", "mobileclip2_b.ts")
         self._model = None
 
@@ -183,14 +183,33 @@ def annotate(bgr: np.ndarray, detections: Iterable[Detection], colour: tuple[int
     for det in detections:
         x1, y1, x2, y2 = (int(v) for v in det.bbox)
         cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
-        cv2.putText(frame, f"{det.label} {det.score:.2f}", (x1, max(y1 - 6, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+        text = f"{det.label} {det.score:.2f}"
+        (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        ty = max(y1, th + baseline + 6)
+        cv2.rectangle(frame, (x1, ty - th - baseline - 6), (x1 + tw + 8, ty), colour, -1)
+        cv2.putText(frame, text, (x1 + 4, ty - baseline - 3),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (10, 14, 18), 2, cv2.LINE_AA)
         try:
             u, v = det.bottom_mid_px()
             cv2.circle(frame, (int(u), int(v)), 4, (0, 0, 255), -1)
         except Exception:  # noqa: BLE001 - annotation must never break the pipeline
             pass
     return frame
+
+
+def _resolve_device(requested: str) -> str:
+    """Use GPU when available for 'auto' or 'cuda*', otherwise fall back to CPU."""
+    req = requested.strip().lower()
+    if req in ("", "auto") or req.startswith("cuda"):
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return "cuda:0" if req in ("", "auto") else requested.strip()
+        except Exception:  # noqa: BLE001
+            pass
+        return "cpu"
+    return requested.strip()
 
 
 @contextmanager

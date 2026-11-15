@@ -13,10 +13,11 @@
 cameras:
   - name: table
     topic: /table_cam
-    device: 0
+    device: /dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0
     width: 1280
     height: 720
-    fps: 15
+    fps: 30
+    fourcc: MJPG
     frame_id: table_cam_optical_frame
     fov_deg: 75                 # only used for the informational camera_info K
     warmup_s: 1.0
@@ -54,10 +55,11 @@ cameras:
 
   - name: wrist
     topic: /wrist_cam
-    device: 1
+    device: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
     width: 640
     height: 480
-    fps: 15
+    fps: 30
+    fourcc: MJPG
     frame_id: wrist_cam_optical_frame
     fov_deg: 100
     warmup_s: 1.0

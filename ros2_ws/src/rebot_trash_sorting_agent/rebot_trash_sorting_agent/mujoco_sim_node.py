@@ -102,6 +102,7 @@ class MujocoSimNode(Node):
         super().__init__("mujoco_sim_node")
         self.declare_parameter("randomize", False)
         self.declare_parameter("seed", 0)
+        self.declare_parameter("mirror_only", False)
         self.declare_parameter("fps", 30.0)
         self.declare_parameter("show_viewer", False)
         self.declare_parameter("web_view", True)
@@ -117,6 +118,7 @@ class MujocoSimNode(Node):
 
         self._randomize = bool(self.get_parameter("randomize").value)
         self._seed = int(self.get_parameter("seed").value)
+        self._mirror_only = bool(self.get_parameter("mirror_only").value)
         self._fps = max(1.0, float(self.get_parameter("fps").value))
         self._show_viewer = bool(self.get_parameter("show_viewer").value)
         self._web_view = bool(self.get_parameter("web_view").value)
@@ -133,13 +135,14 @@ class MujocoSimNode(Node):
 
         self._cb = ReentrantCallbackGroup()
 
-        self._joint_pub = self.create_publisher(JointState, "/joint_states", 20)
-        self._table_pub = self.create_publisher(Image, f"{table_base}/image_raw", 10)
-        self._table_info_pub = self.create_publisher(CameraInfo, f"{table_base}/camera_info", 10)
-        self._wrist_pub = self.create_publisher(Image, f"{wrist_base}/image_raw", 10)
-        self._wrist_info_pub = self.create_publisher(CameraInfo, f"{wrist_base}/camera_info", 10)
-        self._sim_pub = self.create_publisher(Image, f"{sim_base}/image_raw", 10)
-        self._sim_info_pub = self.create_publisher(CameraInfo, f"{sim_base}/camera_info", 10)
+        if not self._mirror_only:
+            self._joint_pub = self.create_publisher(JointState, "/joint_states", 20)
+            self._table_pub = self.create_publisher(Image, f"{table_base}/image_raw", 10)
+            self._table_info_pub = self.create_publisher(CameraInfo, f"{table_base}/camera_info", 10)
+            self._wrist_pub = self.create_publisher(Image, f"{wrist_base}/image_raw", 10)
+            self._wrist_info_pub = self.create_publisher(CameraInfo, f"{wrist_base}/camera_info", 10)
+            self._sim_pub = self.create_publisher(Image, f"{sim_base}/image_raw", 10)
+            self._sim_info_pub = self.create_publisher(CameraInfo, f"{sim_base}/camera_info", 10)
 
         self._state_lock = threading.Lock()
         self._arm_target = READY_QPOS.copy()
@@ -161,6 +164,13 @@ class MujocoSimNode(Node):
         self._ready_event.wait(timeout=15.0)
         if self._init_error is not None:
             raise self._init_error
+
+        if self._mirror_only:
+            self._js_sub = self.create_subscription(
+                JointState, "/joint_states", self._on_joint_states, 20, callback_group=self._cb
+            )
+            self.get_logger().info("MuJoCo 3D mirror ready (mirror_only=True)")
+            return
 
         self._arm_server = ActionServer(
             self,
@@ -274,7 +284,8 @@ class MujocoSimNode(Node):
                     vr.publish(env.data)
                 if now >= next_render:
                     next_render = now + render_period
-                    self._render_and_publish(env)
+                    if not self._mirror_only:
+                        self._render_and_publish(env)
                     if viewer is not None and viewer.is_running():
                         viewer.sync()
 
@@ -294,6 +305,15 @@ class MujocoSimNode(Node):
                     pass
             if env is not None:
                 env.close()
+
+    def _on_joint_states(self, msg: JointState) -> None:
+        by_name = dict(zip(msg.name, msg.position))
+        with self._state_lock:
+            for idx, name in enumerate(ARM_JOINTS):
+                if name in by_name:
+                    self._arm_target[idx] = float(by_name[name])
+            if "finger_left" in by_name:
+                self._grip_target = float(by_name["finger_left"])
 
     def _render_and_publish(self, env: Any) -> None:
         stamp = self.get_clock().now().to_msg()

@@ -76,6 +76,7 @@ def _launch(context, *args, **kwargs):
             "dry_run": LaunchConfiguration("dry_run"),
             "use_scene": "true",
             "use_camera_driver": "false" if use_mujoco else "true",
+            "use_mujoco": "false" if use_mujoco else "true",
             "table_camera": table_camera or "table",
             "host": LaunchConfiguration("host"),
             "port": LaunchConfiguration("port"),

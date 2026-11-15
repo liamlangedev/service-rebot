@@ -35,6 +35,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
 from .config import Config
+from .perception.detector import Detection, YoloeDetector, annotate
 from .ros_image import imgmsg_to_bgr
 
 PAGE = r"""<!doctype html>
@@ -58,15 +59,18 @@ PAGE = r"""<!doctype html>
   .badge.failed,.badge.stopped { background:#3a1b1b; color:var(--bad); }
   header .meta { margin-left:auto; color:var(--dim); font-size:12px; }
   main { flex:1 1 auto; min-height:0; display:grid;
-         grid-template-columns:minmax(0,1.7fr) minmax(300px,1fr); gap:12px; padding:12px; }
-  .left-col { display:grid; grid-template-rows:minmax(0,1.15fr) minmax(0,1fr); gap:12px; min-height:0; }
-  .cam-pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-height:0; }
+         grid-template-columns:minmax(0,1fr) 320px; gap:12px; padding:12px; }
+  .left-col { display:grid; grid-template-rows:minmax(0,1fr) auto; gap:12px; min-height:0; }
+  .cam-pair { display:grid; grid-template-columns:4fr 3fr; gap:12px; align-items:start; min-height:0; }
   .right-col { display:flex; flex-direction:column; gap:12px; min-height:0; }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px;
            overflow:hidden; display:flex; flex-direction:column; min-height:0; }
   .panel h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim);
-              margin:0; padding:7px 12px; border-bottom:1px solid var(--line); flex:0 0 auto; }
+              margin:0; padding:7px 12px; border-bottom:1px solid var(--line); flex:0 0 auto;
+              display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .cam-meta { font:11px ui-monospace,monospace; text-transform:none; letter-spacing:0; color:var(--dim); }
   .video { width:100%; flex:1 1 auto; min-height:0; display:block; background:#000; object-fit:contain; border:0; }
+  .cam-pair img.video { flex:0 0 auto; height:auto; }
   .body { padding:10px 12px; }
   textarea { width:100%; height:54px; resize:none; background:#0f141b; color:var(--fg);
              border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
@@ -83,14 +87,25 @@ PAGE = r"""<!doctype html>
   .log { flex:1 1 auto; min-height:0; overflow:auto; padding:8px 12px; font:11px/1.45 ui-monospace,monospace; }
   .log div { padding:2px 0; border-bottom:1px solid #232b36; color:var(--dim); }
   .log b { color:var(--fg); font-weight:600; }
+  .log .obs { color:#79c0ff; }
+  .log .act { color:#7ee787; }
   .log .err { color:var(--bad); }
   .log .ok { color:var(--ok); }
-  .objs { padding:5px 12px; font:11px ui-monospace,monospace; color:var(--dim);
-          border-top:1px solid var(--line); flex:0 0 auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .log .note { color:var(--warn); }
+  .objs-wrap { flex:1 1 auto; min-height:0; max-height:170px; overflow:auto; }
+  table.objs-tbl { width:100%; border-collapse:collapse; font:11px ui-monospace,monospace; }
+  table.objs-tbl th, table.objs-tbl td { padding:4px 10px; text-align:left; border-bottom:1px solid #232b36; }
+  table.objs-tbl th { color:var(--dim); font-weight:600; position:sticky; top:0; background:var(--panel); }
+  table.objs-tbl tr.remembered { opacity:.55; }
+  .chip { display:inline-block; width:9px; height:9px; border-radius:2px;
+          margin-right:6px; vertical-align:baseline; border:1px solid #444; }
+  .task-hdr { color:var(--warn); font-weight:600; font-size:12px; }
+  .chatmsg { font:11px ui-monospace,monospace; color:var(--dim); margin-top:6px; min-height:15px; }
 </style></head><body>
 <header>
   <h1>reBot trash sorting</h1>
   <span id="state" class="badge">connecting</span>
+  <span id="task-hdr" class="task-hdr"></span>
   <span id="model" class="meta"></span>
 </header>
 <main>
@@ -98,15 +113,14 @@ PAGE = r"""<!doctype html>
     <div class="panel">
       <h2>MuJoCo 3D view (interactive)</h2>
       <iframe id="sim3d" class="video" title="mujoco 3d view"></iframe>
-      <div class="objs" id="objects">&mdash;</div>
     </div>
     <div class="cam-pair">
       <div class="panel">
-        <h2>Table camera</h2>
+        <h2><span>Table camera</span><span id="table-meta" class="cam-meta"></span></h2>
         <img class="video" src="/stream" alt="table camera">
       </div>
       <div class="panel">
-        <h2>Wrist camera</h2>
+        <h2><span>Wrist camera</span><span id="wrist-meta" class="cam-meta"></span></h2>
         <img class="video" src="/wrist_stream" alt="wrist camera">
       </div>
     </div>
@@ -121,6 +135,7 @@ PAGE = r"""<!doctype html>
           <button id="stop" class="danger">STOP</button>
         </div>
         <div class="hint">Enter runs, Shift+Enter adds a line.</div>
+        <div id="chatmsg" class="chatmsg"></div>
       </div>
     </div>
     <div class="panel">
@@ -131,12 +146,30 @@ PAGE = r"""<!doctype html>
       <h2>Events</h2>
       <div class="log" id="log"></div>
     </div>
+    <div class="panel">
+      <h2>Objects</h2>
+      <div class="objs-wrap">
+        <table class="objs-tbl">
+          <thead><tr><th>object</th><th>color</th><th>pos (m) / px</th><th>state</th></tr></thead>
+          <tbody id="objs"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
 $("sim3d").src = `${location.protocol}//${location.hostname}:8765/?embed=1`;
 let lastEventKey = "";
+const SWATCH = {red:"#e5484d", orange:"#f76b15", yellow:"#ffe629", green:"#46a758",
+  cyan:"#00a2c7", blue:"#0090ff", purple:"#8e4ec6", pink:"#f76190",
+  brown:"#ad7f58", white:"#eee", gray:"#888", silver:"#b8c0cc", black:"#111"};
+function colorOf(o) {
+  if (o.color) return o.color;
+  const words = String(o.label || "").toLowerCase().split(/\s+/);
+  return words.find(w => SWATCH[w]) || "";
+}
+function esc(v) { return String(v ?? "").replace(/[<>&]/g, ""); }
 
 async function refresh() {
   try {
@@ -144,31 +177,63 @@ async function refresh() {
     const badge = $("state");
     badge.textContent = s.state || "idle";
     badge.className = "badge " + (s.state || "idle");
-    $("model").textContent = [s.provider, s.model, s.dry_run ? "dry run" : null]
-      .filter(Boolean).join(" · ");
+    $("task-hdr").textContent = s.task ? `task: ${s.task}` : "";
+    $("table-meta").textContent = s.table_stats || "";
+    $("wrist-meta").textContent = s.wrist_stats || "";
+    const camCount = (s.frames > 0 ? 1 : 0) + (s.wrist_frames > 0 ? 1 : 0);
+    $("model").textContent = [
+      `${camCount} cams`,
+      s.provider && s.model ? `${s.provider}/${s.model}` : (s.provider || s.model),
+      s.calibrated ? "calibrated" : "uncalibrated",
+      s.dry_run ? "dry run" : null,
+    ].filter(Boolean).join(" · ");
     $("run").disabled = !!s.busy;
     const facts = [
       ["camera", s.calibrated ? "calibrated" : "NOT calibrated"],
-      ["frames", s.frames],
-      ["objects", (s.objects || []).length],
+      ["frames", `${s.frames} / wrist ${s.wrist_frames || 0}`],
+      ["objects", (s.objects || []).length || (s.live_detections || []).length],
       ["task", s.task || "—"],
     ];
     if (s.result) facts.push(["result", s.result.success ? "success" : "failed"]);
     $("facts").innerHTML = facts.map(([k, v]) =>
-      `<dt>${k}</dt><dd>${String(v).replace(/[<>&]/g, "")}</dd>`).join("");
-    const objs = (s.objects || []).map(o =>
-      `${o.label} (${o.state}) x=${o.x.toFixed(3)} y=${o.y.toFixed(3)}`).join("\n");
-    $("objects").textContent = objs || "no objects detected yet";
+      `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
+    const worldObjs = s.objects || [];
+    const liveObjs = s.live_detections || [];
+    if (worldObjs.length) {
+      $("objs").innerHTML = worldObjs.map(o => {
+        const c = colorOf(o);
+        return `<tr class="${esc(o.state)}"><td>${esc(o.label)}</td>` +
+          `<td><span class="chip" style="background:${SWATCH[c] || "#333"}"></span>${esc(c || "?")}</td>` +
+          `<td>[${Number(o.x).toFixed(3)}, ${Number(o.y).toFixed(3)}]</td>` +
+          `<td>${esc(o.state)}</td></tr>`;
+      }).join("");
+    } else if (liveObjs.length) {
+      $("objs").innerHTML = liveObjs.map(o => {
+        const c = colorOf(o);
+        return `<tr><td>${esc(o.label)}</td>` +
+          `<td><span class="chip" style="background:${SWATCH[c] || "#333"}"></span>${esc(c || "?")}</td>` +
+          `<td>px (${o.bbox.map(v => Math.round(v)).join(", ")})</td>` +
+          `<td>live ${(o.score * 100).toFixed(0)}%</td></tr>`;
+      }).join("");
+    } else {
+      $("objs").innerHTML = `<tr><td colspan="4" style="color:var(--dim)">no objects detected yet</td></tr>`;
+    }
     const events = s.events || [];
     const key = events.length + ":" + (events[events.length-1]?.ts ?? "");
     if (key !== lastEventKey) {
       lastEventKey = key;
-      $("log").innerHTML = events.slice().reverse().map(e => {
-        const cls = e.kind === "task_error" || e.kind === "tool_result" && !e.ok ? "err"
-                  : e.kind === "task_done" && e.success ? "ok" : "";
+      const log = $("log");
+      const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+      log.innerHTML = events.map(e => {
+        const cls = (e.kind === "task_error" || (e.kind === "tool_result" && !e.ok)) ? "err"
+                  : (e.kind === "task_done" && e.success) ? "ok"
+                  : (e.kind === "tool_call" || e.kind === "action") ? "act"
+                  : (e.kind === "observation" || e.kind === "plan") ? "obs"
+                  : (e.kind === "note") ? "note" : "";
         const detail = e.summary || e.error || e.tool || e.text || "";
-        return `<div class="${cls}"><b>${e.ts}s</b> ${e.kind} ${String(detail).slice(0,180)}</div>`;
+        return `<div class="${cls}"><b>${e.ts}s</b> ${esc(e.kind)} ${esc(detail).slice(0,180)}</div>`;
       }).join("");
+      if (stick) log.scrollTop = log.scrollHeight;
     }
   } catch (err) {
     $("state").textContent = "offline";
@@ -176,17 +241,24 @@ async function refresh() {
   }
 }
 
-async function post(path, body) {
-  await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
-                     body: JSON.stringify(body || {})});
+async function post(path, body, okMsg) {
+  const msg = $("chatmsg");
+  msg.textContent = "sending...";
+  try {
+    const r = await (await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+                                      body: JSON.stringify(body || {})})).json();
+    msg.textContent = r.ok ? okMsg : (r.error || "request failed");
+  } catch (err) {
+    msg.textContent = "error: " + err;
+  }
   refresh();
 }
 
 $("run").onclick = () => {
   const task = $("task").value.trim();
-  if (task) post("/api/task", {task});
+  if (task) post("/api/task", {task}, `running: ${task}`);
 };
-$("stop").onclick = () => post("/api/stop");
+$("stop").onclick = () => post("/api/stop", {}, "stop requested — aborting current action");
 $("task").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("run").click(); }
 });
@@ -208,11 +280,24 @@ class DashboardNode(Node):
         self._jpeg_stamp = 0.0
         self._frame: np.ndarray | None = None
         self._frame_stamp = 0.0
+        self._frame_seq = 0
+        self._frame_fps = 0.0
         self._wrist_frame: np.ndarray | None = None
         self._wrist_stamp = 0.0
+        self._wrist_seq = 0
+        self._wrist_fps = 0.0
         self._sim_frame: np.ndarray | None = None
         self._sim_stamp = 0.0
         self._bad_frame = 0
+        self._jpeg_cache: dict[str, tuple[tuple, bytes]] = {}
+        self._bboxes_enabled = True
+        self._table_dets: list[Detection] = []
+        self._wrist_dets: list[Detection] = []
+        self._perception_cfg = dict(config.perception)
+        self._detector: YoloeDetector | None = None
+        self._bbox_wake = threading.Event()
+        self._bbox_wake.set()
+        self._stop_event = threading.Event()
 
         self._task_pub = self.create_publisher(String, "/agent/task", 10)
         self._cancel_pub = self.create_publisher(Empty, "/agent/cancel", 10)
@@ -237,6 +322,9 @@ class DashboardNode(Node):
         self._thread = threading.Thread(target=self._server.serve_forever, name="dashboard_http",
                                         daemon=True)
         self._thread.start()
+        self._detect_thread = threading.Thread(target=self._detect_loop, name="dashboard_detect",
+                                               daemon=True)
+        self._detect_thread.start()
         self.get_logger().info(f"dashboard on http://{host}:{port}")
 
     # ------------------------------------------------------------------ ros in
@@ -259,18 +347,32 @@ class DashboardNode(Node):
         except Exception:  # noqa: BLE001 - one bad frame is not a dashboard outage
             self._bad_frame += 1
             return
+        now = time.monotonic()
         with self._lock:
+            if self._frame_stamp > 0:
+                dt = now - self._frame_stamp
+                if dt > 0:
+                    inst = 1.0 / dt
+                    self._frame_fps = inst if self._frame_fps <= 0 else 0.8 * self._frame_fps + 0.2 * inst
             self._frame = frame
-            self._frame_stamp = time.monotonic()
+            self._frame_stamp = now
+            self._frame_seq += 1
 
     def _on_wrist_frame(self, msg: Any) -> None:
         try:
             frame = imgmsg_to_bgr(msg)
         except Exception:  # noqa: BLE001
             return
+        now = time.monotonic()
         with self._lock:
+            if self._wrist_stamp > 0:
+                dt = now - self._wrist_stamp
+                if dt > 0:
+                    inst = 1.0 / dt
+                    self._wrist_fps = inst if self._wrist_fps <= 0 else 0.8 * self._wrist_fps + 0.2 * inst
             self._wrist_frame = frame
-            self._wrist_stamp = time.monotonic()
+            self._wrist_stamp = now
+            self._wrist_seq += 1
 
     def _on_sim_frame(self, msg: Any) -> None:
         try:
@@ -287,7 +389,50 @@ class DashboardNode(Node):
             status = dict(self._status)
             status["video_age_s"] = round(time.monotonic() - self._frame_stamp, 2)
             status["bad_frames"] = self._bad_frame
+            status["bboxes"] = self._bboxes_enabled
+            status["live_detections"] = [
+                {"label": d.label, "score": round(d.score, 2), "bbox": [round(v, 1) for v in d.bbox]}
+                for d in self._table_dets
+            ]
+            status["table_stats"] = _cam_stats(self._frame, self._frame_fps, len(self._table_dets))
+            status["wrist_stats"] = _cam_stats(self._wrist_frame, self._wrist_fps, len(self._wrist_dets))
         return status
+
+    def set_bboxes(self, enabled: bool) -> None:
+        with self._lock:
+            self._bboxes_enabled = bool(enabled)
+            if not self._bboxes_enabled:
+                self._table_dets = []
+                self._wrist_dets = []
+        if enabled:
+            self._bbox_wake.set()
+        self.get_logger().info(f"live bboxes {'enabled' if enabled else 'disabled'}")
+
+    def _detect_loop(self) -> None:
+        while not self._stop_event.is_set():
+            with self._lock:
+                enabled = self._bboxes_enabled
+                table = None if self._frame is None else self._frame.copy()
+                wrist = None if self._wrist_frame is None else self._wrist_frame.copy()
+            if not enabled:
+                self._bbox_wake.wait(timeout=1.0)
+                self._bbox_wake.clear()
+                continue
+            try:
+                if self._detector is None:
+                    self._detector = YoloeDetector(self._perception_cfg)
+                    self._detector.load()
+                t_dets = self._detector.detect(table) if table is not None else []
+                w_dets = self._detector.detect(wrist) if wrist is not None else []
+                with self._lock:
+                    if self._bboxes_enabled:
+                        self._table_dets = t_dets
+                        self._wrist_dets = w_dets
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warning(f"live bbox detection failed: {exc}")
+                self._stop_event.wait(1.0)
+                continue
+            self._stop_event.wait(0.35)
 
     def submit(self, task: str) -> None:
         from std_msgs.msg import String
@@ -303,23 +448,54 @@ class DashboardNode(Node):
         self._cancel_pub.publish(Empty())
 
     def jpeg(self) -> bytes | None:
-        """Annotated frame briefly after detection, otherwise the live camera frame."""
+        """Annotated frame with HUD overlay and per-frame JPEG caching."""
         with self._lock:
             jpeg, jpeg_age = self._jpeg, time.monotonic() - self._jpeg_stamp
             frame, frame_age = self._frame, time.monotonic() - self._frame_stamp
-        if jpeg is not None and jpeg_age < 1.5:
+            seq, fps = self._frame_seq, self._frame_fps
+            bboxes = self._bboxes_enabled
+            dets = list(self._table_dets) if bboxes else []
+            agent_state = str(self._status.get("state", "idle"))
+        if not bboxes and jpeg is not None and jpeg_age < 1.5:
             return jpeg
-        return self._encode(frame, frame_age)
+        return self._render_stream("table", frame, frame_age, seq, dets, fps, agent_state)
 
     def wrist_jpeg(self) -> bytes | None:
         with self._lock:
             frame, frame_age = self._wrist_frame, time.monotonic() - self._wrist_stamp
-        return self._encode(frame, frame_age)
+            seq, fps = self._wrist_seq, self._wrist_fps
+            bboxes = self._bboxes_enabled
+            dets = list(self._wrist_dets) if bboxes else []
+            agent_state = str(self._status.get("state", "idle"))
+        return self._render_stream("wrist", frame, frame_age, seq, dets, fps, agent_state)
 
     def sim_jpeg(self) -> bytes | None:
         with self._lock:
             frame, frame_age = self._sim_frame, time.monotonic() - self._sim_stamp
         return self._encode(frame, frame_age)
+
+    def _render_stream(
+        self,
+        name: str,
+        frame: np.ndarray | None,
+        age: float,
+        seq: int,
+        dets: list[Detection],
+        fps: float,
+        agent_state: str,
+    ) -> bytes | None:
+        if frame is None or age > 5.0:
+            return None
+        det_sig = tuple((d.label, round(d.score, 2)) for d in dets)
+        cache_key = (seq, det_sig)
+        cached = self._jpeg_cache.get(name)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        img = annotate(frame, dets) if dets else frame
+        encoded = self._encode(img, age)
+        if encoded is not None:
+            self._jpeg_cache[name] = (cache_key, encoded)
+        return encoded
 
     def _encode(self, frame: np.ndarray | None, age: float) -> bytes | None:
         if frame is None or age > 5.0:
@@ -334,8 +510,17 @@ class DashboardNode(Node):
         return buffer.tobytes() if ok else None
 
     def destroy_node(self) -> bool:
+        self._stop_event.set()
+        self._bbox_wake.set()
         self._server.shutdown()
         return super().destroy_node()
+
+
+def _cam_stats(frame: np.ndarray | None, fps: float, dets: int) -> str:
+    if frame is None:
+        return "waiting..."
+    h, w = frame.shape[:2]
+    return f"{w}x{h} · {fps:.1f} fps · {dets} dets"
 
 
 def _handler(node: DashboardNode):
