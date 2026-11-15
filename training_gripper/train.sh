@@ -3,6 +3,7 @@
 #
 #   VARIANT=rel ./training_gripper/train.sh     # relative actions, gripper camera only
 #   VARIANT=abs ./training_gripper/train.sh     # absolute actions, 3 cameras
+#   OBJECT=towel VARIANT=rel ./training_gripper/train.sh   # rebot_grasp_towel_rel
 #   TARGET=local VARIANT=rel ./training_gripper/train.sh --steps=50   # local smoke test
 #
 # 8 workers: the eval DataLoader spawns its own workers at each eval, and 16+16 hit the
@@ -17,11 +18,12 @@ LEROBOT_TRAIN="${LEROBOT_TRAIN:-$REPO_ROOT/teleoperation/.venv/bin/lerobot-train
 HF_USER="${HF_USER:-niru-5}"
 TARGET="${TARGET:-rtx-pro-6000}"
 VARIANT="${VARIANT:?set VARIANT=abs or VARIANT=rel}"
+OBJECT="${OBJECT:-keys}"
 EVAL_SPLIT="${EVAL_SPLIT:?set EVAL_SPLIT from meta/grasp_clips.json}"
-NAME="act_rebot_grasp_keys_${VARIANT}"
+NAME="act_rebot_grasp_${OBJECT}_${VARIANT}"
 
 exec "$LEROBOT_TRAIN" \
-  --dataset.repo_id="$HF_USER/rebot_grasp_keys_${VARIANT}" \
+  --dataset.repo_id="$HF_USER/rebot_grasp_${OBJECT}_${VARIANT}" \
   --dataset.image_transforms.enable=true \
   --dataset.video_backend=torchcodec \
   --dataset.eval_split="$EVAL_SPLIT" \

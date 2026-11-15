@@ -2,11 +2,12 @@
 
     teleoperation/.venv/bin/python training_gripper/make_dataset.py \
         --src <local copy of RoboCrafty/rebot_sort_v1> --out <dir> [--push]
+    ... --src RoboCrafty/rebot_sort_towel2 --object towel --task "grasp the towel and lift it" --public
 
-Variant A (`<user>/rebot_grasp_keys_abs`): one clip per grasp, all three cameras,
+Variant A (`<user>/rebot_grasp_<object>_abs`): one clip per grasp, all three cameras,
 absolute state and action (same as the source).
 
-Variant B (`<user>/rebot_grasp_keys_rel`): several clips per grasp, each starting at a
+Variant B (`<user>/rebot_grasp_<object>_rel`): several clips per grasp, each starting at a
 different time before the close (handoff-timing augmentation), gripper camera only,
 arm joints of state and action relative to the clip's first state (`anchor_state`, which
 the policy does not see). The gripper stays absolute.
@@ -38,7 +39,7 @@ from relative import to_relative  # noqa: E402
 from segments import episode_arrays, find_grasp, load_frames  # noqa: E402
 
 CAMERAS = ["front_wide", "gripper", "high_oblique"]
-TASK = "grasp the keys and lift them"
+DEFAULT_TASK = {"keys": "grasp the keys and lift them", "towel": "grasp the towel and lift it"}
 
 
 class Fk:
@@ -99,18 +100,19 @@ def _features(src_meta, cameras: list[str], with_anchor: bool) -> dict:
 
 
 def write(plan: dict, src: str, out: Path, user: str, push: bool,
-          variants: tuple[str, ...] = ("abs", "rel")) -> None:
+          variants: tuple[str, ...] = ("abs", "rel"), source_repo: str = "RoboCrafty/rebot_sort_v1",
+          obj: str = "keys", task: str = DEFAULT_TASK["keys"], public: bool = False) -> None:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    source = LeRobotDataset("RoboCrafty/rebot_sort_v1", root=src, video_backend="pyav",
+    source = LeRobotDataset(source_repo, root=src, video_backend="pyav",
                             return_uint8=True)
     meta = source.meta
     ep_start = {int(e): int(s) for e, s in zip(meta.episodes["episode_index"],
                                                meta.episodes["dataset_from_index"])}
 
     specs = {
-        "abs": dict(repo=f"{user}/rebot_grasp_keys_abs", cams=CAMERAS, anchor=False),
-        "rel": dict(repo=f"{user}/rebot_grasp_keys_rel", cams=["gripper"], anchor=True),
+        "abs": dict(repo=f"{user}/rebot_grasp_{obj}_abs", cams=CAMERAS, anchor=False),
+        "rel": dict(repo=f"{user}/rebot_grasp_{obj}_rel", cams=["gripper"], anchor=True),
     }
     specs = {k: v for k, v in specs.items() if k in variants}
     needed = sorted({c for s in specs.values() for c in s["cams"]})
@@ -144,7 +146,7 @@ def write(plan: dict, src: str, out: Path, user: str, push: bool,
         for t in range(a0, a1) if "abs" in dsets else ():
             imgs = frame(ep, t)
             f = {"observation.state": state[t].astype(np.float32),
-                 "action": action[t].astype(np.float32), "task": TASK}
+                 "action": action[t].astype(np.float32), "task": task}
             f.update({f"observation.images.{c}": imgs[c] for c in CAMERAS})
             dsets["abs"].add_frame(f)
         if "abs" in dsets:
@@ -158,7 +160,7 @@ def write(plan: dict, src: str, out: Path, user: str, push: bool,
                     "action": to_relative(action[t], anchor),
                     "anchor_state": anchor,
                     "observation.images.gripper": frame(ep, t)["gripper"],
-                    "task": TASK,
+                    "task": task,
                 })
             dsets["rel"].save_episode()
             counts["rel"] += 1
@@ -167,7 +169,7 @@ def write(plan: dict, src: str, out: Path, user: str, push: bool,
 
     n_hold = len(plan["holdout"])
     summary = dict(
-        source="RoboCrafty/rebot_sort_v1", task=TASK, params=plan["params"],
+        source=source_repo, task=task, params=plan["params"],
         train_source_episodes=[c["ep"] for c in plan["train"]],
         holdout_source_episodes=[c["ep"] for c in plan["holdout"]],
         rejected={str(k): v for k, v in plan["rejected"].items()},
@@ -181,8 +183,8 @@ def write(plan: dict, src: str, out: Path, user: str, push: bool,
         ds.finalize()
         (out / name / "meta" / "grasp_clips.json").write_text(json.dumps(summary, indent=2))
         if push:
-            ds.push_to_hub(private=True, tags=["rebot", "grasp"])
-            print("pushed", specs[name]["repo"], "(private)")
+            ds.push_to_hub(private=not public, tags=["rebot", "grasp", obj])
+            print("pushed", specs[name]["repo"], "(public)" if public else "(private)")
     print(json.dumps({k: v for k, v in summary.items() if k != "params"}, indent=2))
 
 
@@ -191,6 +193,10 @@ def main() -> None:
     p.add_argument("--src", required=True, help="local copy of RoboCrafty/rebot_sort_v1")
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--user", default="niru-5")
+    p.add_argument("--object", default="keys", help="names the output repos rebot_grasp_<object>_*")
+    p.add_argument("--task", help="language task stored with each frame")
+    p.add_argument("--source-repo", help="Hub id of the source dataset (default: --src if it is one)")
+    p.add_argument("--public", action="store_true", help="push public repos (default private)")
     p.add_argument("--pre-a", type=int, default=75, help="frames before the close (variant A)")
     p.add_argument("--pre-b", type=int, nargs="+", default=[75, 60, 45, 30],
                    help="start offsets in frames before the close (variant B)")
@@ -207,6 +213,8 @@ def main() -> None:
     p.add_argument("--episodes", type=int, nargs="+", help="only these source episodes (tests)")
     a = p.parse_args()
 
+    source_repo = a.source_repo or (a.src if not Path(a.src).exists() else "RoboCrafty/rebot_sort_v1")
+    task = a.task or DEFAULT_TASK.get(a.object) or f"grasp the {a.object} and lift it"
     if not Path(a.src).exists():  # a Hub repo id: fetch it (used on HF Jobs)
         from huggingface_hub import snapshot_download
         a.src = snapshot_download(a.src, repo_type="dataset",
@@ -232,7 +240,8 @@ def main() -> None:
         for key in ("train", "holdout"):
             plan[key] = [c for c in plan[key] if c["ep"] in a.episodes]
     if not (a.plan_only or a.save_plan):
-        write(plan, a.src, a.out, a.user, a.push, tuple(a.variants))
+        write(plan, a.src, a.out, a.user, a.push, tuple(a.variants), source_repo=source_repo,
+              obj=a.object, task=task, public=a.public)
 
 
 if __name__ == "__main__":
