@@ -19,6 +19,8 @@ Most episodes run 13–19 s. One outlier is 50 s; it's kept for now.
 | HF Jobs flavor | `rtx-pro-6000` (23 vCPU), 16 workers | same |
 | Tracking | Trackio → `niru-5/rebot-training` (private Space) | same |
 
+See [RUNS.md](RUNS.md) for the log of all runs and their results.
+
 ## Run
 
 ```bash
