@@ -8,6 +8,12 @@
 #   rollout/run.sh grasp-abs               # grasp-abs (held-out clip 27; add --device cuda)
 #   rollout/run.sh dry-run                 # grasp-rel on the MuJoCo stand-in, no arm
 #
+#   towel (rebot_sort_towel2 grasps, prompt "pick up the towel"):
+#   rollout/run.sh towel-act-rel           # ACT, relative: place the arm above the towel (h), a
+#   rollout/run.sh towel-smolvla-rel       # SmolVLA, relative, wrist camera only
+#   rollout/run.sh towel-act-abs           # ACT, absolute: drive to held-out clip 29's start pose
+#   rollout/run.sh towel-smolvla-abs       # SmolVLA, absolute, 3 cameras
+#
 # Anything after the mode is passed on to rollout.py and overrides the defaults below,
 # e.g. `rollout/run.sh full --max-speed 45 --timeout 40` or `... --policy <repo>`.
 # Camera devices can be overridden with FRONT=, WRIST=, HIGH= in the environment.
@@ -39,6 +45,20 @@ case "$mode" in
     exec "$PY" rollout/rollout.py grasp-rel "${WRIST_CAM[@]}" --max-speed 30 --max-offset 20 "$@" ;;
   grasp-abs)
     exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" --start-episode 27 "$@" ;;
+  towel-act-rel)
+    exec "$PY" rollout/rollout.py grasp-rel "${WRIST_CAM[@]}" --policy niru-5/act_rebot_grasp_towel_rel \
+      --task "pick up the towel" --max-speed 30 --max-offset 20 "$@" ;;
+  towel-smolvla-rel)
+    exec "$PY" rollout/rollout.py grasp-rel "${WRIST_CAM[@]}" \
+      --policy "${SMOLVLA_TOWEL_REL:-niru-5/smolvla_rebot_grasp_towel_rel_2026-11-15_14-38-20}" \
+      --use-cams camera2 --task "pick up the towel" --max-speed 30 --max-offset 20 "$@" ;;
+  towel-act-abs)
+    exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" --policy niru-5/act_rebot_grasp_towel_abs \
+      --start-dataset niru-5/rebot_grasp_towel_abs --start-episode 29 --task "pick up the towel" "$@" ;;
+  towel-smolvla-abs)
+    exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" \
+      --policy "${SMOLVLA_TOWEL_ABS:-niru-5/smolvla_rebot_grasp_towel_abs_2026-11-15_14-38-42}" \
+      --start-dataset niru-5/rebot_grasp_towel_abs --start-episode 29 --task "pick up the towel" "$@" ;;
   dry-run)
     src="${DATASET_ROOT:-$HOME/.cache/rebot_sort_v1}"
     if [[ ! -f "$src/meta/info.json" ]]; then
@@ -48,6 +68,6 @@ case "$mode" in
     exec "$PY" rollout/rollout.py grasp-rel --fake-hardware --auto-start --arrive-tol-deg 15 \
       --max-lag-deg 40 --fake-images-root "$src" --fake-episode 32 --fake-start-frame 72 "$@" ;;
   *)
-    sed -n '2,13p' "${BASH_SOURCE[0]}"
+    sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | grep '^#'
     exit 2 ;;
 esac

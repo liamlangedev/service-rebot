@@ -179,7 +179,8 @@ def load_runner(args, mode: str):
     print(f"loading {policy} ({'relative' if rel else 'absolute'}, {args.device})")
     runner = PolicyRunner(RunnerConfig(policy_path=policy, mode="relative" if rel else "absolute",
                                        device=args.device, task=task,
-                                       max_offset_deg=args.max_offset or 180.0))
+                                       max_offset_deg=args.max_offset or 180.0,
+                                       use_cameras=tuple(args.use_cams) if args.use_cams else None))
     cam_map = {n: SMOLVLA_CAMERAS.get(n, n) for n in runner.camera_names}
     for pair in args.camera_map or []:
         k, v = pair.split("=", 1)
@@ -405,6 +406,9 @@ def main() -> None:
     p.add_argument("--device", default="cpu")
     p.add_argument("--cam", action="append", metavar="NAME=DEVICE",
                    help="camera by dataset name: front_wide, gripper, high_oblique")
+    p.add_argument("--use-cams", nargs="+", metavar="POLICY_CAM",
+                   help="feed only these policy cameras, e.g. --use-cams camera2 for a SmolVLA "
+                        "trained on the wrist camera only (its config still lists camera1-3)")
     p.add_argument("--camera-map", action="append", metavar="POLICY=DATASET",
                    help="policy camera -> dataset camera (SmolVLA camera1..3 are mapped already)")
     # robot
