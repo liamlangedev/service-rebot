@@ -11,6 +11,7 @@ started when you ask for it, and ``channel`` is the USB2CAN device.
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
 )
@@ -52,18 +53,22 @@ def _launch(context, *args, **kwargs):
             )
         )
 
-    bringup = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            [FindPackageShare("rebot_trash_sorting"), "/launch/bringup.launch.py"]
-        ),
-        launch_arguments={
-            "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
-            "use_mujoco": LaunchConfiguration("use_mujoco"),
-            "use_rviz": LaunchConfiguration("use_rviz"),
-            "gripper": LaunchConfiguration("gripper"),
-            "channel": LaunchConfiguration("channel"),
-            "arm_namespace": LaunchConfiguration("arm_namespace"),
-        }.items(),
+    bringup = GroupAction(
+        [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    [FindPackageShare("rebot_trash_sorting"), "/launch/bringup.launch.py"]
+                ),
+                launch_arguments={
+                    "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
+                    "use_mujoco": LaunchConfiguration("use_mujoco"),
+                    "use_rviz": LaunchConfiguration("use_rviz"),
+                    "gripper": LaunchConfiguration("gripper"),
+                    "channel": LaunchConfiguration("channel"),
+                    "arm_namespace": LaunchConfiguration("arm_namespace"),
+                }.items(),
+            )
+        ]
     )
     agent = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -72,7 +77,7 @@ def _launch(context, *args, **kwargs):
         launch_arguments={
             "config_dir": LaunchConfiguration("config_dir"),
             "provider": LaunchConfiguration("provider"),
-            "model": LaunchConfiguration("model"),
+            "vlm_model": LaunchConfiguration("vlm_model"),
             "dry_run": LaunchConfiguration("dry_run"),
             "use_scene": "true",
             "use_camera_driver": "false" if use_mujoco else "true",
@@ -105,7 +110,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("config_dir", default_value=""),
             DeclareLaunchArgument("provider", default_value=""),
-            DeclareLaunchArgument("model", default_value=""),
+            DeclareLaunchArgument("vlm_model", default_value=""),
             DeclareLaunchArgument("dry_run", default_value="false"),
             DeclareLaunchArgument("table_camera", default_value="table"),
             DeclareLaunchArgument("host", default_value="127.0.0.1"),

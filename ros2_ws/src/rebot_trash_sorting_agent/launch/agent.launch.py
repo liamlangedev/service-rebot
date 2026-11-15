@@ -26,7 +26,7 @@ def generate_launch_description() -> LaunchDescription:
                                   description="directory with agent.yaml and friends (default: package share)"),
             DeclareLaunchArgument("provider", default_value="",
                                   description="override vlm.provider: gemini | openai | mock"),
-            DeclareLaunchArgument("model", default_value="",
+            DeclareLaunchArgument("vlm_model", default_value="",
                                   description="override vlm.model, e.g. gemini-3.8-flash"),
             DeclareLaunchArgument("dry_run", default_value="false",
                                   description="plan and measure but never move the arm"),
@@ -81,7 +81,7 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[
                     {
                         "provider": LaunchConfiguration("provider"),
-                        "model": LaunchConfiguration("model"),
+                        "vlm_model": LaunchConfiguration("vlm_model"),
                         "dry_run": ParameterValue(LaunchConfiguration("dry_run"), value_type=bool),
                         "max_steps": ParameterValue(LaunchConfiguration("max_steps"), value_type=int),
                         "table_camera": LaunchConfiguration("table_camera"),

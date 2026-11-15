@@ -88,7 +88,7 @@ class AgentNode(Node):
         super().__init__("agent_node")
         self.declare_parameter("config_dir", "")
         self.declare_parameter("provider", "")
-        self.declare_parameter("model", "")
+        self.declare_parameter("vlm_model", "")
         self.declare_parameter("dry_run", False)
         self.declare_parameter("max_steps", 0)
         self.declare_parameter("table_camera", "table")
@@ -173,7 +173,7 @@ class AgentNode(Node):
 
     def _apply_overrides(self) -> None:
         provider = self._str_param("provider").lower()
-        model = self._str_param("model")
+        model = self._str_param("vlm_model")
         max_steps = int(self.get_parameter("max_steps").value or 0)
         dry_run = bool(self.get_parameter("dry_run").value)
         if provider or model or max_steps or dry_run:
