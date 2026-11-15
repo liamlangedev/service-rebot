@@ -1,8 +1,8 @@
 initial_positions:
   joint1: 0.0
-  joint2: -0.75
-  joint3: -0.55
-  joint4: 0.0
+  joint2: -1.51
+  joint3: -1.30
+  joint4: 1.36
   joint5: 0.0
   joint6: 0.0
   finger_left: 0.025

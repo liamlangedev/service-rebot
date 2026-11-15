@@ -48,8 +48,11 @@ const place = { h: +(params.get('h') ?? 0.75), d: +(params.get('d') ?? 0.30),
 // ?view=passthrough: draw nothing, just show the real room (look at the PC
 // screen through the headset) while the controllers still drive the sim.
 const passthroughOnly = params.get('view') === 'passthrough';
+const embedMode = params.get('embed') === '1';
 const connEl = document.getElementById('conn');
-if (passthroughOnly) {
+if (embedMode) {
+  document.getElementById('info').style.display = 'none';
+} else if (passthroughOnly) {
   document.querySelector('#info h1').textContent = 'reBot Arm: passthrough controller';
   document.querySelector('#info p:last-child').innerHTML =
     'Press <b>Start AR</b>: the headset becomes see-through, so you can watch the MuJoCo ' +
@@ -287,12 +290,14 @@ renderer.setAnimationLoop((t, frame) => {
 });
 
 // Enter VR / Start AR buttons (three's helpers, placed side by side).
-const vrBtn = VRButton.createButton(renderer);
-const arBtn = ARButton.createButton(renderer, { optionalFeatures: ['local-floor'] });
-const xrButtons = document.createElement('div');
-xrButtons.id = 'xrButtons';
-if (passthroughOnly) xrButtons.append(arBtn); else xrButtons.append(vrBtn, arBtn);
-document.body.appendChild(xrButtons);
+if (!embedMode) {
+  const vrBtn = VRButton.createButton(renderer);
+  const arBtn = ARButton.createButton(renderer, { optionalFeatures: ['local-floor'] });
+  const xrButtons = document.createElement('div');
+  xrButtons.id = 'xrButtons';
+  if (passthroughOnly) xrButtons.append(arBtn); else xrButtons.append(vrBtn, arBtn);
+  document.body.appendChild(xrButtons);
+}
 </script>
 </body>
 </html>

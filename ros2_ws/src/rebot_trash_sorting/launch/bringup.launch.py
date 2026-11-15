@@ -33,6 +33,9 @@ def _launch_setup(context, *args, **kwargs):
     use_fake_hardware = _parse_bool(
         LaunchConfiguration("use_fake_hardware").perform(context)
     )
+    use_mujoco = _parse_bool(
+        LaunchConfiguration("use_mujoco").perform(context)
+    )
     gripper = LaunchConfiguration("gripper").perform(context).strip().lower()
     if gripper not in ("soft", "hard"):
         raise ValueError(f"Invalid gripper={gripper!r}; expected 'soft' or 'hard'")
@@ -70,7 +73,7 @@ def _launch_setup(context, *args, **kwargs):
         .trajectory_execution(
             file_path=(
                 "config/moveit_controllers.yaml"
-                if use_fake_hardware
+                if (use_fake_hardware or use_mujoco)
                 else hw_controllers_file
             )
         )
@@ -84,14 +87,14 @@ def _launch_setup(context, *args, **kwargs):
     moveit_config = moveit_launch_common.apply_rviz_urdf_compat(moveit_config)
     moveit_params = moveit_launch_common.moveit_parameters(moveit_config)
 
-    if not use_fake_hardware and arm_namespace != "rebotarm":
+    if not use_fake_hardware and not use_mujoco and arm_namespace != "rebotarm":
         ctrl_mgr = moveit_params.get("moveit_simple_controller_manager", {})
         if "rebotarm" in ctrl_mgr:
             ctrl_mgr[arm_namespace] = ctrl_mgr.pop("rebotarm")
             ctrl_mgr["controller_names"] = [arm_namespace, "gripper_controller"]
 
     joint_states_remapping = (
-        [] if use_fake_hardware else [("/joint_states", f"/{arm_namespace}/joint_states")]
+        [] if (use_fake_hardware or use_mujoco) else [("/joint_states", f"/{arm_namespace}/joint_states")]
     )
 
     robot_state_publisher_node = Node(
@@ -121,6 +124,19 @@ def _launch_setup(context, *args, **kwargs):
         parameters=[moveit_params],
         remappings=joint_states_remapping,
     )
+
+    if use_mujoco:
+        return [
+            robot_state_publisher_node,
+            move_group_node,
+            rviz_node,
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=move_group_node,
+                    on_exit=[EmitEvent(event=Shutdown(reason="move_group exited"))],
+                )
+            ),
+        ]
 
     if use_fake_hardware:
         ros2_controllers_path = os.path.join(
@@ -223,6 +239,11 @@ def generate_launch_description() -> LaunchDescription:
                 "use_fake_hardware",
                 default_value="true",
                 description="Use mock ros2_control hardware (true) or real B601-DM driver (false)",
+            ),
+            DeclareLaunchArgument(
+                "use_mujoco",
+                default_value="false",
+                description="Use MuJoCo simulation bridge instead of ros2_control/real driver",
             ),
             DeclareLaunchArgument(
                 "use_rviz",
