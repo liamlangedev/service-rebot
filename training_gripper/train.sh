@@ -5,6 +5,9 @@
 #   VARIANT=abs ./training_gripper/train.sh     # absolute actions, 3 cameras
 #   TARGET=local VARIANT=rel ./training_gripper/train.sh --steps=50   # local smoke test
 #
+# 8 workers: the eval DataLoader spawns its own workers at each eval, and 16+16 hit the
+# process limit on rtx-pro-6000 (crash at step 500, "CPU dispatcher tracer already initlized").
+#
 # EVAL_SPLIT must match the held-out clips written by make_dataset.py
 # (meta/grasp_clips.json -> eval_split.<variant>).
 set -euo pipefail
@@ -31,7 +34,7 @@ exec "$LEROBOT_TRAIN" \
   --policy.optimizer_lr=3e-5 \
   --policy.optimizer_lr_backbone=3e-5 \
   --batch_size=64 \
-  --num_workers=16 \
+  --num_workers=8 \
   --steps=5000 \
   --save_freq=1000 \
   --save_checkpoint_to_hub=true \

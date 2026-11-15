@@ -72,10 +72,16 @@ Small ACTs trained only on the grasp (handoff to a 5 cm lift), cut out of `rebot
 | Dataset | `niru-5/rebot_grasp_keys_abs`: 30 clips, 3,456 frames, 3 cameras | `niru-5/rebot_grasp_keys_rel`: 120 clips (4 start offsets per grasp), 11,124 frames, gripper camera |
 | State / action | absolute lerobot degrees | arm joints relative to the clip's first state; gripper absolute |
 | Held out | last 3 source episodes (32-34), `eval_split=0.0833` | same episodes (12 clips), `eval_split=0.0958` |
-| HF job | `6af9a55723985fb9cd834f6b` | `6af9a54729dd05ff0368ac2c` |
+| HF job | `6af9a6eb23985fb9cd8350ac` | `6af9a6e423985fb9cd83509b` |
 | Model repo | `niru-5/act_rebot_grasp_keys_abs` | `niru-5/act_rebot_grasp_keys_rel` |
-| Settings | rtx-pro-6000, 16 workers, batch 64 x 5k steps, chunk 30, lr 3e-5 (backbone too), eval every 500 steps, checkpoints every 1k | same |
+| Settings | rtx-pro-6000, 8 workers, batch 64 x 5k steps, chunk 30, lr 3e-5 (backbone too), eval every 500 steps, checkpoints every 1k | same |
 | Result | running | running |
+
+First attempt (`6af9a547…` rel, `6af9a557…` abs, 16 workers) crashed at step 500, the first
+eval: the eval DataLoader spawned 16 more workers next to the 16 training workers and they
+died at spawn ("CPU dispatcher tracer already initlized", OpenBLAS thread limit). Cancelled
+and rerun with 8 workers; data loading was far from the bottleneck (`data_s` 0.04 s vs
+`updt_s` 0.15 s at 5.6 steps/s).
 
 SmolVLA on the same datasets was considered and skipped for now.
 
