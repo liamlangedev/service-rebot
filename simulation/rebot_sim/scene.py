@@ -412,6 +412,11 @@ def _add_object(spec, ws: Workspace, o, cfg) -> str:
         contact(body.add_geom(name=f"{o['name']}_geom", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
                               pos=[0, 0, h / 2], size=[r, h / 2, 0], material=mat,
                               mass=o["mass"]))
+    elif kind == "roll":  # a cylinder lying on the table along the body's x axis
+        r, l = o["radius"], o["length"]
+        contact(body.add_geom(name=f"{o['name']}_geom", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                              pos=[0, 0, r], quat=[np.sqrt(0.5), 0, np.sqrt(0.5), 0],
+                              size=[r, l / 2, 0], material=mat, mass=o["mass"]))
     elif kind == "cup":
         _add_cup_geoms(body, o, mat, contact)
     elif kind == "mesh":
@@ -421,7 +426,7 @@ def _add_object(spec, ws: Workspace, o, cfg) -> str:
         contact(body.add_geom(name=f"{o['name']}_geom", type=mujoco.mjtGeom.mjGEOM_MESH,
                               meshname=f"{o['name']}_mesh", material=mat, mass=o["mass"]))
     else:
-        raise ValueError(f"unknown object type {kind!r} (can, cup, mesh)")
+        raise ValueError(f"unknown object type {kind!r} (can, roll, cup, mesh)")
     body.add_site(name=f"{o['name']}_site", pos=[0, 0, 0], size=[0.004], group=4)
     return o["name"]
 

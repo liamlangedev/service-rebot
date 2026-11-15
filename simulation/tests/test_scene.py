@@ -172,6 +172,48 @@ def test_objects_rest_upright_on_table():
         assert e.object_upright(o), o
 
 
+def _with_roll():
+    import copy
+    cfg = copy.deepcopy(load_config())
+    cfg["objects"] = [{"name": "towel", "type": "roll", "radius": 0.02, "length": 0.26,
+                       "mass": 0.08, "from_left": 0.5, "from_near": 0.45}]
+    return RealSetupEnv(cfg)
+
+
+def test_roll_object_lies_on_table():
+    e = _with_roll()
+    e.reset(objects={"towel": (0.5, 0.45, 0.3)}, settle=0.5)
+    g = e.model.geom("towel_geom").id
+    assert abs(e.data.geom_xpos[g][2] - (e.ws.table_z + 0.02)) < 0.003  # axis at radius
+    axis = e.data.geom_xmat[g].reshape(3, 3)[:, 2]  # cylinder axis
+    assert abs(axis[2]) < 0.05, axis  # horizontal
+
+
+def test_splat_compositor_draws_object_and_hides_proxy():
+    import torch
+    from rebot_sim.splat_render import SplatCompositor, SplatObject
+    e = _with_roll()
+    e.reset(objects={"towel": (0.5, 0.45, 0.0)}, settle=0.3)
+    e.hide_markers()
+    # a solid red 26 x 4 x 4 cm block of small gaussians in the object's frame
+    g = torch.stack(torch.meshgrid(torch.linspace(-0.13, 0.13, 60),
+                                   torch.linspace(-0.02, 0.02, 10),
+                                   torch.linspace(0.0, 0.04, 10), indexing="ij"), -1).view(-1, 3)
+    n = len(g)
+    red = SplatObject(g, torch.eye(3).expand(n, 3, 3) * 0.003 ** 2, torch.full((n,), 0.95),
+                      torch.tensor([[1.7, -1.7, -1.7]]).expand(n, 3), torch.zeros(n, 0, 3))
+    comp = SplatCompositor(e, {"towel": red})
+    plain = comp.render("front", 320, 240, splats=False)
+    img = comp.render("front", 320, 240)
+    changed = np.abs(img.astype(int) - plain).sum(-1) > 60
+    assert changed.sum() > 100, changed.sum()
+    reddish = img[changed]
+    assert (reddish[:, 0] > reddish[:, 1] + 60).mean() > 0.8  # it's the red splat
+    # the proxy is hidden from the splat render but drawn when asked for
+    assert not np.array_equal(comp.render("front", 320, 240, splats=False, proxies=True), plain)
+    comp.close()
+
+
 def test_randomize_is_reproducible_and_valid():
     e = env()
     e.reset(randomize=True, seed=7)

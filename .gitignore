@@ -1,2 +1,5 @@
 .env
 .claude/worktrees/
+
+# phone videos for Gaussian splats (hundreds of MB): kept local, uploaded to HF datasets
+simulation/real_setup_photos/videos/
