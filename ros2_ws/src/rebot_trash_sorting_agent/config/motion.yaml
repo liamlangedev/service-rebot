@@ -100,6 +100,21 @@ place:
   #: keep the object this far from the walls and other objects
   spot_clearance: 0.06
 
+learned_grasp:
+  #: Replace "descend -> close -> lift" with the learned grasp policy
+  #: (grasp_policy_node; training_gripper/README.md). The skill still moves above the
+  #: object and opens; it then descends to the handoff pose and calls the node, which
+  #: returns once the jaw has closed and the TCP has lifted.
+  enabled: false
+  service: /grasp_policy/grasp
+  #: handoff: TCP this far above the planned grasp pose. In rebot_sort_v1 the TCP is
+  #: 5-7 cm above the grasp height 2.5 s before the close, which is where clips start.
+  handoff_clearance: 0.05
+  timeout_s: 15.0
+  #: The classical hold check needs the jaw to stop short of closed, which a thin
+  #: object (keys) never does. false = report the check but don't reject the grasp.
+  verify_hold: false
+
 wrist_correction:
   #: Final XY correction from the wrist camera. Off until the camera is mounted and
   #: the axis mapping is checked; see README "wrist correction".

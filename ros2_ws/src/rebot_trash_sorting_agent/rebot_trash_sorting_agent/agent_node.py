@@ -40,6 +40,7 @@ from .perception.detector import vocabulary_from_task
 from .perception.scene import CameraClient, SceneModel
 from .perception.table_map import TableMap
 from .skills.gripper import GripperClient
+from .skills.learned_grasp import LearnedGraspClient
 from .skills.motion import MotionError, MoveItClient
 from .skills.skills import SkillRunner
 from .types import TaskResult
@@ -135,6 +136,9 @@ class AgentNode(Node):
         self._detector = LazyDetector(self._config.perception, self)
         self._motion = MoveItClient(self, self._config.motion)
         self._gripper = GripperClient(self, dict(self._config.motion.get("gripper") or {}))
+        learned_cfg = dict(self._config.motion.get("learned_grasp") or {})
+        self._learned_grasp = (LearnedGraspClient(self, learned_cfg)
+                               if learned_cfg.get("enabled") else None)
 
         self._status_pub = self.create_publisher(
             __import__("std_msgs.msg", fromlist=["String"]).String, "/agent/status", 10
@@ -298,6 +302,7 @@ class AgentNode(Node):
                 plan_only=bool(self._config.run.get("dry_run", False)),
                 wrist_camera=self._wrist_camera,
                 annotated_sink=self._publish_annotated,
+                learned_grasp=self._learned_grasp,
             )
             self._runner = runner
             self._orchestrator = Orchestrator(
