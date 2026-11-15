@@ -133,7 +133,8 @@ def main() -> int:
         if not py.exists():
             print(f"teleoperation venv not found at {py}")
             return 2
-        srv = subprocess.Popen([str(py), str(HERE / "dm_bridge_server.py"), "--headless", "--port", str(PORT)],
+        srv = subprocess.Popen([str(py), str(HERE / "dm_bridge_server.py"), "--headless", "--port", str(PORT),
+                                "--teleop-dir", str(teleop)],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 40
         while not port_open():
@@ -142,9 +143,17 @@ def main() -> int:
                 return 2
             time.sleep(0.3)
     bridge = BridgeClient(port=PORT)
-    if bridge.call("info")[0].get("robot") != "sim":
+    info = bridge.call("info")[0]
+    if info.get("robot") != "sim":
         print(f"the bridge on port {PORT} is not the simulator: refusing to run trials against a real arm")
         return 2
+    if info.get("scene") == "real":          # the team's real-workspace scene has its own objects and goals
+        import real_scene_trials
+        try:
+            return real_scene_trials.run(bridge, args, out)
+        finally:
+            if srv is not None:
+                srv.terminate()
 
     trials = make_trials(args.n, args.seed, use_llm=not args.no_llm)
     results = []

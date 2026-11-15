@@ -222,3 +222,7 @@ To recreate the env from scratch:
 PYTHONNOUSERSITE=1 conda env create -f environment.yml          # re-run the pip block (§2 step 4) if pip hits a network error
 conda install -n wrc-demo -c conda-forge -y "libopenblas=*=*pthreads*"   # macOS OpenMP fix
 ```
+
+## 7d. Team real-workspace simulation (2026-11-15)
+
+`./START_WRC.sh dm` now runs the team's `rebot_sim` scene (steel_team main, `simulation/`) when it is found; `WRC_DM_SCENE=demo` keeps the old table. On this machine the team's main branch is checked out as a separate worktree in `../steel_team_main` (the shared `../steel_team` checkout was not touched). What changed, what was measured and what is still open: `local_dm/README.md`, section "Real-workspace simulation". Simulation only; no hardware was connected.

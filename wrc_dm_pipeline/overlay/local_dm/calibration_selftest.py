@@ -49,7 +49,7 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="wrc_calib_"))
     sheet = tmp / "calib_sheet.png"
     cc.make_sheet(sheet)
-    srv = subprocess.Popen([str(py), str(HERE / "dm_bridge_server.py"), "--headless", "--calib-sheet", str(sheet),
+    srv = subprocess.Popen([str(py), str(HERE / "dm_bridge_server.py"), "--headless", "--scene", "demo", "--calib-sheet", str(sheet),
                             "--sheet-pose", ",".join(str(v) for v in POSE), "--port", str(PORT)],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:

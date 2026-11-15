@@ -4,9 +4,34 @@ Prompt → Claude looks at the camera → picks a WRC skill → WRC plans the gr
 
 This folder ports the WRC pipeline (built for the B601-**RS**) to the B601-**DM**. Written 2026-11-14 at the Leukerbad hackathon. No upstream WRC file is modified; everything here is additive.
 
-## Latest version: 2026-11-15
+## Latest version (third push, 2026-11-15): the team's real-workspace simulation
 
-Changes since the first push, all found by testing in the physics simulation:
+`./START_WRC.sh dm` now runs the team's own MuJoCo replica of the real workspace (`steel_team` main, `simulation/`, package `rebot_sim`): the measured table, the red can, the paper cup, the foam bin with two compartments, and the corner camera `cam_corner`. It is used automatically when the team checkout has `simulation/` (it is on `main`) and `uv sync` was run in `teleoperation/`. `WRC_DM_SCENE=demo ./START_WRC.sh dm` brings back the old three-block table.
+
+What had to change for this scene (all in `local_dm/`, nothing in WRC or in the team's code):
+
+- **Side-view camera.** WRC's first-choice grasp dives along the camera's line of sight. From a corner camera that closes on air. Standing objects are now located by the middle of their top (1–2 mm from the true centre in this scene) and grasped from above.
+- **The cup is 9 cm wide, the gripper opens 9.1 cm.** Straight down, a finger ends up inside the cup. Wide objects, and objects too far for a straight-down pose, are grasped with the gripper leaning in from the robot's side.
+- **The bin.** `bin_0` (nearer the robot) and `bin_1` are named places: "put the can in the bin". The arm cannot reach over the bin pointing straight down, so it leans outwards as little as needed and lets go above the rim.
+- **Tall objects** are put down at the height and angle they were gripped at, instead of WRC's fixed 5 cm.
+- Detector words for this scene: `cup, red cup, white box`. YOLOE calls the plain red can "red cup" and the bin "white box"; Claude is told so.
+- `dm-shuffle` and `dm-trials` use the team's own randomizer (`spawn_region`) in this scene.
+
+Measured (simulation only, judged on the simulator's ground truth "is the object inside the named compartment"):
+
+- Default layout, Claude planning, free-form sentences: can → `bin_0` and cup → `bin_1`, both succeeded (about 30 s each, 3 Claude calls).
+- 8 randomized keyword trials **before** the leaning grasp: 5 of 8. The 3 failures (cup hooked on a finger; cup and can too far for a straight-down grasp) were each re-run after the fix and succeeded. **A full randomized re-run after the fix has not been done, so there is no new success rate.**
+
+Limits to know before the real arm:
+
+- **Depth.** WRC needs a depth image. The simulator renders one from `cam_corner`; the real corner camera (a webcam) has none. On the real setup use a depth camera, or WRC's flat-table depth for RGB-only cameras, which is wrong for tall objects such as the can and the cup. Not solved here.
+- The detector sometimes calls the can "cup" when it stands far from the camera. Claude can still pick by colour; the keyword commands cannot.
+- Objects dropped into the bin may fall over inside it. The can and cup are light; nothing checks for breakable contents.
+- The team's random start places reach x = 0.52 m. Not every one of them was tested.
+
+## Second push (2026-11-15): fixes from simulator testing
+
+Changes since the first push, all found by testing in the physics simulation (old three-block demo table):
 
 - **Joint ranges.** WRC planned with Seeed's URDF ranges (wrist roll ±180°). The real arm, and the simulator that mirrors it, accept ±90°. Commands were clipped silently and the gripper arrived in the right place turned about 50° wrong. WRC's arm model is now clipped to the real ranges, every grasp is also offered turned half a turn, and the arm driver refuses to start if the two disagree.
 - **A pose the arm did not reach is now a failure**, not a silent success.
@@ -231,3 +256,7 @@ Why WRC's shipped `anthropic` profile is not used: it sends a `temperature`, whi
 - WRC gives Claude only four useful tools. It cannot place at arbitrary coordinates, push, or rotate objects.
 - WRC's instructions tell the LLM not to retry a failed pick, so one failure ends the task.
 - After a failed place the object stays in the gripper. Send `open the gripper` or restart.
+
+## License
+
+© 2026 ferohatami, MIT License. The license text is in `wrc_dm_pipeline/LICENSE` in the team repository. It covers the files of this port (`local_dm/`, `local_mock/`, `START_WRC.sh`, `SETUP_REPORT.md`, the two `configs/` profiles), not WRC.

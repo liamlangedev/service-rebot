@@ -68,15 +68,16 @@ def load_dotenv(path: Path) -> None:
 FREE_SPOTS = [(x / 100, y / 100) for x in (24, 28, 32, 36, 40) for y in range(-20, 21, 4)]
 
 
-def _can_put_down(runtime, cfg, x: float, y: float) -> bool:
-    """Would WRC's place_at find a pose here? Same poses and yaw candidates as skill_place_at."""
+def _can_put_down(runtime, cfg, x: float, y: float, z: float | None = None) -> bool:
+    """Would WRC's place_at find a pose here (at tool height z, default WRC's release height)?
+    Same poses and yaw candidates as skill_place_at."""
     import math
 
     import numpy as np
     import pinocchio as pin
 
     g, table_z = cfg.grasp, float(cfg.safety.get("table_z", 0.0))
-    release_z = table_z + float(g.get("release_height_m", 0.05))
+    release_z = float(z) if z is not None else table_z + float(g.get("release_height_m", 0.05))
     z_cap = float(g.get("topdown_z_max", 0.15)) - 0.005
     release_z = min(release_z, z_cap)
     hover_z = min(release_z + float(g.get("pregrasp_offset_m", 0.12)), z_cap)
@@ -105,25 +106,313 @@ def free_spot(runtime, cfg, default):
         time.sleep(0.2)
         seen = recent()
 
+    table_z = float(cfg.safety.get("table_z", 0.0))
+
     def clearance(s):
         return min((((s[0] - p[0]) ** 2 + (s[1] - p[1]) ** 2) ** 0.5 for p in seen), default=1.0)
 
     for spot in sorted(FREE_SPOTS, key=clearance, reverse=True):
         if clearance(spot) < 0.09:
             break
-        if _can_put_down(runtime, cfg, *spot):
+        # which object will be held is not known yet: the spot must work for a low and a tall one
+        if all(_can_put_down(runtime, cfg, *spot, z=table_z + dz) for dz in (0.035, 0.085)):
             return list(spot)
     return list(default)
 
 
-def build_cfg(args, run_dir: Path):
+BIN_HOVER_M = 0.05     # the tool arrives this far above the bin release height, then comes down
+
+
+def install_scene_places(runtime, arm, cfg, scene: dict) -> None:
+    """Teach WRC's put-down two things it does not know by itself:
+
+    1. how far the held object hangs below the tool. WRC always releases 5 cm above the table,
+       which pushes a tall object (a 13 cm can held at mid-height) into the table. The tool height
+       at the moment the jaws closed on the standing object tells how far it hangs.
+    2. the scene's named places (the foam bin's compartments). WRC can only place on an object the
+       camera has detected; "the bin" detected as one white box would put things on the divider.
+       A named place is released from above the rim with the tool leaning forward as little as
+       reach allows (see bin_release).
+    """
+    import re
+
+    from wrc_demo.types import SkillError
+
+    table_z = float(cfg.safety.get("table_z", 0.0))
+    bins = scene.get("bins") or {}
+    g = cfg._data["grasp"]
+    place_at, place_on = runtime.skill_place_at, runtime.skill_place_on_object
+
+    def hang() -> float:
+        z = getattr(arm, "last_close_tcp_z", None)
+        if z is None:
+            return float(g.get("release_height_m", 0.05)) - 0.008
+        return min(max(float(z) - table_z, 0.015), 0.16)
+
+    def grasp_pitch() -> float:
+        """How steeply the tool pointed down when it closed on the object (pi/2 = straight down)."""
+        p = getattr(arm, "last_close_pitch", None)
+        return 1.5707963267948966 if p is None else min(max(float(p), 0.6), 1.5707963267948966)
+
+    def place_at_aware(x, y, z=None):
+        if z is None:
+            z = table_z + hang() + 0.008        # object bottom ends ~8 mm above the table
+        old = g.get("approach_pitch_rad")
+        g["approach_pitch_rad"] = grasp_pitch()  # same tool angle as at the grasp: the object stands as it stood
+        try:
+            return place_at(float(x), float(y), float(z))
+        finally:
+            g["approach_pitch_rad"] = old
+
+    def bin_for(label: str):
+        key = re.sub(r"[^a-z0-9]", "", str(label).lower())
+        for name in bins:
+            if re.sub(r"[^a-z0-9]", "", name.lower()) in key:
+                return name
+        if not bins or not re.search(r"bin|box|container|tray|basket|crate", str(label).lower()):
+            return None
+        names = sorted(bins, key=lambda n: (bins[n]["center"][0] ** 2 + bins[n]["center"][1] ** 2))
+        far = re.search(r"far|second|other|right|back|1|two", str(label).lower())
+        return names[-1] if (far and len(names) > 1) else names[0]
+
+    def bin_release(name: str):
+        """Joint poses for letting go above a compartment: (q_above, q_release, tool_xyz, pitch) or None.
+
+        Straight down the arm cannot reach over the bin (measured: no solution above either
+        compartment), so the tool leans outwards, towards the bin, as little as reach allows. The
+        held object then hangs along the leaning tool: its bottom is `h` further along the tool
+        axis, so the tool stops short of the compartment centre by that much, and high enough for
+        the object's lowest edge to clear the rim by 2.5 cm.
+        """
+        import math
+
+        import numpy as np
+        import pinocchio as pin
+
+        bn, h = bins[name], hang()
+        r = min(float(getattr(runtime, "_dm_top_width", 0.06)), 0.10) / 2
+        cx, cy = bn["center"]
+        seeds = [np.asarray(runtime.arm.get_state().q, dtype=float), np.asarray(cfg.arm.home_q, dtype=float)]
+        for pitch in (1.2, 1.0, 0.8, 0.65):
+            # the object's own axis: it stood upright when the tool gripped it at grasp_pitch()
+            e = pitch + math.pi / 2 - grasp_pitch()
+            sp, cp = math.sin(e), math.cos(e)
+            z = float(bn["rim_z"]) + 0.025 + h * sp + r * abs(cp)
+            for shift in (0.0, 0.03):                        # compartment centre, then 3 cm nearer the robot
+                d = math.hypot(cx, cy)
+                bx, by = cx * (1 - shift / d), cy * (1 - shift / d)
+                yaw = math.atan2(by, bx)
+                T = np.eye(4)
+                T[:3, :3] = pin.rpy.rpyToMatrix(0.0, pitch, yaw)
+                T[:3, 3] = [bx - h * cp * math.cos(yaw), by - h * cp * math.sin(yaw), z + BIN_HOVER_M]
+                for seed in seeds:
+                    pre = runtime.kin.ik(T, seed)
+                    if not pre.success:
+                        continue
+                    T[2, 3] = z
+                    low = runtime.kin.ik(T, pre.q)
+                    if low.success:
+                        return pre.q, low.q, T[:3, 3].copy(), pitch
+                    T[2, 3] = z + BIN_HOVER_M
+        return None
+
+    def drop_in_bin(label, name):
+        """Carry the held object over the compartment and let go. Every move goes through WRC's
+        SafeArm, so the safety harness vets each waypoint as for any other skill."""
+        import numpy as np
+
+        runtime._adopt_unknown_held()
+        if not runtime.held_object:
+            raise SkillError("not holding anything")
+        found = bin_release(name)
+        if found is None:
+            raise SkillError(f"{name} is out of the arm's reach for a release above its rim")
+        q_above, q_release, tool, pitch = found
+        runtime.memory.add("note", f"'{label}' is the named place {name}: letting go above its rim, tool at "
+                                   f"({tool[0]:.2f}, {tool[1]:.2f}, {tool[2]:.2f}) leaning {90 - pitch * 57.3:.0f} deg outwards")
+        if not runtime.arm.move_joints(q_above, duration_s=float(g.get("move_duration_s", 2.5))):
+            raise SkillError(f"did not get above {name}")
+        if not runtime.arm.move_joints(q_release, duration_s=1.5):
+            raise SkillError(f"did not reach the release pose above {name}")
+        err = float(np.linalg.norm(runtime.kin.fk(np.asarray(runtime.arm.get_state().q, float))[:3, 3] - tool))
+        if err > 0.02:
+            raise SkillError(f"release pose above {name} missed by {err * 1000:.0f} mm; not letting go")
+        runtime.arm.set_gripper(runtime._grip_open, effort=0.6)
+        time.sleep(max(float(g.get("close_settle_s", 0.0)), 0.6))
+        # Same book-keeping as WRC's place_at: from here the object is placed.
+        placed = runtime.held_object
+        inside = [float(bins[name]["center"][0]), float(bins[name]["center"][1]), float(bins[name]["floor_z"]) + 0.03]
+        runtime.beliefs.update(runtime._held_det_label or placed, np.array(inside), 0.8, color=runtime._held_color)
+        runtime.held_object = None
+        runtime._held_det_label = None
+        runtime._held_color = None
+        runtime.memory.add("action", f"dropped {placed!r} into {name}")
+        try:
+            runtime.arm.move_joints(q_above, duration_s=1.5)
+        except Exception as e:  # noqa: BLE001 -- the drop already happened; move_home parks the arm
+            runtime.memory.add("note", f"dropped, but moving back up was stopped: {e}")
+        return {"placed": placed, "at": [round(v, 3) for v in inside], "placed_in": name}
+
+    def place_on_aware(label):
+        name = bin_for(label)
+        if name is None:
+            return place_on(label)
+        return drop_in_bin(label, name)
+
+    runtime._dm_table_release_z = lambda: table_z + hang() + 0.008
+
+    runtime.skill_place_at = place_at_aware
+    runtime.skill_place_on_object = place_on_aware
+
+
+WIDE_OBJECT_M = 0.07   # wider than this at the top: do not try to pass the fingers over the rim first
+
+
+def install_topdown_grasps(runtime, cfg) -> bool:
+    """For a camera that looks at the table from the side: grasp standing objects straight down.
+
+    WRC's first-choice planner dives along the camera's line of sight, which is right for a camera
+    above the table and wrong for one in a corner (it reaches for the object's side from 50 cm away
+    and closes on air). Here the object's centre comes from its top: the highest slice of its
+    points is the lid or rim, whose middle is the object's axis however slanted the view is
+    (measured in the team's scene: 1-2 mm off the true centre). The gripper then comes straight
+    down over that centre and closes at half height -- the same grasp the team's own script uses.
+    Flat objects (under 4 cm) are left to WRC's planners. Returns True when installed.
+    """
+    import numpy as np
+    import pinocchio as pin
+
+    from wrc_demo.grasping.obb_grasp import _approach_rotation
+    from wrc_demo.types import Grasp, transform_points
+
+    try:
+        T = np.asarray(runtime.extrinsics.cam_to_base(), dtype=float)
+    except Exception:  # noqa: BLE001 -- no extrinsics: nothing to decide on
+        return False
+    if T[2, 2] < -0.9:           # optical axis within ~25 deg of straight down: WRC's planner is fine
+        return False
+    table_z = float(cfg.safety.get("table_z", 0.0))
+    orig = runtime._plan_grasps
+
+    def object_points(fix):
+        frame, det = getattr(runtime, "last_frame", None), getattr(fix, "detection", None)
+        mask = getattr(det, "mask", None)
+        if frame is not None and mask is not None and getattr(frame, "depth_m", None) is not None \
+                and mask.shape == frame.depth_m.shape:
+            vs, us = np.nonzero(mask.astype(bool) & (frame.depth_m > 0))
+            z, K = frame.depth_m[vs, us], frame.K
+            pts = np.stack([(us - K[0, 2]) * z / K[0, 0], (vs - K[1, 2]) * z / K[1, 1], z], axis=1)
+            return transform_points(np.asarray(runtime.extrinsics.cam_to_base(), dtype=float), pts)
+        return np.asarray(fix.points, dtype=float)
+
+    def plan(fix, label=None):
+        pts = object_points(fix)
+        obj = pts[pts[:, 2] > table_z + 0.015]                    # drop table pixels at the mask edge
+        if len(obj) < 40:
+            return orig(fix, label)
+        top_z = float(np.percentile(obj[:, 2], 98))
+        height = top_z - table_z
+        if height < 0.04:
+            return orig(fix, label)
+        rim = obj[obj[:, 2] > top_z - max(0.012, 0.1 * height)]
+        lo, hi = np.percentile(rim[:, :2], [2, 98], axis=0)
+        centre, size = (lo + hi) / 2, hi - lo
+        width = float(min(size.min() + 0.01, runtime._max_width))  # the jaws are opened fully anyway
+        radial = float(np.arctan2(centre[1], centre[0]))
+        # Straight down. Jaw direction: across the narrow side if the top is clearly elongated, else any.
+        yaws = [0.0 if size[0] < size[1] else np.pi / 2] if max(size) > 1.3 * min(size) else []
+        yaws += [radial, radial + np.pi / 2, 0.0, np.pi / 2, np.pi / 4, -np.pi / 4]
+        down = [(np.pi / 2, y) for y in yaws]
+        # Leaning in from the robot's side, jaws level. Two uses: (1) an object nearly as wide as
+        # the open gripper (the 9 cm cup, 9.1 cm jaws): straight down the fingers must pass the rim
+        # with half a millimetre to spare and one ends up inside the cup; leaning, they only meet
+        # the cup lower down where it is narrower (about 1 cm spare per side). (2) an object too
+        # far away for a straight-down pose.
+        wide = float(size.max()) > WIDE_OBJECT_M
+        pitches = (1.0, 0.8, 1.2) if wide else (1.2, 1.0, 0.8)
+        lean = [(p, radial) for p in pitches] + [(1.0, radial - 0.6), (1.0, radial + 0.6)]
+        conf = float(getattr(fix.detection, "conf", 1.0))
+        grasps = []
+        for i, (pitch, yaw) in enumerate(lean + down if wide else down + lean):
+            leaning = pitch < np.pi / 2 - 1e-6
+            # close at half height; a leaning grip a little higher, so the object hangs below the jaws
+            frac = 0.55 if leaning else 0.5
+            pos = np.array([centre[0], centre[1], table_z + max(frac * height, 0.03)])
+            # Leaning: the same angle convention as WRC's place_at (tool points `pitch` below level,
+            # towards `yaw`; jaws level). WRC's own _approach_rotation measures its angle from the
+            # vertical instead, so it is only used for the straight-down case it was tested with.
+            R = pin.rpy.rpyToMatrix(0.0, float(pitch), float(yaw)) if leaning else _approach_rotation(np.pi / 2, float(yaw))
+            grasps.append(Grasp(position=pos, rotation=R, width_m=width, approach=R[:, 0].copy(),
+                                quality=conf * (1.0 - 0.04 * i), label=label or fix.label))
+        runtime._last_grasp_z_nudge = 0.0
+        runtime._dm_top_width = float(size.max())                 # the bin release needs the object's width
+        runtime.memory.add("note", f"side camera: {label or fix.label!r} stands at ({centre[0]:.3f}, {centre[1]:.3f}), "
+                                   f"{height * 100:.0f} cm tall, top {size.max() * 100:.0f} cm wide -> "
+                                   f"{'leaning grasp first (nearly as wide as the gripper)' if wide else 'straight-down grasp first, leaning if out of reach'}")
+        return grasps
+
+    runtime._plan_grasps = plan
+    return True
+
+
+# Detector word lists per simulator scene. In the real-workspace scene the plain red can is
+# recognised as "red cup" and the foam bin as "white box" (tested on the cam_corner view).
+SCENE_CLASSES = {"real": "cup,red cup,white box", "demo": "red block,blue block,yellow ball"}
+
+
+def bridge_scene() -> tuple[dict, dict]:
+    """Ask the arm server what it is running: scene info, and (sim only) its cameras' true poses."""
+    from wrc_dm_plugin import BridgeClient
+    try:
+        c = BridgeClient()
+        info = c.call("info")[0]
+    except RuntimeError:
+        return {}, {}
+    cams = {}
+    for name in info.get("cameras", []):
+        try:
+            hdr = c.call("frame", cam=name)[0]
+            cams[name] = hdr["T_base_cam"]
+        except RuntimeError:
+            pass
+    c.close()
+    return info, cams
+
+
+def build_cfg(args, run_dir: Path, scene: dict, sim_cams: dict):
     from wrc_demo.config import load_demo_config
 
     cfg = load_demo_config(cameras=[args.camera], arm=args.arm, llm="mock")
     d = cfg._data
-    d["safety"]["table_z"] = args.table_z            # sim table top is 3 cm above the arm base plane
-    d["detect_classes"] = [c.strip() for c in args.classes.split(",") if c.strip()]
+    kind = scene.get("scene")
+    table_z = args.table_z if args.table_z is not None else (scene.get("table_z") if scene.get("table_z") is not None else 0.03)
+    d["safety"]["table_z"] = float(table_z)
+    classes = args.classes or SCENE_CLASSES.get(kind, SCENE_CLASSES["demo"])
+    d["detect_classes"] = [c.strip() for c in classes.split(",") if c.strip()]
+    if str(d["camera"].get("type")) == "dm_bridge" and sim_cams:
+        # The simulator knows exactly where its cameras are; a real camera needs calibrate_camera.py.
+        cam = args.sim_camera or ("cam_corner" if kind == "real" else str(d["camera"].get("camera", "overhead_rgb")))
+        if cam not in sim_cams:
+            raise SystemExit(f"the simulator has no camera {cam!r} (it has: {', '.join(sim_cams)})")
+        d["camera"]["camera"] = cam
+        d["camera"]["extrinsics"] = {"mode": "eye_to_hand", "T": sim_cams[cam]}
+    if kind == "real":
+        # The team's measured workspace: table 1.2 cm below the arm base, left wall at y = +0.60,
+        # right wall at y = -0.38, foam bin on the left. Widen WRC's box to reach the bin, keep the
+        # tool out of the bin's volume, and lift WRC's RS-specific ceiling for straight-down poses.
+        d["safety"]["workspace"] = {"min": [0.08, -0.34, float(table_z) - 0.01], "max": [0.56, 0.57, 0.60]}
+        bins = scene.get("bins") or {}
+        if bins:
+            x0 = min(b["center"][0] - b["half"][0] for b in bins.values()) - 0.03
+            x1 = max(b["center"][0] + b["half"][0] for b in bins.values()) + 0.03
+            y0 = min(b["center"][1] - b["half"][1] for b in bins.values()) - 0.03
+            rim = max(b["rim_z"] for b in bins.values())
+            d["safety"]["keep_out"] = [{"min": [x0, y0, float(table_z) - 0.02], "max": [x1, 0.62, rim]}]
+        d["grasp"]["topdown_z_max"] = 0.45
     d["grasp"]["memory_path"] = str(run_dir / "grasp_memory.json")
+    # WRC retries a failed pick up to 8 times because its learned planner samples new grasps each
+    # time. The planners used here give the same answer for the same scene, so 3 is plenty.
+    d["grasp"]["max_pick_attempts"] = 3
     d["grasp"]["drop_zone"] = [0.25, 0.14]           # free spot on the table, inside the workspace
     # Put objects down with the gripper pointing straight down. WRC's default tilts the tool 21 deg
     # (tuned for the RS arm); objects are grasped vertically here, so a tilted release sets tall
@@ -148,9 +437,14 @@ def main(argv=None) -> int:
     p.add_argument("--llm", choices=["auto", "claude", "mock"], default="auto")
     p.add_argument("--arm", default="rebot_dm", help="arm profile in configs/arms/")
     p.add_argument("--camera", default="dm_sim_overhead", help="camera profile in configs/cameras/")
-    p.add_argument("--classes", default="red block,blue block,yellow ball",
-                   help="detector vocabulary (object names the camera should look for)")
-    p.add_argument("--table-z", type=float, default=0.03)
+    p.add_argument("--classes", default=None,
+                   help="detector vocabulary: object names the camera should look for, comma separated "
+                        "(default depends on the simulator scene)")
+    p.add_argument("--table-z", type=float, default=None,
+                   help="table height above the arm base plane [m] (default: what the simulator reports, else 0.03)")
+    p.add_argument("--sim-camera", default=None,
+                   help="which simulator camera WRC looks through (default: cam_corner in the real-workspace "
+                        "scene, overhead_rgb in the demo scene)")
     p.add_argument("--drop-zone", default="auto",
                    help="where 'pick X' with no destination puts the object: 'auto' = a free spot on the table "
                         "chosen before every task (so objects do not pile up), or fixed 'x,y' in metres")
@@ -177,7 +471,12 @@ def main(argv=None) -> int:
     from wrc_demo.apps.demo import _print_report, build_runtime, shutdown_runtime
 
     run_dir = Path(args.run_dir) if args.run_dir else REPO / "runs" / ("dm_" + time.strftime("%Y%m%d_%H%M%S"))
-    cfg = build_cfg(args, run_dir)
+    scene, sim_cams = bridge_scene()
+    cfg = build_cfg(args, run_dir, scene, sim_cams)
+    if scene:
+        print(f"[wrc-dm] arm server: {scene.get('robot')} arm, scene '{scene.get('scene')}', "
+              f"camera '{cfg._data['camera'].get('camera')}', looking for: {', '.join(cfg._data['detect_classes'])}",
+              flush=True)
 
     have_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
     use_claude = args.llm == "claude" or (args.llm == "auto" and have_key)
@@ -186,7 +485,14 @@ def main(argv=None) -> int:
         return 2
     if use_claude:
         from claude_llm import ClaudeLLM
-        llm = ClaudeLLM(system_suffix=LABEL_HINT)
+        hint = LABEL_HINT
+        if scene.get("bins"):
+            names = ", ".join(f"'{b}'" for b in scene["bins"])
+            hint += ("\n- This workspace has a foam bin with compartments you can use as the destination of "
+                     f"pick_and_place: {names} (bin_0 is the one nearer the robot). \"the bin\" means bin_0. "
+                     "Pass the name exactly, e.g. destination=\"bin_0\". The detector may list the bin as "
+                     "\"white box\" and a plain can as \"red cup\".")
+        llm = ClaudeLLM(system_suffix=hint)
         llm_name = f"claude ({llm.model}, effort {llm.effort})"
     else:
         llm = make_llm(cfg.llm)
@@ -229,6 +535,10 @@ def main(argv=None) -> int:
         llm, runtime, advisor=None, max_steps=args.max_steps, decompose=False,
         fast_planner=fast, cfg=cfg,
     )
+
+    install_scene_places(runtime, arm, cfg, scene)
+    if install_topdown_grasps(runtime, cfg):
+        print("[wrc-dm] side-view camera: standing objects are grasped over their top centre (straight down, or leaning in when wide or far)", flush=True)
 
     default_drop = list(cfg._data["grasp"]["drop_zone"])
     if args.drop_zone != "auto":

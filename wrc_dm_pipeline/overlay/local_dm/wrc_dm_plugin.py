@@ -110,12 +110,16 @@ class DmBridgeArm(MockArm):
         # arm clipped the command). Wide enough for contact compliance, far below a real miss.
         self._reach_tol = float(cfg.arm.get("reach_tol_rad", 0.10))
         self._arm_lo = self._arm_hi = None
+        self.last_close_tcp_z = None
+        self.last_close_pitch = None
+        self.scene = {}                       # what the bridge says about its scene (bins, table height, ...)
         self.robot_kind = "?"
 
     # ── lifecycle / state ────────────────────────────────────────────────
     def connect(self) -> None:
         info, _ = self._client.call("info")
         self.robot_kind = str(info.get("robot", "?"))
+        self.scene = {k: info.get(k) for k in ("scene", "table_z", "bins", "object_names")}
         lo_b, hi_b = np.asarray(info.get("joint_lo", []), float), np.asarray(info.get("joint_hi", []), float)
         if lo_b.size == self.n_joints and self.kin is not None:
             # WRC must not plan outside what the arm accepts: the arm clips such commands and
@@ -236,6 +240,15 @@ class DmBridgeArm(MockArm):
         span = self._grip_closed - self._grip_open
         closed = float(np.clip((float(pos) - self._grip_open) / span, 0.0, 1.0)) if abs(span) > 1e-9 else 0.0
         finger = float(np.clip((GAP_MAX_M * (1.0 - closed) + GAP_OFFSET_M) / 2.0, 0.0, FINGER_MAX_M))
+        if closed > 0.3 and self.kin is not None:
+            # Height of the tool when the jaws close: with the object standing on the table this tells
+            # how far it hangs below the tool, which the put-down needs for tall objects.
+            T_close = self.kin.fk(np.asarray(self._client.call("state")[0]["q"], float))
+            self.last_close_tcp_z = float(T_close[2, 3])
+            # ... and how steeply the tool pointed down (pi/2 = straight down). Putting the object
+            # down at the same angle sets it down the way it stood.
+            fwd = T_close[:3, 0]
+            self.last_close_pitch = float(np.arctan2(-fwd[2], np.hypot(fwd[0], fwd[1])))
         self._client.call("gripper", f=finger)
         self._gripper_effort = float(effort)
         deadline = time.monotonic() + 2.0

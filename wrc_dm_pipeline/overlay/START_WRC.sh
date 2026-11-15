@@ -15,9 +15,11 @@
 #                                  #   chat box; simulated grasp contact; localhost only)
 #   ./START_WRC.sh dm              # reBot B601-DM: physics sim window + dashboard http://127.0.0.1:8090/
 #                                  #   (Claude plans if ANTHROPIC_API_KEY is set / in wrc/.env) — local_dm/README.md
-#   ./START_WRC.sh dm-task "put the red block on the blue block"   # one DM task, headless
+#                                  #   Scene: the team's real workspace (steel_team simulation/: can, cup, foam
+#                                  #   bin) when that folder is found; WRC_DM_SCENE=demo forces the old demo table.
+#   ./START_WRC.sh dm-task "put the can in the bin"   # one DM task, headless
 #   ./START_WRC.sh dm-shuffle      # while 'dm' is running: move the sim objects to new random places
-#   ./START_WRC.sh dm-trials       # 20 randomized pick-and-place trials in the sim -> success rate
+#   ./START_WRC.sh dm-trials       # randomized pick-and-place trials in the sim -> success rate
 #                                  #   (--n 5, --seed 7, --no-llm for keyword commands without API calls)
 #   ./START_WRC.sh dm-calibrate    # camera calibration from the printed sheet (no arguments: shows the steps)
 #   ./START_WRC.sh dm-calib-test   # check the camera calibration helper against the sim's true camera
@@ -45,6 +47,19 @@ export WRC_ARM=mock            # MCP server: mock arm
 export WRC_VIEW=0              # no OpenCV window
 export WRC_STREAM=0            # no MJPEG dashboard for the MCP server
 STAMP="$(date +%Y%m%d_%H%M%S)"
+
+# Where the team's steel_team checkout lives (its teleoperation/ folder has the arm model and the
+# physics sim; its simulation/ folder -- on main since 2026-11-15 -- is the real-workspace scene).
+# Set STEEL_TEAM_TELEOP_DIR to choose; otherwise prefer a checkout that has simulation/.
+if [ -z "${STEEL_TEAM_TELEOP_DIR:-}" ]; then
+  STEEL_TEAM_TELEOP_DIR="$REPO/../steel_team/teleoperation"
+  for d in "$REPO/../steel_team" "$REPO/../steel_team_main"; do
+    if [ -d "$d/simulation/rebot_sim" ] && [ -x "$d/teleoperation/.venv/bin/python" ]; then
+      STEEL_TEAM_TELEOP_DIR="$d/teleoperation"; break
+    fi
+  done
+fi
+export STEEL_TEAM_TELEOP_DIR
 
 # Refuse to start a second dashboard / 3D window on ports already in use.
 require_free_ports() {
@@ -112,17 +127,25 @@ case "$mode" in
   dm|dm-headless|dm-task)
     # reBot B601-DM: MuJoCo PHYSICS sim (bridge server) + WRC pipeline (+ Claude if ANTHROPIC_API_KEY
     # is in the environment or in wrc/.env). See local_dm/README.md.
-    TELEOP="${STEEL_TEAM_TELEOP_DIR:-$REPO/../steel_team/teleoperation}"
+    TELEOP="$STEEL_TEAM_TELEOP_DIR"
     PY="$TELEOP/.venv/bin/python"; MJPY="$TELEOP/.venv/bin/mjpython"
     [ -x "$PY" ] || { echo "teleoperation venv not found at $TELEOP/.venv — run 'uv sync' there (see local_dm/README.md)"; exit 1; }
     [ -f local_dm/assets/ReBot_Arm_DM_wrc.urdf ] || python local_dm/make_dm_urdf.py
+    if [ "$(uname)" = "Darwin" ] && [ -x "$MJPY" ]; then
+      # mjpython (the 3D window) needs libpython next to the venv's python; uv keeps it elsewhere.
+      LIBDIR="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+      LIBNAME="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("LDLIBRARY"))')"
+      [ -e "$TELEOP/.venv/lib/$LIBNAME" ] || [ ! -f "$LIBDIR/$LIBNAME" ] || ln -s "$LIBDIR/$LIBNAME" "$TELEOP/.venv/lib/$LIBNAME"
+    fi
     [ -e mobileclip2_b.ts ] || [ ! -e models/mobileclip2_b.ts ] || ln -s models/mobileclip2_b.ts mobileclip2_b.ts
     BRIDGE_PID=""
     if lsof -nP -iTCP:9881 -sTCP:LISTEN >/dev/null 2>&1; then
       echo "DM bridge already running on port 9881 — using it."
     else
-      if [ "$mode" = "dm" ] && [ -x "$MJPY" ]; then "$MJPY" local_dm/dm_bridge_server.py &
-      else "$PY" local_dm/dm_bridge_server.py --headless & fi
+      # --scene: auto = the team's real-workspace scene when simulation/ is there, else the demo table.
+      SCENE_ARGS=(--teleop-dir "$TELEOP" --scene "${WRC_DM_SCENE:-auto}")
+      if [ "$mode" = "dm" ] && [ -x "$MJPY" ]; then "$MJPY" local_dm/dm_bridge_server.py "${SCENE_ARGS[@]}" &
+      else "$PY" local_dm/dm_bridge_server.py --headless "${SCENE_ARGS[@]}" & fi
       BRIDGE_PID=$!
       trap '[ -n "$BRIDGE_PID" ] && kill $BRIDGE_PID 2>/dev/null' EXIT
       for _ in $(seq 1 60); do lsof -nP -iTCP:9881 -sTCP:LISTEN >/dev/null 2>&1 && break; sleep 0.5; done
@@ -130,7 +153,7 @@ case "$mode" in
     fi
     if [ "$mode" = "dm-task" ]; then
       shift
-      python local_dm/run_dm.py --task "${*:-pick and place the red block}"
+      python local_dm/run_dm.py --task "${*:-look around and tell me what you see}"
     else
       if lsof -nP -iTCP:8090 -sTCP:LISTEN >/dev/null 2>&1; then
         echo "Dashboard port 8090 is already in use — stop the other WRC dashboard first (pkill -f local_dm/run_dm.py; pkill -f local_mock/dashboard_mock.py)"; exit 1

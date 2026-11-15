@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Move the three objects of the running DM simulator to new random places (inside the area
+"""Move the objects of the running DM simulator to new random places (inside the area
 the arm can reach), so you can check the robot really finds them with its camera.
 
   ./START_WRC.sh dm-shuffle          (while ./START_WRC.sh dm is running; not during a task)
@@ -17,9 +17,16 @@ from wrc_dm_plugin import BridgeClient
 def main() -> int:
     try:
         b = BridgeClient()
-        if b.call("info")[0].get("robot") != "sim":
+        info = b.call("info")[0]
+        if info.get("robot") != "sim":
             print("the bridge is not the simulator: nothing to shuffle")
             return 2
+        if info.get("scene") == "real":       # the team's scene: its own randomizer decides where objects may go
+            for n, pos in b.call("shuffle")[0]["objects"].items():
+                print(f"{n:6s} -> x {pos[0]:.2f} m, y {pos[1]:+.2f} m")
+            print("The camera needs a second or two to see the new scene. Some random places are out of the "
+                  "arm's reach; shuffle again if the robot says so.")
+            return 0
     except RuntimeError as e:
         print(e)
         return 2

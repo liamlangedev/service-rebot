@@ -27,6 +27,7 @@ by raw binary blobs whose byte lengths are listed in reply["blobs"]):
   {"op": "frame", "cam": "overhead_rgb"} -> BGR uint8 HxWx3 + depth float32 HxW (m) + K + T_base_cam   (sim only)
   {"op": "reset"}                     -> sim only: objects + arm back to the start layout
   {"op": "set_objects", "objects": {name: {"pos": [x, y, z], "yaw": rad}}}  -> sim only, for tests
+  {"op": "shuffle", "seed": int|null} -> real-workspace sim only: objects to random places (team's randomizer)
 """
 from __future__ import annotations
 
@@ -74,6 +75,10 @@ def parse_args():
     p.add_argument("--duration", type=float, default=None, help="exit after N seconds (tests)")
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
+    p.add_argument("--scene", choices=["auto", "real", "demo"], default=os.environ.get("WRC_DM_SCENE", "auto"),
+                   help="sim scene: 'real' = the team's measured workspace (steel_team/simulation, rebot_sim: "
+                        "table, walls, foam bin, the real cameras, can + cup); 'demo' = Seeed's demo table with "
+                        "three blocks; 'auto' = real when rebot_sim is installed, else demo")
     c = p.add_argument_group("calibration test scene (sim only)")
     c.add_argument("--calib-sheet", metavar="PNG",
                    help="lay the printed sheet from calibrate_camera.py --make-sheet on the sim table "
@@ -102,7 +107,26 @@ class SimBackend:
         self.mj = mujoco
         self.finger_max = float(GRIPPER_MAX)
         self.layout = dict(SIM_LAYOUT)
-        if args.calib_sheet:
+        self.scene = args.scene
+        if self.scene in ("auto", "real") and not args.calib_sheet:
+            try:
+                from rebot_sim import RealSetupEnv
+                self.scene = "real"
+            except ImportError as e:
+                if self.scene == "real":
+                    sys.exit(f"--scene real needs the team's rebot_sim package (steel_team/simulation on main; "
+                             f"run 'uv sync' in teleoperation): {e}")
+                self.scene = "demo"
+        else:
+            self.scene = "demo"
+        self.bins: dict = {}
+        self.table_z = 0.03
+        if self.scene == "real":
+            # The team's replica of the real workspace. Its own gripper tuning and objects are kept as they are.
+            self.sim = RealSetupEnv()
+            self.layout = {}
+            self.table_z = float(self.sim.ws.table_z)
+        elif args.calib_sheet:
             import teleop.rebot_model as rm
             x, y, yaw_deg = (float(v) for v in args.sheet_pose.split(","))
             yaw = np.radians(yaw_deg)
@@ -135,15 +159,19 @@ class SimBackend:
             self.sim = RebotSim()
         self.m, self.d = self.sim.model, self.sim.data
         m = self.m
-        g = self.sim.grip_act
-        m.actuator_gainprm[g, 0] = GRIP_KP
-        m.actuator_biasprm[g, 1] = -GRIP_KP
-        m.actuator_biasprm[g, 2] = -GRIP_KV
-        # The MJCF's "blue_block" renders cyan on a tan mat; make it a clear blue.
-        for gid in range(m.ngeom):
-            if m.geom_bodyid[gid] == m.body("blue_block").id:
-                m.geom_matid[gid] = -1
-                m.geom_rgba[gid] = [0.08, 0.22, 0.90, 1.0]
+        if self.scene == "real":
+            self.object_names = list(self.sim.objects)
+        else:
+            self.object_names = list(SIM_LAYOUT)
+            g = self.sim.grip_act
+            m.actuator_gainprm[g, 0] = GRIP_KP
+            m.actuator_biasprm[g, 1] = -GRIP_KP
+            m.actuator_biasprm[g, 2] = -GRIP_KV
+            # The MJCF's "blue_block" renders cyan on a tan mat; make it a clear blue.
+            for gid in range(m.ngeom):
+                if m.geom_bodyid[gid] == m.body("blue_block").id:
+                    m.geom_matid[gid] = -1
+                    m.geom_rgba[gid] = [0.08, 0.22, 0.90, 1.0]
         self.grip_dof = m.joint("finger_left").dofadr[0]
         self.w, self.h = args.width, args.height
         m.vis.global_.offwidth = max(int(m.vis.global_.offwidth), self.w)     # offscreen buffer for the camera
@@ -156,7 +184,9 @@ class SimBackend:
         mj, m, d = self.mj, self.m, self.d
         t_keep = float(d.time)
         self.sim.reset(np.array(DM_HOME_Q, dtype=float), gripper=self.finger_max)
-        d.time = t_keep      # keep the clock running forward: the main loop treats a clock jump back as an accident
+        d.time = max(t_keep, float(d.time))   # keep the clock running forward: a jump back is treated as an accident
+        if self.scene == "real":
+            self.bins = {b: self.sim.bin_pos(b).tolist() for b in self.sim.bins}
         d.mocap_pos[self.sim.target_mocap] = [0.0, 0.0, -5.0]   # hide teleop's IK target marker
         for name, pos in self.layout.items():
             adr = m.jnt_qposadr[m.body(name).jntadr[0]]
@@ -171,8 +201,8 @@ class SimBackend:
         """Test helper: put sim objects at given poses. {name: {"pos": [x, y, z], "yaw": rad}}"""
         mj, m, d = self.mj, self.m, self.d
         for name, spec in objects.items():
-            if name not in SIM_LAYOUT:
-                raise ValueError(f"unknown sim object {name!r}")
+            if name not in self.object_names:
+                raise ValueError(f"unknown sim object {name!r} (have: {self.object_names})")
             j = m.body(name).jntadr[0]
             adr, dadr = m.jnt_qposadr[j], m.jnt_dofadr[j]
             yaw = float(spec.get("yaw", 0.0))
@@ -181,6 +211,19 @@ class SimBackend:
             d.qvel[dadr:dadr + 6] = 0
         mj.mj_forward(m, d)
         self._frame_cache.clear()
+
+    def shuffle(self, seed=None) -> dict:
+        """Real-workspace scene: move the objects to random places with the team's own randomizer
+        (rebot_sim spawn_region). The arm is not touched. Returns the new object positions."""
+        if self.scene != "real":
+            raise ValueError("shuffle is for the real-workspace scene; the demo scene uses set_objects")
+        self.sim.randomize_objects(np.random.default_rng(seed))
+        dofs = [self.m.jnt_dofadr[self.m.body(n).jntadr[0]] for n in self.object_names]
+        for dadr in dofs:
+            self.d.qvel[dadr:dadr + 6] = 0
+        self.mj.mj_forward(self.m, self.d)
+        self._frame_cache.clear()
+        return {n: self.d.xpos[self.m.body(n).id].tolist() for n in self.object_names}
 
     def step_to(self, t_target: float, max_steps: int = 25):
         n = 0
@@ -199,10 +242,13 @@ class SimBackend:
             "t": float(d.time),
             "fault": None,
             # Ground truth for VERIFICATION ONLY (WRC never reads this; it uses the camera).
-            "objects": {n: d.xpos[self.m.body(n).id].tolist() for n in SIM_LAYOUT},
+            "objects": {n: d.xpos[self.m.body(n).id].tolist() for n in self.object_names},
+            # real scene only: which bin compartment each object lies in (None = not in a bin)
+            "in_bin": ({n: next((b for b in self.sim.bins if self.sim.in_bin(n, b)), None)
+                        for n in self.object_names} if self.scene == "real" else {}),
             # how far each object leans from upright, in degrees (0 = standing as it started, 90 = on its side)
             "object_tilt_deg": {n: float(np.degrees(np.arccos(np.clip(d.xmat[self.m.body(n).id][8], -1, 1))))
-                                for n in SIM_LAYOUT},
+                                for n in self.object_names},
         }
 
     def set_target(self, q):
@@ -247,6 +293,17 @@ class SimBackend:
 
     def cameras(self):
         return [self.m.camera(i).name for i in range(self.m.ncam)]
+
+    def scene_info(self) -> dict:
+        """What a client needs to know about the scene (measured places, not object positions)."""
+        info = {"scene": self.scene, "table_z": self.table_z, "object_names": self.object_names, "bins": {}}
+        if self.scene == "real":
+            cfg = self.sim.cfg["bin"]
+            for b in self.sim.bins:
+                c, half = self.sim.bin_pos(b), self.m.site(b).size
+                info["bins"][b] = {"center": [float(c[0]), float(c[1])], "half": [float(half[0]), float(half[1])],
+                                   "floor_z": float(c[2]), "rim_z": self.table_z + float(cfg["height"])}
+        return info
 
 
 class RealBackend:
@@ -354,6 +411,9 @@ class RealBackend:
     def cameras(self):
         return []
 
+    def scene_info(self) -> dict:
+        return {"scene": "real-arm", "table_z": None, "object_names": [], "bins": {}}
+
     def close(self):
         self.hold()
         self.robot.disconnect()
@@ -446,11 +506,13 @@ class Bridge:
         if op == "set_objects":
             b.set_objects(req["objects"])
             return {"header": {"ok": True}}
+        if op == "shuffle" and b.kind == "sim":
+            return {"header": {"ok": True, "objects": b.shuffle(req.get("seed"))}}
         if op == "info":
             lim = b.m.actuator_ctrlrange[b.sim.arm_act]      # the ranges the arm accepts (real soft limits)
             return {"header": {"ok": True, "robot": b.kind, "home_q": DM_HOME_Q, "finger_max": b.finger_max,
                                "cameras": b.cameras(), "joint_lo": lim[:, 0].tolist(),
-                               "joint_hi": lim[:, 1].tolist()}}
+                               "joint_hi": lim[:, 1].tolist(), **b.scene_info()}}
         return {"header": {"ok": False, "error": f"unknown op {op!r}"}}
 
 

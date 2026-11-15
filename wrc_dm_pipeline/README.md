@@ -4,7 +4,7 @@ You type what you want, for example *"put the red block on the blue block"*. An 
 
 It is built on [WRC](https://github.com/TheMoonAstronaut/wrc), an open-source robot pipeline made for the RS version of our arm. This folder adapts it to our **DM** arm.
 
-> **Latest version: 2026-11-15.** This push fixes problems found by testing in the simulator: the arm now plans inside the real arm's joint limits, sets objects down upright, puts each object on its own free spot, and never keeps an object in the gripper after a failed task. Details: [`overlay/local_dm/README.md`](overlay/local_dm/README.md), section "Latest version".
+> **Latest version (third push, 2026-11-15).** The simulator is now the team's own copy of our real workspace (`simulation/` on `main`): the real table, the red can, the paper cup, the foam bin and the corner camera. You can type *"put the red can in the bin"*. Details: [`overlay/local_dm/README.md`](overlay/local_dm/README.md), first section. The second push (same day) fixed joint limits, upright put-down and free-spot placement.
 
 ## How it works
 
@@ -25,13 +25,15 @@ you type a task → Claude (sees the camera) → WRC (plans + safety check) → 
 
 ## What works today
 
-- **In a physics simulation of our DM arm: yes.** Claude stacked blocks, moved objects and described the scene. Objects ended up 5 to 15 mm from where they should be. When an object was out of reach, it said so and parked the arm.
+- **In the simulation of our real workspace: yes, for the cases tested.** Claude put the can into the near bin compartment and the cup into the far one (checked against the simulator's own object positions). Of 8 random start positions, 5 worked at first; the 3 failures were fixed and re-run one by one. The full random set was not repeated after the fix, so there is no success rate yet.
+- **On the old demo table (three blocks): yes.** Claude stacked blocks, moved objects and described the scene, 5 to 15 mm from the goal. `WRC_DM_SCENE=demo ./START_WRC.sh dm` starts it.
+- **The real corner camera has no depth, and this pipeline needs depth.** The simulator provides it. On the real setup a depth camera is needed for tall objects like the can and the cup.
 - **On the real arm: not tested.** The connection uses the same driver calls as our `teleoperation/go_ready.py`, but nobody has run this pipeline on the hardware. Start slowly and follow the checklist (link below).
 - **Camera calibration: tool included, tested in the simulator only.** You print one sheet, measure two points with a ruler, and run one command.
 
 ## Try it in the simulator
 
-You need conda, `uv`, and this repo's `teleoperation` folder set up (`./scripts/setup_assets.sh && uv sync`).
+You need conda, `uv`, and this repo's `teleoperation` folder set up (`./scripts/setup_assets.sh && uv sync`). For the real-workspace scene the repo must contain `simulation/` (it is on `main`); `uv sync` installs it.
 
 ```bash
 bash wrc_dm_pipeline/setup_wrc.sh          # downloads WRC next to this repo and adds our files
@@ -44,9 +46,9 @@ echo 'ANTHROPIC_API_KEY=your-key' > .env   # your own Claude API key (never comm
 
 Then open http://127.0.0.1:8090/ and type a task **in that web page** (not in the 3D window, which is display only). Things to try:
 
-- `Take the red block and stack it on top of the blue one.`
+- `Put the red can in the bin`
+- `Now the paper cup goes in the other compartment`
 - `What objects can you see on the table right now?`
-- `Move the red block to the free spot`
 
 `./START_WRC.sh dm-shuffle` moves the objects to new random places, so you can see that the robot finds them with its camera.
 
@@ -54,8 +56,8 @@ Without an API key it still runs, but only fixed commands work, like `pick and p
 
 ## Good to know
 
-- The arm can only grab objects up to about **40 cm** in front of its base (34 cm for tall objects).
-- The detector only finds objects whose **names it was given** (`--classes "red block,blue block,..."`). Change the names for your objects.
+- The arm cannot reach everywhere on the table. Far objects are grabbed with the gripper leaning forward; the furthest grasp tested was 46 cm from the base. Objects out of reach are reported, not attempted blindly.
+- The detector only finds objects whose **names it was given** (`--classes "cup,red cup,white box"`). It calls our plain red can "red cup" and the bin "white box". Change the names for other objects.
 - Each task costs about 4 US cents in Claude API calls and takes 3 Claude steps of about 2 seconds each.
 
 ## What is in this folder
@@ -63,6 +65,7 @@ Without an API key it still runs, but only fixed commands work, like `pick and p
 | Path | What it is |
 |---|---|
 | `setup_wrc.sh` | Downloads WRC and copies our files into it |
+| `LICENSE` | License for this folder (MIT, © 2026 ferohatami) |
 | `overlay/local_dm/` | Our code: the link between WRC and the DM arm (simulated or real), the Claude connection, camera calibration |
 | `overlay/START_WRC.sh` | One script to start everything |
 | `overlay/configs/` | Settings for the DM arm and the simulator camera |
@@ -72,3 +75,7 @@ Without an API key it still runs, but only fixed commands work, like `pick and p
 
 - **Full guide, test results, real-arm checklist, camera calibration:** [`overlay/local_dm/README.md`](overlay/local_dm/README.md)
 - **How the WRC environment was set up (including the macOS fix):** [`overlay/SETUP_REPORT.md`](overlay/SETUP_REPORT.md)
+
+## License
+
+Everything in this folder (`wrc_dm_pipeline/`) is © 2026 ferohatami, released under the MIT License: see [`LICENSE`](LICENSE). The license covers this folder only. WRC itself is downloaded separately and keeps its own MIT license; the rest of this repository belongs to its own authors.
