@@ -1,7 +1,10 @@
 {
   "_comment": "name -> OpenCV index. Indices can change after replugging: run tools/probe_cameras.py and edit here.",
-  "width": 640,
-  "height": 480,
+  "_comment2": "Capture in a 16:9 mode (full field of view; 4:3 modes crop ~25% off the sides) and downscale to save_* before recording.",
+  "width": 1280,
+  "height": 720,
+  "save_width": 640,
+  "save_height": 360,
   "fps": 30,
   "cameras": {
     "front_wide": 1,

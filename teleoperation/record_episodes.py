@@ -22,6 +22,7 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
+import cv2
 import numpy as np
 from pynput import keyboard
 
@@ -52,6 +53,8 @@ def parse_args():
     p.add_argument("--cameras-file", default=str(CAMERAS_FILE))
     p.add_argument("--cam-width", type=int, default=None, help="default: from the cameras file")
     p.add_argument("--cam-height", type=int, default=None)
+    p.add_argument("--save-width", type=int, default=None, help="recorded image width (default: from the cameras file)")
+    p.add_argument("--save-height", type=int, default=None)
     p.add_argument("--cam-fourcc", default=None, help="e.g. MJPG: compressed USB stream, much less bandwidth")
     p.add_argument("--episodes", type=int, default=50)
     p.add_argument("--fps", type=int, default=30)
@@ -127,7 +130,8 @@ def main():
     cameras = {name: OpenCVCameraConfig(index_or_path=idx, width=width, height=height, fps=args.fps,
                                         warmup_s=3, fourcc=fourcc)
                for name, idx in specs.items()}
-    print("cameras:", {n: c.index_or_path for n, c in cameras.items()}, f"{width}x{height}@{args.fps}")
+    save_w, save_h = args.save_width or cam_file.get("save_width", width), args.save_height or cam_file.get("save_height", height)
+    print("cameras:", {n: c.index_or_path for n, c in cameras.items()}, f"capture {width}x{height}@{args.fps} -> saved {save_w}x{save_h}")
     cfg = RebotB601FollowerRobotConfig(
         port=args.port, cameras=cameras, disable_torque_on_disconnect=False,
         gripper_torque_ratio=args.gripper_torque_ratio)
@@ -147,6 +151,9 @@ def main():
         **hw_to_dataset_features(robot.action_features, "action"),
         **hw_to_dataset_features(robot.observation_features, "observation"),
     }
+    for key, ft in features.items():
+        if key.startswith("observation.images.") and ft["dtype"] in ("video", "image"):
+            ft["shape"] = (save_h, save_w, ft["shape"][2])
     n_cams = len(cameras)
     root = Path(args.root) if args.root else HF_LEROBOT_HOME / args.repo_id
     exists = (root / "meta" / "info.json").exists()
@@ -212,6 +219,10 @@ def main():
                     print("  max episode length reached")
                     break
                 obs = robot.get_observation()
+                for cam_key in cameras:
+                    img = obs[cam_key]
+                    if img.shape[:2] != (save_h, save_w):
+                        obs[cam_key] = cv2.resize(img, (save_w, save_h), interpolation=cv2.INTER_AREA)
                 action = loop.latest_action()
                 if action is None:
                     continue
