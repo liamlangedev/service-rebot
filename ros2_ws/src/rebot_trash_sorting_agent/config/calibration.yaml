@@ -1,0 +1,18 @@
+# Written by calibrate_table.py. One homography per camera:
+# [u, v, 1] * H -> [x, y, 1] in metres on the table plane (z = places.yaml table.z).
+# Regenerate after moving the camera; this file is disposable.
+table:
+  homography:
+  - 0.0004667
+  - 0.00115046
+  - -0.42378476
+  - 0.00075495
+  - -0.0006639
+  - -0.17915145
+  - -0.00020751
+  - 0.00100864
+  - 1.0
+  points: 5
+  created: '2026-11-15T07:32:48'
+  error_mm: 2.48
+  camera: table
