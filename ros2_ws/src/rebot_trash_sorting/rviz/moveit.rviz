@@ -1,0 +1,80 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.2
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+    - Acceleration_Scaling_Factor: 0.2
+      Class: moveit_rviz_plugin/MotionPlanning
+      Enabled: true
+      Move Group Namespace: ""
+      MoveIt_Planning_Attempts: 10
+      MoveIt_Planning_Time: 5
+      Name: MotionPlanning
+      Planned Path:
+        Loop Animation: false
+        Show Robot Collision: false
+        Show Robot Visual: true
+        Show Trail: false
+      Planning Request:
+        Interactive Marker Size: 0.12
+        Planning Group: arm
+        Query Goal State: true
+        Query Start State: false
+        Show Workspace: false
+      Planning Scene Topic: /monitored_planning_scene
+      Robot Description: robot_description
+      Scene Robot:
+        Show Robot Collision: false
+        Show Robot Visual: true
+      Velocity_Scaling_Factor: 0.2
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.0
+      Focal Point:
+        X: 0.15
+        Y: 0.0
+        Z: 0.20
+      Name: Current View
+      Pitch: 0.45
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Yaw: 5.6
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 950
+  MotionPlanning:
+    collapsed: false
+  Views:
+    collapsed: true
+  Width: 1500
