@@ -76,8 +76,11 @@ class EnvCheckNode(Node):
                     f"xacro failed for gripper:={variant}: {res.stderr.strip()}"
                 )
                 return False
+            if 'lower="-1.57" upper="1.57"' not in res.stdout or 'name="joint6"' not in res.stdout:
+                self.get_logger().error("joint6 [-1.57, 1.57] limit missing in URDF")
+                return False
         self.get_logger().info(
-            "URDF xacro verified for both gripper:=soft and gripper:=hard"
+            "URDF xacro verified for both gripper:=soft and gripper:=hard (joint6 in [-1.57, 1.57])"
         )
 
         ws_root = _find_workspace_root()

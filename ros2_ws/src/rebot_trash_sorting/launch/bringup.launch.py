@@ -54,6 +54,7 @@ def _launch_setup(context, *args, **kwargs):
     )
     urdf_file = os.path.join(sorting_pkg_share, "urdf", "rebotarm.urdf.xacro")
     srdf_file = os.path.join(sorting_pkg_share, "config", "rebotarm.srdf")
+    joint_limits_file = os.path.join(sorting_pkg_share, "config", "joint_limits.yaml")
     hw_controllers_file = os.path.join(
         sorting_pkg_share, "config", "moveit_hardware_controllers.yaml"
     )
@@ -69,7 +70,7 @@ def _launch_setup(context, *args, **kwargs):
         )
         .robot_description_semantic(file_path=srdf_file)
         .robot_description_kinematics(file_path="config/kinematics.yaml")
-        .joint_limits(file_path="config/joint_limits.yaml")
+        .joint_limits(file_path=joint_limits_file)
         .trajectory_execution(
             file_path=(
                 "config/moveit_controllers.yaml"
