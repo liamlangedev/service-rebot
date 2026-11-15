@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
-from ..skills.poses import ToolPose
+from rebot_trash_sorting_agent.skills.poses import ToolPose
 
 
 class MotionError(RuntimeError):
@@ -73,8 +74,12 @@ class MoveItClient:
     def move_named(self, name: str, plan_only: bool = False) -> dict[str, Any]:
         return self.move_to_joints(self.named_pose(name), plan_only=plan_only, label=name)
 
-    def move_to_joints(self, positions: Sequence[float], plan_only: bool = False,
-                       label: str = "joints") -> dict[str, Any]:
+    def move_to_joints(
+        self,
+        positions: Sequence[float],
+        plan_only: bool = False,
+        label: str = "joints",
+    ) -> dict[str, Any]:
         from moveit_msgs.msg import Constraints, JointConstraint
 
         if len(positions) != 6:
@@ -89,15 +94,14 @@ class MoveItClient:
                     tolerance_above=self._tolerance,
                     tolerance_below=self._tolerance,
                     weight=1.0,
-                )
+                ),
             )
         goal.request.goal_constraints = [constraints]
         result = self._send(goal, label=label, plan_only=plan_only)
         result["joints"] = [round(float(v), 4) for v in positions]
         return result
 
-    def move_to_pose(self, pose: ToolPose, plan_only: bool = False,
-                     label: str = "pose") -> dict[str, Any]:
+    def move_to_pose(self, pose: ToolPose, plan_only: bool = False, label: str = "pose") -> dict[str, Any]:
         goal = self._goal(plan_only)
         goal.request.goal_constraints = [self._pose_constraints(pose)]
         result = self._send(goal, label=label, plan_only=plan_only)
@@ -156,15 +160,13 @@ class MoveItClient:
 
     def _pose_constraints(self, pose: ToolPose):
         from geometry_msgs.msg import Pose
-        from moveit_msgs.msg import (BoundingVolume, Constraints, OrientationConstraint,
-                                     PositionConstraint)
+        from moveit_msgs.msg import BoundingVolume, Constraints, OrientationConstraint, PositionConstraint
         from shape_msgs.msg import SolidPrimitive
 
         header = self._node.get_clock().now().to_msg()
         message = Pose()
         message.position.x, message.position.y, message.position.z = pose.x, pose.y, pose.z
-        (message.orientation.x, message.orientation.y,
-         message.orientation.z, message.orientation.w) = pose.quaternion()
+        (message.orientation.x, message.orientation.y, message.orientation.z, message.orientation.w) = pose.quaternion()
 
         primitive = SolidPrimitive(type=SolidPrimitive.SPHERE, dimensions=[0.004])
         region = BoundingVolume(primitives=[primitive], primitive_poses=[message])
@@ -233,8 +235,7 @@ def _to_msg_pose(pose: ToolPose):
 
     message = Pose()
     message.position.x, message.position.y, message.position.z = pose.x, pose.y, pose.z
-    (message.orientation.x, message.orientation.y,
-     message.orientation.z, message.orientation.w) = pose.quaternion()
+    (message.orientation.x, message.orientation.y, message.orientation.z, message.orientation.w) = pose.quaternion()
     return message
 
 

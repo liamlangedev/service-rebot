@@ -44,3 +44,7 @@ ros2 topic pub --once /agent/task std_msgs/msg/String '{data: "Put the can in th
    ```
 
 > **Note:** On shutdown (`Ctrl+C`), the arm bringup/driver (`reBotArmController`) moves the arm to its `safe_home` position (`0, 0, 0, 0, 0, 0` — upright) before disabling the motors. Make sure the workspace above the arm is clear before quitting.
+
+Custom table/wall/bin and target collision publishers are not included. MoveIt
+retains robot self-collision checks but cannot avoid unmodelled scene obstacles.
+Restart `move_group` to discard any previously published obstacles.
