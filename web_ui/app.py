@@ -54,7 +54,7 @@ PAGE = r"""<!doctype html>
   .badge.failed,.badge.stopped { background:#3a1b1b; color:var(--bad); }
   header .meta { margin-left:auto; color:var(--dim); font-size:12px; }
   main { flex:1 1 auto; min-height:0; display:grid;
-         grid-template-columns:minmax(0,1fr) 320px; gap:12px; padding:12px; }
+         grid-template-columns:minmax(0,1fr) 400px; gap:12px; padding:12px; }
   .left-col { display:grid; grid-template-rows:auto minmax(0,1fr); gap:12px; min-height:0; }
   .cam-pair { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; align-items:start; min-height:0; }
   .right-col { display:flex; flex-direction:column; gap:12px; min-height:0; }
@@ -67,15 +67,27 @@ PAGE = r"""<!doctype html>
   .video { width:100%; flex:1 1 auto; min-height:0; display:block; background:#000; object-fit:contain; border:0; }
   .cam-pair img.video { flex:0 0 auto; height:auto; aspect-ratio:4/3; object-fit:contain; }
   .body { padding:10px 12px; }
-  textarea { width:100%; height:54px; resize:none; background:#0f141b; color:var(--fg);
-             border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
-  .row { display:flex; gap:8px; margin-top:8px; }
-  button { flex:1; padding:8px 12px; border-radius:8px; border:1px solid var(--line);
-           background:#202a36; color:var(--fg); font:inherit; font-weight:600; cursor:pointer; }
-  button.primary { background:#1f6feb; border-color:#1f6feb; }
-  button.danger { background:#8b1f1f; border-color:#a12626; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
-  .hint { color:var(--dim); font-size:11px; margin-top:6px; }
+  .chat-panel { flex:0 0 auto; }
+  .chat-feed { max-height:140px; min-height:48px; overflow:auto; display:flex; flex-direction:column;
+               gap:6px; padding:8px 10px; background:#0d1218; border-bottom:1px solid var(--line); }
+  .bubble { max-width:92%; padding:6px 10px; border-radius:12px; font-size:12px; line-height:1.35;
+            overflow-wrap:anywhere; white-space:pre-wrap; }
+  .bubble.user { align-self:flex-end; background:#1f6feb; color:#fff; border-bottom-right-radius:4px; }
+  .bubble.bot { align-self:flex-start; background:#222a36; color:var(--fg); border-bottom-left-radius:4px; }
+  .bubble.bot.err { background:#3a1b1b; color:#ffb4ae; }
+  .bubble.empty { align-self:center; color:var(--dim); font-size:11px; background:none; padding:6px 0; }
+  .composer { display:flex; align-items:flex-end; gap:6px; background:#0f141b;
+              border:1px solid var(--line); border-radius:14px; padding:6px 6px 6px 10px; }
+  .composer:focus-within { border-color:var(--accent); }
+  textarea { flex:1 1 auto; min-height:22px; max-height:96px; resize:none; background:transparent;
+             color:var(--fg); border:0; outline:none; padding:4px 0; font:inherit; line-height:1.35; }
+  .icon-btn { flex:0 0 auto; width:30px; height:30px; border-radius:999px; border:1px solid var(--line);
+              background:#202a36; color:var(--fg); font:inherit; font-weight:700; cursor:pointer;
+              display:inline-flex; align-items:center; justify-content:center; padding:0; }
+  .icon-btn.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+  .icon-btn.danger { background:#8b1f1f; border-color:#a12626; color:#fff; }
+  .icon-btn:disabled { opacity:.4; cursor:not-allowed; }
+  .hint { color:var(--dim); font-size:11px; margin-top:6px; display:flex; justify-content:space-between; gap:8px; }
   dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0; font-size:12px; }
   dt { color:var(--dim); } dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; min-width:0; overflow-wrap:anywhere; }
   .events-panel { flex:1 1 auto; min-height:0; }
@@ -132,16 +144,18 @@ PAGE = r"""<!doctype html>
     </div>
   </section>
   <section class="right-col">
-    <div class="panel">
-      <h2>Task</h2>
+    <div class="panel chat-panel">
+      <h2>Chat</h2>
+      <div id="chat-feed" class="chat-feed">
+        <div class="bubble empty">Send a task to start...</div>
+      </div>
       <div class="body">
-        <textarea id="task" placeholder="Put the can in the bin"></textarea>
-        <div class="row">
-          <button id="run" class="primary">Run</button>
-          <button id="stop" class="danger">STOP</button>
+        <div class="composer">
+          <textarea id="task" rows="1" placeholder="Message robot (e.g. Put the can in the bin)..."></textarea>
+          <button id="run" class="icon-btn primary" title="Send (Enter)">&#8593;</button>
+          <button id="stop" class="icon-btn danger" title="Stop">&#9632;</button>
         </div>
-        <div class="hint">Enter runs, Shift+Enter adds a line.</div>
-        <div id="chatmsg" class="chatmsg"></div>
+        <div class="hint"><span>Enter to send · Shift+Enter newline</span><span id="chatmsg" class="chatmsg" style="margin-top:0"></span></div>
       </div>
     </div>
     <div class="panel">
@@ -167,6 +181,17 @@ PAGE = r"""<!doctype html>
 const $ = (id) => document.getElementById(id);
 $("sim3d").src = `${location.protocol}//${location.hostname}:8765/?embed=1`;
 let lastEventKey = "";
+let lastResultKey = "";
+function addBubble(role, text, isErr) {
+  const feed = $("chat-feed");
+  const empty = feed.querySelector(".empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = `bubble ${role}${isErr ? " err" : ""}`;
+  div.textContent = text;
+  feed.appendChild(div);
+  feed.scrollTop = feed.scrollHeight;
+}
 const SWATCH = {red:"#e5484d", orange:"#f76b15", yellow:"#ffe629", green:"#46a758",
   cyan:"#00a2c7", blue:"#0090ff", purple:"#8e4ec6", pink:"#f76190",
   brown:"#ad7f58", white:"#eee", gray:"#888", silver:"#b8c0cc", black:"#111"};
@@ -206,7 +231,14 @@ async function refresh() {
       ["classes", (s.detector_classes || []).join(", ")],
       ["task", s.task || "—"],
     ];
-    if (s.result) facts.push(["result", s.result.success ? "success" : "failed"]);
+    if (s.result) {
+      facts.push(["result", s.result.success ? "success" : "failed"]);
+      const rk = `${s.task}:${s.result.success}:${s.result.summary}`;
+      if (rk !== lastResultKey) {
+        lastResultKey = rk;
+        addBubble("bot", s.result.summary || s.result.error || (s.result.success ? "Done." : "Failed."), !s.result.success);
+      }
+    }
     $("facts").innerHTML = facts.map(([k, v]) =>
       `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
     const worldObjs = s.objects || [];
@@ -267,10 +299,19 @@ async function post(path, body, okMsg) {
 }
 
 $("run").onclick = () => {
-  const task = $("task").value.trim();
-  if (task) post("/api/task", {task}, `running: ${task}`);
+  const el = $("task");
+  const task = el.value.trim();
+  if (!task) return;
+  addBubble("user", task, false);
+  el.value = "";
+  el.style.height = "auto";
+  post("/api/task", {task}, "running");
 };
-$("stop").onclick = () => post("/api/stop", {}, "stop requested — aborting current action");
+$("stop").onclick = () => post("/api/stop", {}, "stop requested");
+$("task").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(96, e.target.scrollHeight) + "px";
+});
 $("task").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("run").click(); }
 });
