@@ -36,6 +36,10 @@ class FastLoop:
         self._mode = "teleop"  # teleop | stopped | returning
         self._hold = None
         self._path, self._path_i = [], 0
+        self._after, self._path_gripper = "teleop", GRIPPER_OPEN_DEG
+        self._released = False
+        self._frames = {}
+        self._cam_warned = {}
         self._owner = None
         self._keys = None
         robot.send_action = self._send_action
@@ -53,7 +57,7 @@ class FastLoop:
             self._thread = threading.Thread(target=self._run, args=(step_fn,), daemon=True)
             self._thread.start()
 
-    # ---- keys: S = stop, G = resume, R = return to ready --------------------
+    # ---- keys: S = stop, G = resume, H = return to ready --------------------
     def _start_keys(self):
         try:
             from pynput import keyboard
@@ -68,7 +72,7 @@ class FastLoop:
                 self.stop()
             elif ch == "g":
                 self.resume()
-            elif ch == "r":
+            elif ch == "h":  # not R: lerobot uses R/N/Q to re-record/next/quit
                 self.return_to_ready()
 
         self._keys = keyboard.Listener(on_press=on_press)
@@ -82,7 +86,7 @@ class FastLoop:
         if self.mit is not None:
             self.mit.freeze(self._hold)
         self._mode = "stopped"
-        print("[fast_loop] STOPPED. G = resume, R = return to the ready pose.")
+        print("[fast_loop] STOPPED. G = resume, H = return to the ready pose.")
 
     def resume(self):
         if self._mode == "stopped":
@@ -93,20 +97,48 @@ class FastLoop:
     def return_to_ready(self):
         if self._mode == "returning":
             return
+        self._go_to(READY_QPOS, 0.6, after="teleop", gripper_deg=GRIPPER_OPEN_DEG)
+        print("[fast_loop] returning to the ready pose (S to stop).")
+
+    def _go_to(self, q_target, speed, after, gripper_deg):
         with self._lock:
             joints = dict(self._joints)
         q = np.radians([joints[n] for n in JOINT_NAMES])
-        self._path = list(joint_space_path(q, READY_QPOS, 0.6, self.rate))
-        self._path_i = 0
+        self._path = list(joint_space_path(q, q_target, speed, self.rate))
+        self._path_i, self._after, self._path_gripper = 0, after, gripper_deg
         self._mode = "returning"
-        print("[fast_loop] returning to the ready pose (S to stop).")
+
+    def park_and_release(self, speed: float = 0.4, rest_qpos=None) -> None:
+        """Lower the arm slowly to the folded rest pose (all joints 0), then release torque.
+
+        The control thread keeps holding the arm with gravity feed-forward until it arrives, so
+        the arm is never dropped. Without this, exiting the process leaves the motors limp."""
+        if self._thread is None or not self._thread.is_alive():
+            return
+        rest = np.zeros(6) if rest_qpos is None else rest_qpos
+        with self._lock:
+            grip = self._joints["gripper"]
+        self._go_to(rest, speed, after="hold", gripper_deg=grip)
+        print("[fast_loop] lowering to the rest pose...")
+        t0 = time.time()
+        while self._mode == "returning" and time.time() - t0 < 30.0:
+            time.sleep(0.05)
+        time.sleep(0.7)
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        try:
+            self.robot.bus.disable_all()
+            self._released = True
+            print("[fast_loop] at rest, torque released.")
+        except Exception as e:
+            print(f"[fast_loop] could not release torque: {e!r}")
 
     def _resync(self):
         """Make the teleoperator's IK state match where the arm actually is."""
         if self._owner is not None and hasattr(self._owner, "resync"):
             with self._lock:
                 joints = dict(self._joints)
-            self._owner.resync(joints)
+            self._owner.resync({f"{m}.pos": p for m, p in joints.items()})
 
     def _next_action(self, step_fn, dt):
         if self._mode == "stopped":
@@ -115,7 +147,13 @@ class FastLoop:
             if self._path_i < len(self._path):
                 q = self._path[self._path_i]
                 self._path_i += 1
-                return q_to_action(q, GRIPPER_OPEN_DEG)
+                return q_to_action(q, self._path_gripper)
+            if self._after == "hold":
+                self._hold = q_to_action(self._path[-1], self._path_gripper)
+                if self.mit is not None:
+                    self.mit.freeze(self._hold)
+                self._mode = "stopped"
+                return dict(self._hold)
             self._resync()
             self._mode = "teleop"
             print("[fast_loop] at the ready pose, teleop active.")
@@ -130,7 +168,15 @@ class FastLoop:
                 now = time.perf_counter()
                 dt = float(np.clip(now - last, 1e-3, 0.05))
                 last = now
-                action = self._next_action(step_fn, dt)
+                try:
+                    action = self._next_action(step_fn, dt)
+                except Exception as e:
+                    # A bug in the teleop/IK layer must never stop the commands: freeze and keep holding.
+                    import traceback
+                    traceback.print_exc()
+                    print(f"[fast_loop] control step failed ({e!r}); holding position. Press G to resume.")
+                    self.stop()
+                    action = dict(self._hold)
                 self._send(action, dt)
                 joints = self.robot._present_pos()
                 with self._lock:
@@ -181,6 +227,8 @@ class FastLoop:
 
     def _hold_in_place(self):
         """Command the measured pose so the motors stop instead of chasing the last setpoint."""
+        if self._released:
+            return
         try:
             pos = self.robot._present_pos()
             self._send({f"{m}.pos": p for m, p in pos.items()}, 0.01)
@@ -237,10 +285,27 @@ class FastLoop:
             obs = {f"{m}.pos": p for m, p in self._joints.items()}
         for key, cam in self.robot.cameras.items():
             if getattr(cam, "use_rgb", True):
-                obs[key] = cam.read_latest()
+                obs[key] = self._read_camera(key, cam)
             if isinstance(cam, DepthCamera) and cam.use_depth:
                 obs[f"{key}_depth"] = cam.read_latest_depth()
         return obs
+
+    def _read_camera(self, key, cam):
+        """A camera hiccup must not kill the recording while the arm is in the air:
+        reuse the last frame for up to 3 s, and only then raise."""
+        now = time.time()
+        try:
+            frame = cam.read_latest()
+        except TimeoutError as e:
+            last = self._frames.get(key)
+            if last is None or now - last[0] > 3.0:
+                raise
+            if now - self._cam_warned.get(key, 0) > 5.0:
+                print(f"[camera] {key}: no fresh frame ({e}); reusing the last one")
+                self._cam_warned[key] = now
+            return last[1]
+        self._frames[key] = (now, frame)
+        return frame
 
     def _disconnect(self):
         self._stop.set()

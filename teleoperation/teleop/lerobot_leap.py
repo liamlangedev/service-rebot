@@ -28,7 +28,9 @@ class LeapIKConfig(TeleoperatorConfig):
     scale: float = 1.0
     track_rotation: bool = False
     yaw_offset_deg: float = 0.0
-    max_joint_vel: float = 2.5  # rad/s, IK output limit
+    max_joint_vel: float = 2.5  # rad/s, IK output limit for the big joints
+    max_wrist_vel: float = 1.5  # rad/s, IK output limit for the 3 wrist joints
+    max_rot_vel: float = 2.0  # rad/s, how fast the target orientation may turn (rejects Leap orientation spikes)
     gripper_vel: float = 600.0  # deg/s slew limit on the gripper command
     smoothing: float = 0.85  # per-tick hand filter, tuned for the 200 Hz loop (~28 ms)
 
@@ -66,13 +68,21 @@ class LeapIK(Teleoperator):
 
     def connect(self, calibrate: bool = True) -> None:
         model = RebotSim().model
-        self._ik = DiffIK(model, TCP_SITE, ARM_JOINTS, q_rest=READY_QPOS,
-                          max_joint_vel=self.config.max_joint_vel)
+        vmax = np.array([self.config.max_joint_vel] * 3 + [self.config.max_wrist_vel] * 3)
+        self._ik = DiffIK(model, TCP_SITE, ARM_JOINTS, q_rest=READY_QPOS, max_joint_vel=vmax)
+        # The IK must respect the limits lerobot enforces; otherwise it commands angles that get clipped
+        # (e.g. wrist_roll +-90 on the robot vs +-179 in the MJCF) and the arm and IK disagree.
+        from lerobot.robots.rebot_b601_follower.motor_family import MOTOR_PROFILES, MotorFamily
+        lim = MOTOR_PROFILES[MotorFamily.DM].joint_limits
+        margin = np.radians(3.0)
+        self._ik.lo = np.maximum(self._ik.lo, np.radians([lim[n][0] for n in JOINT_NAMES]) + margin)
+        self._ik.hi = np.minimum(self._ik.hi, np.radians([lim[n][1] for n in JOINT_NAMES]) - margin)
         self._teleop = ClutchTeleop(pos_scale=self.config.scale,
                                     track_rotation=self.config.track_rotation,
                                     smoothing=self.config.smoothing)
         self._q = READY_QPOS.copy()
         self._target = self._ik.fk(self._q)
+        self._rot_out = self._target[1].copy()
         self._gripper = GRIPPER_OPEN_DEG
         self._t = time.perf_counter()
         self._source = LeapSource(yaw_offset_deg=self.config.yaw_offset_deg)
@@ -94,6 +104,7 @@ class LeapIK(Teleoperator):
         """Re-anchor the IK state and clutch on the arm's actual pose (after stop/return)."""
         self._q = np.radians([joints_deg[f"{n}.pos"] for n in JOINT_NAMES])
         self._target = self._ik.fk(self._q)
+        self._rot_out = self._target[1].copy()
         self._teleop._engaged = False
         self._teleop._filtered = None
         self._teleop._filtered_rot = None
@@ -106,6 +117,14 @@ class LeapIK(Teleoperator):
         # debug row for the fast-loop log: clutch, raw hand pos, raw hand rotvec, filtered target pos
         self.debug_row = (float(self._teleop.engaged), *s.pos, *Rotation.from_matrix(s.rot).as_rotvec(), *pos)
         self._target = (pos, rot)
+        # Limit how fast the orientation target turns; the hand-rotation signal has spikes.
+        delta = Rotation.from_matrix(rot @ self._rot_out.T).as_rotvec()
+        ang = float(np.linalg.norm(delta))
+        max_ang = self.config.max_rot_vel * dt
+        if ang > max_ang:
+            delta *= max_ang / ang
+        self._rot_out = Rotation.from_rotvec(delta).as_matrix() @ self._rot_out
+        rot = self._rot_out
         # With rotation tracking off, `rot` stays at the ready orientation, so the
         # IK holds the tool pointing down instead of letting it tilt as the arm extends.
         self._q, _, _, _ = guarded_solve(self._ik, self._q, pos, rot, dt)

@@ -24,6 +24,7 @@ FINGER_DIST_CLOSED = 25.0  # mm
 GRIP_CLOSED_DEADZONE = 0.2
 GRIP_OPEN_DEADZONE = 0.1
 GRAB_ON, GRAB_OFF = 0.9, 0.6
+CLUTCH_RELEASE_DELAY = 0.3  # a fist that opens or leaves view for less than this keeps the clutch engaged
 STALE_S = 0.15  # no tracking frame for this long -> sample is invalid (arm holds)
 
 
@@ -35,6 +36,7 @@ class LeapSource:
         self._lock = threading.Lock()
         self._sample = ControllerSample(valid=False)
         self._fist = False
+        self._fist_lost_t = None
         self._space = False
         self._kb = None
 
@@ -63,12 +65,15 @@ class LeapSource:
     def _on_tracking(self, event):
         left = next((h for h in event.hands if str(h.type) == "HandType.Left"), None)
         right = next((h for h in event.hands if str(h.type) == "HandType.Right"), None)
-        if left is None:
-            self._fist = False
+        closed = left is not None and left.grab_strength > (GRAB_OFF if self._fist else GRAB_ON)
+        now = time.time()
+        if closed:
+            self._fist, self._fist_lost_t = True, None
         elif self._fist:
-            self._fist = left.grab_strength > GRAB_OFF
-        else:
-            self._fist = left.grab_strength > GRAB_ON
+            # Left-hand tracking drops out briefly; only release after a sustained loss.
+            self._fist_lost_t = self._fist_lost_t or now
+            if now - self._fist_lost_t > CLUTCH_RELEASE_DELAY:
+                self._fist, self._fist_lost_t = False, None
 
         hand = right
         if hand is None and len(event.hands) == 1 and self._space:

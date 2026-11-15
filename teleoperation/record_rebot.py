@@ -11,7 +11,7 @@
 Extra options (MIT mode): --mit.grip_mode=force_pos|impedance|mit (default force_pos; force = --robot.gripper_torque_ratio;
 impedance: --robot.gripper_torque_limit=1.5 moving, --robot.gripper_hold_torque_limit=0.15 holding, N.m),
 --mit.grip_err_deg / --mit.grip_kp (mit mode only), --mit.kp_scale, --mit.kd_scale,
---mit.cmd_tau, --mit.ready_speed.
+--mit.cmd_tau, --mit.ready_speed, --mit.friction_scale (stiction/dead-zone compensation).
 
 The arm is moved to the ready pose automatically after connecting (it asks for Enter).
 Add --robot.disable_torque_on_disconnect=false so the arm does not drop when recording ends,
@@ -86,6 +86,29 @@ def _connect_and_ready(self, *args, **kwargs):
 
 
 RebotB601Follower.connect = _connect_and_ready
+
+# Automatic return to the ready pose: lerobot calls record_loop once for the episode (with a
+# dataset) and once for the reset period (without one). Go home when the reset starts, and let
+# the next episode start only after the arm is there, so every episode begins at the ready pose.
+import lerobot.scripts.lerobot_record as _lr
+import time as _time
+
+_orig_record_loop = _lr.record_loop
+
+
+def _record_loop_with_home(*args, **kwargs):
+    loop = FastLoop.current
+    if loop is not None and loop._thread is not None:
+        if kwargs.get("dataset") is None:
+            loop.return_to_ready()
+        else:
+            t0 = _time.time()
+            while loop._mode == "returning" and _time.time() - t0 < 15.0:
+                _time.sleep(0.05)
+    return _orig_record_loop(*args, **kwargs)
+
+
+_lr.record_loop = _record_loop_with_home
 
 if __name__ == "__main__":
     main()

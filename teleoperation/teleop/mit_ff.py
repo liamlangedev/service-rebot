@@ -36,9 +36,15 @@ class MitParams:
     grip_kp: float = 8.0       # grip force limit ~ grip_kp * grip_err_deg(rad) N.m; stiffer kp = closes fully
     kp_scale: float = 1.0      # multiplies the arm kp
     kd_scale: float = 1.0      # multiplies the arm kd
+    wrist_scale: float = 1.0   # extra multiplier on wrist (joints 4-6) kp and kd, e.g. 0.4 when kp_scale is 3
     cmd_tau: float = 0.03      # joint-command low-pass time constant [s], 0 = off
+    friction_scale: float = 1.0  # multiplies the friction feed-forward; 0 = off, raise until it just stops sticking
     ready_speed: float = 0.6   # ready-move peak speed [rad/s]
 
+# Coulomb-friction feed-forward [N.m], applied along the commanded motion direction.
+# Measured dead zone ~ error needed to start moving: lift/elbow ~2 deg at kp 40 (~1.4 N.m).
+FRICTION_FF = np.array([0.4, 1.0, 1.0, 0.25, 0.15, 0.12])
+FRICTION_VEL = 0.15  # rad/s over which the sign smoothly switches (tanh)
 DQ_MAX = 4.0  # rad/s, clip on the velocity feed-forward
 DQ_FILTER = 0.6  # low-pass on the finite-difference velocity (0 = none)
 
@@ -55,8 +61,9 @@ class MitFF:
         self.gravity_scale = 0.0
         self._q_prev = None
         self._dq = np.zeros(6)
-        self.kp = np.array([MIT_KP[n] for n in JOINT_NAMES]) * self.params.kp_scale
-        self.kd = np.array([MIT_KD[n] for n in JOINT_NAMES]) * self.params.kd_scale
+        w = np.array([1.0, 1.0, 1.0] + [self.params.wrist_scale] * 3)
+        self.kp = np.array([MIT_KP[n] for n in JOINT_NAMES]) * self.params.kp_scale * w
+        self.kd = np.array([MIT_KD[n] for n in JOINT_NAMES]) * self.params.kd_scale * w
         self._g_prev, self._g_dq = None, 0.0
         self._grip_tripped = False
         self._q_filt = None
@@ -89,6 +96,8 @@ class MitFF:
         max_err = np.radians(MAX_ERR_DEG)
         q_cmd = np.clip(q_cmd, q_meas - max_err, q_meas + max_err)
         tau = self.gravity_scale * self.gravity_torque(q_meas)
+        tau = tau + self.gravity_scale * self.params.friction_scale * FRICTION_FF * np.tanh(self._dq / FRICTION_VEL)
+        tau = np.clip(tau, -TAU_FF_MAX, TAU_FF_MAX)
         for i, name in enumerate(JOINT_NAMES):
             self.robot.motors[name].send_mit(
                 float(q_cmd[i]), float(self._dq[i]), float(self.kp[i]), float(self.kd[i]), float(tau[i]))
