@@ -13,6 +13,8 @@ measurements and photos of the setup (`reference_photos/`):
   cardboard behind and right of the robot, a black board on the left.
 - **Bin:** the white foam bin, 25 × 40 × 12 cm, with two compartments. The drop targets
   are `bin_0` (nearer the robot) and `bin_1`.
+- **Tape:** yellow tape on the table. A line runs along the robot's base plate from the near
+  wall to the far edge, and three marks sit between it and the right wall.
 - **Cameras:** the same three as on the real setup, calibrated against real frames.
   `cam_corner` is the Logitech C920 on a gooseneck, `cam_far` is the LeRobot camera at
   about 30 cm, and `wrist` is on the gripper.
@@ -30,7 +32,7 @@ build from these two files. When the setup changes, edit the JSON, bump its `ver
 run the tests and push. Everyone gets the new model with `git pull`; the package is
 installed editable, so no re-install is needed.
 
-![top-down: sim vs. photo](docs/topdown_sim_vs_photo.jpg)
+![top-down: sim vs. photo (real_setup_photos/new_reference_2.jpg)](docs/topdown_sim_vs_photo.jpg)
 ![real frame | sim | sim + real edges, for cam_corner, cam_far, wrist](docs/camera_compare.jpg)
 
 ## Setup
@@ -140,6 +142,8 @@ All measurements are in **`rebot_sim/real_setup.json`**, in workspace coordinate
 | `cam_corner` | Logitech C920 on the gooseneck: 83 cm from the left, 61 cm from the near wall, 54 cm high; fovy 43° | real arm's table homography + the real frame |
 | `wrist` | on the gripper, centred between the fingers, 5.6 cm behind and 5.6 cm above the hard-finger tip line, tilted 33° towards the fingers; fovy 64°; recorded at 1920×1080 | fitted to the real frame's soft-finger silhouette (IoU 0.90) |
 | Walls | 37 cm (cardboard near/right, black board left) | measured |
+| Tape line | 19 mm yellow tape from the near wall to the far edge, flush against the base plate's right edge (10–11.9 cm right of joint 1) | photos (`real_setup_photos/new_reference_*`); the annotated photo says 27.5 cm from the right wall, about 1.4 cm more |
+| Tape marks | 3 marks of 5.5 × 1.9 cm, wall-side ends 12 / 12.5 / 13 cm from the right wall, centres 25 / 43.5 / 60.5 cm from the near wall | rough measurements (`new_reference_3_with_measurements_in_cms.jpg`) |
 | Can | 13 cm tall, 4.5 cm diameter, 15 g | measured |
 | Paper cup | 11 cm tall, 9 cm top diameter (6 cm bottom, estimated), 8 g | measured |
 | Table texture | cropped from the top-down photo | `rebot_sim/textures/table_wood.png` |
