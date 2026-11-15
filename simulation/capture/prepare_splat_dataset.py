@@ -6,6 +6,15 @@ for Gaussian-splat training on HF Jobs.
       --media ~/Downloads/VID_2026*.mp4 --repo-id <user>/rebot_scene_s1
   # then run the printed `hf jobs run ...` command
 
+Without a capture session (just phone videos of the scene or of one object),
+pass a new name and --standalone; for an object, also give its measured size so
+the splat can be cropped and scaled to metres later (tools/crop_object_splat.py):
+
+  uv run --project ../teleoperation python -m capture.prepare_splat_dataset towel \
+      --standalone --media real_setup_photos/videos/VID_..._154922434.mp4 \
+      --object towel --pose lying --length 0.26 --diameter 0.04 \
+      --repo-id <user>/rebot_splat_towel
+
 Needs `hf auth login` (a token with write access). The dataset is private
 unless you pass --public. --no-upload only builds the folder.
 """
@@ -42,6 +51,16 @@ steel_team repo), for training a Gaussian splat of the static scene.
 Scene version {version}. Board on the table: {board}.
 """
 
+STANDALONE_CARD = """---
+tags: [robotics, gaussian-splatting, rebot-b601]
+---
+# reBot B601 splat capture: {name}
+
+Handheld phone video(s) for training a Gaussian splat ({n_media} files in `phone/`).
+{obj}
+`train_splat.sh` is the HF Jobs training script (steel_team repo, `simulation/hf_jobs`).
+"""
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__,
@@ -51,13 +70,23 @@ def main():
     p.add_argument("--repo-id", default=None, help="<user>/<dataset name>")
     p.add_argument("--public", action="store_true")
     p.add_argument("--no-upload", action="store_true")
+    p.add_argument("--standalone", action="store_true",
+                   help="no capture session: make captures/<session> from --media alone")
+    p.add_argument("--object", help="the video shows this one object (writes object.json)")
+    p.add_argument("--pose", choices=["upright", "lying"], default="upright",
+                   help="upright: its length is vertical; lying: its length is along the table")
+    p.add_argument("--length", type=float, help="object length (height if upright), metres")
+    p.add_argument("--diameter", type=float, help="object diameter, metres")
     args = p.parse_args()
 
     sess = Path(args.session)
     if not sess.exists():
         sess = SIM_DIR / "captures" / args.session
-    if not (sess / "session.json").exists():
-        sys.exit(f"{sess} is not a capture session (no session.json)")
+    if args.standalone:
+        sess.mkdir(parents=True, exist_ok=True)
+    elif not (sess / "session.json").exists():
+        sys.exit(f"{sess} is not a capture session (no session.json); "
+                 "pass --standalone for phone videos alone")
     phone = sess / "phone"
     phone.mkdir(exist_ok=True)
     for m in args.media:
@@ -74,12 +103,27 @@ def main():
     if heic:
         print(f"  ! {len(heic)} HEIC photo(s) will be ignored: export them as JPEG")
 
-    info = json.loads((sess / "session.json").read_text())
     shutil.copy2(JOB_SCRIPT, sess / "train_splat.sh")
-    board = info.get("board")
-    (sess / "README.md").write_text(CARD.format(
-        name=info["name"], n_media=len(media), version=info.get("scene_version"),
-        board="no" if not board else f"yes, near-left corner at {board['near_left']} m"))
+    if args.standalone:
+        obj = ""
+        if args.object:
+            if not (args.length and args.diameter):
+                sys.exit("--object needs --length and --diameter (metres)")
+            meta = {"object": args.object, "pose": args.pose,
+                    "length": args.length, "diameter": args.diameter}
+            (sess / "object.json").write_text(json.dumps(meta, indent=2) + "\n")
+            obj = (f"\nObject: **{args.object}**, {args.pose}, length {args.length * 100:g} cm, "
+                   f"diameter {args.diameter * 100:g} cm (`object.json`).\n")
+        (sess / "README.md").write_text(STANDALONE_CARD.format(
+            name=sess.name, n_media=len(media), obj=obj))
+        title = f"splat capture {sess.name}"
+    else:
+        info = json.loads((sess / "session.json").read_text())
+        board = info.get("board")
+        (sess / "README.md").write_text(CARD.format(
+            name=info["name"], n_media=len(media), version=info.get("scene_version"),
+            board="no" if not board else f"yes, near-left corner at {board['near_left']} m"))
+        title = f"capture session {info['name']}"
     print(f"dataset folder ready: {sess} ({len(media)} phone files)")
 
     repo = args.repo_id
@@ -91,7 +135,7 @@ def main():
     api = HfApi()
     api.create_repo(repo, repo_type="dataset", private=not args.public, exist_ok=True)
     api.upload_folder(folder_path=str(sess), repo_id=repo, repo_type="dataset",
-                      commit_message=f"capture session {info['name']}")
+                      commit_message=title)
     user = repo.split("/")[0]
     print(f"\nuploaded: https://huggingface.co/datasets/{repo}")
     print("\nTrain the splat on HF Jobs (about 30-60 min on an A10G):\n")

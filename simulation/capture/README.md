@@ -94,8 +94,36 @@ hf jobs run --flavor a10g-large --timeout 3h --secrets HF_TOKEN \
   ghcr.io/nerfstudio-project/nerfstudio:latest bash /data/train_splat.sh
 ```
 
-The job extracts video frames (2 fps), runs COLMAP, trains nerfstudio `splatfacto`, and
+The job extracts video frames (`FRAMES` per video, default 200, each the sharpest of
+`PICK`=3 neighbours, which drops motion-blurred frames), runs COLMAP, trains nerfstudio `splatfacto`, and
 uploads `splat.ply`, `transforms.json` and the COLMAP model to a private model repo.
 Follow it with `hf jobs ps` and `hf jobs logs <id>`. Aligning the splat to the sim and
 rendering it behind the MuJoCo robot is the next step; the board in the phone frames
 gives the scale and position for that.
+
+### Without a capture session: scene or object videos
+
+Plain phone videos work too (`--standalone`). For a video circling **one object on a
+table**, give its measured size; it goes into `object.json`:
+
+```bash
+python -m capture.prepare_splat_dataset splat_towel --standalone \
+  --media real_setup_photos/videos/VID_20261115_154922434.mp4 \
+  --object towel --pose lying --length 0.26 --diameter 0.04 \
+  --repo-id <user>/rebot_splat_towel        # --pose upright: length is the height
+```
+
+Train it with the printed command (add `-e FRAMES=300` for long videos). Then cut the
+object out of the table and scale it to metres:
+
+```bash
+hf download <user>/rebot_splat_towel_splat --local-dir splats/towel
+python tools/crop_object_splat.py splats/towel/splat.ply \
+  --object splats/towel/object.json --out splats/towel_object.ply
+```
+
+It levels the table, finds the object, and scales the splat so that the object's length
+matches `object.json`. The output's origin is on the table under the object, with z up
+(x along the length if lying). It also writes `.json` (scale, measured diameter as a
+cross-check, transform) and `.png` (top and side views on a 1 cm grid). The phone videos
+in `real_setup_photos/videos/` are gitignored; their datasets are on the Hub.
