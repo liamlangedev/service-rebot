@@ -2,9 +2,9 @@
 """Fit the table-plane homography: image pixels -> base_link metres.
 
 Record table marks once, then click them in the table and front_camera views.
-Front-view height also needs camera intrinsics (camera_matrix in cameras.yaml).
-Use --allow-approximate-intrinsics to explicitly use the configured FOV instead;
-those heights are approximate and must be checked against measured objects.
+Front-view height uses camera_matrix from cameras.yaml when available, otherwise
+intrinsics are approximated from the configured FOV automatically. Approximate
+heights must be checked against measured objects.
 
 Procedure
 
@@ -350,7 +350,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--allow-approximate-intrinsics",
         action="store_true",
-        help="estimate front_camera intrinsics from horizontal fov_deg; heights are approximate",
+        default=True,
+        help="use horizontal fov_deg when camera_matrix is unset (already enabled by default)",
     )
     parser.add_argument(
         "--max-error-px",

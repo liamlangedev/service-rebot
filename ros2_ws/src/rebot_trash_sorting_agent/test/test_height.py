@@ -82,7 +82,8 @@ def test_refuses_ambiguous_or_wrong_label_matches():
 
 
 @pytest.mark.parametrize("approximate", [False, True])
-def test_calibration_records_five_marks_once_then_clicks_both_views(tmp_path, monkeypatch, approximate):
+@pytest.mark.parametrize("legacy_flag", [False, True])
+def test_calibration_records_five_marks_once_then_clicks_both_views(tmp_path, monkeypatch, approximate, legacy_flag):
     import cv2
     import yaml
     from rebot_trash_sorting_agent import calibrate_table
@@ -104,9 +105,9 @@ def test_calibration_records_five_marks_once_then_clicks_both_views(tmp_path, mo
                     "width": 640,
                     "height": 480,
                     "camera_matrix": None if approximate else intrinsic.tolist(),
-                    "fov_deg": float(np.degrees(2 * np.arctan(320 / 700))),
+                    "fov_deg": float(np.degrees(2 * np.arctan(320 / 700))) if approximate else 30.0,
                 },
-            ]
+            ],
         },
         {},
         {"table": {"z": 0}},
@@ -132,7 +133,7 @@ def test_calibration_records_five_marks_once_then_clicks_both_views(tmp_path, mo
     output = tmp_path / "calibration.yaml"
     output.write_text("wrist: {unchanged: true}\n")
     options = ["--from-arm", "--count", "5", "--out", str(output)]
-    if approximate:
+    if legacy_flag:
         options.append("--allow-approximate-intrinsics")
     calibrate_table.main(options)
     saved = yaml.safe_load(output.read_text())

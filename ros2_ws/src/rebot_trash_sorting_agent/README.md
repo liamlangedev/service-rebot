@@ -47,9 +47,9 @@ ros2 topic pub --once /agent/task std_msgs/msg/String '{data: "Put the can in th
    ```
    Front-camera height uses the same marks and a calibrated `camera_matrix`
    (3x3 K, nine row-major values) plus optional OpenCV `distortion` coefficients
-   from `cameras.yaml`. Without intrinsics only XY is saved. To explicitly try
-   approximate height from the configured **horizontal** `fov_deg`, add
-   `--allow-approximate-intrinsics` to the calibration command. Validate those
+   from `cameras.yaml` when available. Otherwise, intrinsics are automatically
+   approximated from the configured **horizontal** `fov_deg`; no extra flag is
+   needed. A supplied `camera_matrix` always takes precedence. Validate approximate
    heights against measured objects before allowing grasps; low table-plane
    reprojection error alone does not establish height accuracy.
 
