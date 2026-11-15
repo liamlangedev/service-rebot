@@ -2,7 +2,7 @@
 
     teleoperation/.venv/bin/python training_gripper/make_dataset.py \
         --src <local copy of RoboCrafty/rebot_sort_v1> --out <dir> [--push]
-    ... --src RoboCrafty/rebot_sort_towel2 --object towel --task "grasp the towel and lift it" --public
+    ... --src RoboCrafty/rebot_sort_towel2 --object towel --public
 
 Variant A (`<user>/rebot_grasp_<object>_abs`): one clip per grasp, all three cameras,
 absolute state and action (same as the source).
@@ -39,7 +39,7 @@ from relative import to_relative  # noqa: E402
 from segments import episode_arrays, find_grasp, load_frames  # noqa: E402
 
 CAMERAS = ["front_wide", "gripper", "high_oblique"]
-DEFAULT_TASK = {"keys": "grasp the keys and lift them", "towel": "grasp the towel and lift it"}
+DEFAULT_TASK = {"keys": "grasp the keys and lift them", "towel": "pick up the towel"}
 
 
 class Fk:
