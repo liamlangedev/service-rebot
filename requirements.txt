@@ -1,0 +1,11 @@
+# Python dependencies for the real-arm scripts in teleoperation/ (Python 3.10-3.12; 3.12 was used).
+# The Leap bindings are NOT here: they need the Ultraleap SDK installed first. See SETUP.md, step 4.
+lerobot[rebot]==0.7.0
+mujoco>=3.2
+numpy
+scipy
+pynput
+huggingface_hub
+# Quest teleoperation (only for the sim demo with a headset):
+# pure-python-adb
+# oculus-reader @ file:teleoperation/third_party/oculus_reader
