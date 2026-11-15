@@ -1,5 +1,5 @@
 {
-  "version": "1.2",
+  "version": "1.3",
   "_version_comment": "bump when the measured setup changes (rebot_sim.scene_version())",
   "_comment": [
     "Real hackathon setup of the reBot B601 (measured, see reference_photos/).",
@@ -13,9 +13,9 @@
   "_assumed": [
     "bin.wall",
     "bin.floor",
+    "bin.from_left (from the table homography, see bin._comment)",
     "objects.cup.bottom_radius",
-    "wrist_camera.* (matched by eye, no fixed landmarks in view)",
-    "base_plate.size_* (fitted from the camera views, not measured)"
+    "wrist_camera.* (matched by eye, no fixed landmarks in view)"
   ],
   "workspace": {
     "width": 0.98,
@@ -32,14 +32,8 @@
   "robot": {
     "from_left": 0.6,
     "from_near": 0.075,
-    "yaw_deg": 0.0
-  },
-  "base_plate": {
-    "size_near_far": 0.101,
-    "size_left_right": 0.216,
-    "thickness": 0.012,
-    "center_offset_near_far": -0.0245,
-    "_comment": "size fitted from the camera views (tools/calibrate_cameras.py); near edge flush with the near wall"
+    "yaw_deg": 0.0,
+    "_comment": "joint-1 axis. The black base plate is part of the robot mesh (20 x 14 x 1.4 cm), standing on the table at z = 0."
   },
   "walls": {
     "thickness": 0.006,
@@ -57,8 +51,8 @@
     }
   },
   "bin": {
-    "_comment": "White foam box against the left wall. Outer size 25 cm (left-right) x 40 cm (near-far).",
-    "from_left": 0.0,
+    "_comment": "White foam box, 25 cm (left-right) x 40 cm (near-far). from_left: the real arm's table homography (classic_real branch) puts its robot-side bottom edge 30 cm from the joint-1 axis, i.e. 5 cm closer to the robot than flush against the left wall (sketch). Measure the gap to the left wall to confirm.",
+    "from_left": 0.05,
     "from_near": 0.15,
     "size_left_right": 0.25,
     "size_near_far": 0.4,
@@ -75,40 +69,40 @@
     {
       "name": "cam_far",
       "_comment": "LeRobot camera (100 deg) on the far edge, ~30 cm high. Pose and fovy fitted to the real frame (pinhole fit of a lens with barrel distortion)",
-      "from_left": 0.296,
-      "from_near": 0.834,
-      "height": 0.333,
+      "from_left": 0.354,
+      "from_near": 0.826,
+      "height": 0.312,
       "look_at": [
-        0.509,
-        0.45,
+        0.543,
+        0.446,
         0.0
       ],
       "aspect": [
         16,
         9
       ],
-      "roll_deg": -0.1,
-      "fovy": 66.9,
-      "_calibrated": "tools/calibrate_cameras.py against reference_photos/cameras"
+      "roll_deg": 1.2,
+      "fovy": 65.9,
+      "_calibrated": "tools/calibrate_cameras.py: reference_photos/cameras"
     },
     {
       "name": "cam_corner",
       "_comment": "Logitech C920 (~75 deg diagonal) on a gooseneck from the far-right corner; the head sits over the right wall. Pose fitted to the real frame, fovy pinned to the C920 spec",
-      "from_left": 0.964,
-      "from_near": 0.459,
-      "height": 0.565,
+      "from_left": 0.833,
+      "from_near": 0.61,
+      "height": 0.541,
       "look_at": [
-        0.556,
-        0.269,
+        0.547,
+        0.311,
         0.0
       ],
       "aspect": [
         16,
         9
       ],
-      "roll_deg": 25.9,
-      "fovy": 42.4,
-      "_calibrated": "tools/calibrate_cameras.py against reference_photos/cameras",
+      "roll_deg": 7.4,
+      "fovy": 43.3,
+      "_calibrated": "tools/calibrate_cameras.py: reference_photos/cameras + the real arm's table homography (classic_real)",
       "mount": "none"
     }
   ],

@@ -50,9 +50,11 @@ def test_layout_matches_measurements():
     for w in ("near", "right", "left"):
         g = m.geom(f"wall_{w}")
         assert abs(g.pos[2] + g.size[2] - (ws.table_z + 0.37)) < 1e-6
-    # Base plate flush with the near wall.
-    plate = m.geom("base_plate_geom")
-    assert abs((plate.pos[0] - plate.size[0]) - (-ws.robot_from_near)) < 1e-6
+    # Table at the robot origin (the base plate is part of the robot mesh), and no
+    # separate plate geom any more.
+    top = m.geom("table_top")
+    assert abs(top.pos[2] + top.size[2]) < 1e-9 and ws.table_z == 0.0
+    assert not any(m.geom(i).name == "base_plate_geom" for i in range(m.ngeom))
 
 
 def test_camera_fov_from_diagonal():
@@ -66,16 +68,13 @@ def test_cameras_match_real_frames():
     """The calibration landmarks, projected through the compiled sim cameras,
     land within 30 px of where they are in the real 1920x1080 frames."""
     sys.path.insert(0, str(SIM / "tools"))
-    from calibrate_cameras import CAMERAS, H, W, plate
+    from calibrate_cameras import CAMERAS, H, W
     e = env()
-    cfg = e.cfg["base_plate"]
     for cam, obs in CAMERAS.items():
         c = e.data.cam(cam)
         R, C = c.xmat.reshape(3, 3), c.xpos
         f = H / 2 / np.tan(np.radians(e.model.cam_fovy[e.model.camera(cam).id]) / 2)
         for label, P, px in obs["points"]:
-            if isinstance(P[0], str):
-                P = plate(cfg["size_left_right"], cfg["size_near_far"], P[1], P[2])
             pc = R.T @ (e.ws.world(*P) - C)
             uv = np.array([W / 2 + f * pc[0] / -pc[2], H / 2 - f * pc[1] / -pc[2]])
             err = np.linalg.norm(uv - px)

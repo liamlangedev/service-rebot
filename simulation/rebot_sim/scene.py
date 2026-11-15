@@ -5,7 +5,8 @@ replaces Seeed's demo table and cubes with the measured hackathon setup from
 real_setup.json (next to this file):
 
   * the wood table (texture cropped from the photos) and the floor below it
-  * the black base plate the arm is clamped to (plus the two green clamps)
+  * the two green clamps on the robot's base plate (the plate itself is part of
+    the robot mesh: 20 x 14 x 1.4 cm, bottom at the robot origin)
   * cardboard walls behind and right of the robot, black board on the left
   * the white foam bin with its compartments (place targets `bin_0`, `bin_1`, ...)
   * the two external cameras (`cam_far`, `cam_corner`) at their measured spots
@@ -13,7 +14,8 @@ real_setup.json (next to this file):
 
 The robot base stays at the world origin (+x = towards the far edge, +y = towards
 the bin side), so the IK, teleop mapping and LeRobot recording work unchanged.
-The table top sits `base_plate.thickness` below the origin.
+The table top is at z = 0 (the robot's base plate stands on it), the same frame
+as base_link in the ROS stack.
 """
 from __future__ import annotations
 
@@ -117,9 +119,8 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
     _remove_demo_scene(spec)
 
     ws_cfg, rob = cfg["workspace"], cfg["robot"]
-    plate = cfg["base_plate"]
     ws = Workspace(ws_cfg["width"], ws_cfg["depth"], rob["from_left"], rob["from_near"],
-                   table_z=-plate["thickness"])
+                   table_z=0.0)
     info = SceneInfo(ws, cfg)
 
     if rob.get("yaw_deg"):
@@ -129,7 +130,7 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
 
     _add_visual_settings(spec)
     _add_table(spec, ws, cfg["table"], _resolve(cfg, cfg["table"]["texture"]))
-    _add_base_plate(spec, ws, plate)
+    _add_clamps(spec, ws)
     _add_walls(spec, ws, cfg["walls"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
     if cfg.get("charuco", {}).get("enabled"):
@@ -222,19 +223,19 @@ def _add_table(spec, ws: Workspace, t, tex_path: Path):
                             material=_material(spec, "room_floor_mat", _COLORS["floor"]))
 
 
-def _add_base_plate(spec, ws: Workspace, p):
-    mat = _material(spec, "base_plate_mat", _COLORS["plate"], specular=0.3)
-    body = spec.worldbody.add_body(name="base_plate")
-    c = ws.world(ws.robot_from_left, ws.robot_from_near + p["center_offset_near_far"],
-                 p["thickness"] / 2)
-    _box(body, "base_plate_geom", c,
-         [p["size_near_far"] / 2, p["size_left_right"] / 2, p["thickness"] / 2], mat)
-    # Two green C-clamps holding the plate (visual only).
+# The robot mesh's base plate (base_link_matte_black): half sizes and thickness.
+BASE_PLATE_HALF = (0.07, 0.10)   # along x (near-far), y (left-right) [m]
+BASE_PLATE_T = 0.014
+
+
+def _add_clamps(spec, ws: Workspace):
+    """Two green C-clamps on the near corners of the robot's base plate (visual)."""
     clamp = _material(spec, "clamp_mat", _COLORS["clamp"])
+    body = spec.worldbody.add_body(name="clamps")
+    hx, hy = BASE_PLATE_HALF
     for i, side in enumerate((-1, 1)):
-        cc = c + [-p["size_near_far"] / 2 + 0.02, side * (p["size_left_right"] / 2 - 0.015),
-                  p["thickness"] / 2 + 0.012]
-        _box(body, f"clamp_{i}", cc, [0.02, 0.008, 0.012], clamp, collide=False)
+        _box(body, f"clamp_{i}", [-hx + 0.02, side * (hy - 0.015), BASE_PLATE_T + 0.012],
+             [0.02, 0.008, 0.012], clamp, collide=False)
 
 
 def _add_walls(spec, ws: Workspace, w):

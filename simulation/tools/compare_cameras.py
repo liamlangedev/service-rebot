@@ -4,7 +4,7 @@
 
 Each row: real frame | sim render | sim render with the real frame's edges in red.
 The arm pose differs between the photos and the sim, so compare the static scene
-(walls, table edges, bin, base plate).
+(walls, table edges, bin, the robot's base plate).
 """
 import argparse
 import sys

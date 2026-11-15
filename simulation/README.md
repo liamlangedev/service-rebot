@@ -105,7 +105,7 @@ renders, the teleop `--scene` flag, and that the export loads standalone.
 
 The robot base stays at the world origin, so the IK, teleop and recording code are unchanged.
 **+x** points from the robot to the open far edge and **+y** points to the robot's left (the bin side).
-The table top is at z = −1.2 cm, the base plate's thickness.
+The table top is at z = 0: the robot's base plate (part of the robot mesh) stands on it. This is the same frame as `base_link` in the ROS stack (`classic_real`).
 
 ```
                  far edge (open)  84 cm from the near wall
@@ -130,12 +130,12 @@ All measurements are in **`rebot_sim/real_setup.json`**, in workspace coordinate
 |---|---|---|
 | Workspace | 98 × 84 cm | measured |
 | Robot (joint-1 axis) | 38 cm from the right wall; plate flush with the near wall (axis 7.5 cm out) | measured |
-| Base plate | 21.6 × 10.1 × 1.2 cm, flush with the near wall, 2 green clamps | fitted from the camera views |
-| Foam bin | 25 × 40 cm, 15 cm from the near wall, against the left wall | measured |
+| Base plate | 20 × 14 × 1.4 cm, part of the robot mesh, centred on joint 1; 2 green clamps | robot model |
+| Foam bin | 25 × 40 cm, 15 cm from the near wall; robot-side edge 30 cm from joint 1 (5 cm gap to the left wall) | size measured; position from the real arm's table homography |
 | Bin height / divider | 12 cm, one divider in the middle → `bin_0`, `bin_1` | measured |
 | Bin wall / floor thickness | 2.5 cm / 2 cm | **estimated** |
-| `cam_far` | LeRobot camera, far edge: 30 cm from the left, 33 cm high; fovy 67° (16:9) | fitted to the real frame |
-| `cam_corner` | Logitech C920; the gooseneck puts the head over the right wall, 46 cm from the near wall, 56 cm high, rolled 26°; fovy 42° | pose fitted to the real frame, fovy from the C920 spec |
+| `cam_far` | LeRobot camera, far edge: 35 cm from the left, 31 cm high; fovy 66° (16:9) | fitted to the real frame (matches the hand measurement) |
+| `cam_corner` | Logitech C920 on the gooseneck: 83 cm from the left, 61 cm from the near wall, 54 cm high; fovy 43° | real arm's table homography + the real frame |
 | `wrist` | on the gripper, centred between the fingers, 9 cm behind and 3 cm above the fingertips; fovy 67° | matched by eye to the real frame |
 | Walls | 37 cm (cardboard near/right, black board left) | measured |
 | Can | 13 cm tall, 4.5 cm diameter, 15 g | measured |
@@ -186,10 +186,18 @@ Without the board, the camera poses come from real frames (`reference_photos/cam
 
 - `tools/calibrate_cameras.py` fits each external camera's pose and focal length. It uses
   hand-picked landmarks with known positions (base-plate corners, bin corners, the
-  table/wall edges) and their pixels in the photo. The C920's focal length is pinned to its
-  spec; the corner view's landmarks are nearly all on the table, so focal length and
-  distance would otherwise trade off. `--overlay DIR` draws the fit on the photos and
-  `--write` updates `real_setup.json`.
+  table/wall edges) and their pixels in the photo. `--overlay DIR` draws the fit on the
+  photos and `--write` updates `real_setup.json`.
+- For the C920 (`cam_corner`) it also uses the **table homography measured on the real
+  arm**, from the `classic_real` branch
+  (`ros2_ws/src/rebot_trash_sorting_agent/config/calibration.yaml`): 5 tape marks touched
+  with the closed gripper and read from forward kinematics, 2.48 mm error. That ties the
+  camera to the arm itself; the fit matches it to 3.4 px mean. Decomposed on its own, the
+  homography gives a 42.8° vertical FOV, the C920's spec.
+- The homography also corrected two scene errors. The separate base plate was a duplicate
+  (the robot mesh already has it), so the table moved up 12 mm to z = 0. And the bin sits
+  5 cm closer to the robot than the sketch had it. With both fixed, the center camera fits
+  to 35 cm from the left and 31 cm high, which matches the hand measurement (36 cm, 30 cm).
 - The gripper camera sees no fixed landmarks, so its mount was matched by rendering
   candidates next to the real frame.
 - `tools/compare_cameras.py` renders the image above (real | sim | sim + real edges).
