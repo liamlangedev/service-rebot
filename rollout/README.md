@@ -209,8 +209,14 @@ Suggested order, each with the towel folded flat on the table:
      wrist camera on it, press `h` to lock, then `a`.
    - Then move the towel 5, 10 and 15 cm and rotate it. Place the arm above it each time.
 3. **`rollout/run.sh towel-smolvla-abs`** and **`towel-smolvla-rel`**: the same two
-   procedures with SmolVLA. Its inference is slower than ACT's: use `--device cuda` if
-   there is a GPU, and watch for `chunk ran out` in the output.
+   procedures with SmolVLA. They run in **sync mode** (`--sync`):
+   - the arm holds still while SmolVLA thinks, then plays the 50-action chunk (1.7 s), then
+     holds and thinks again;
+   - on the dev laptop's CPU each pause is about 6-15 s (`inference 9.9 s; playing 50
+     actions` in the output). That's expected: wait, don't stop it;
+   - `--timeout 15` counts only the time spent moving, so a grasp gets up to ~9 chunks;
+   - `space` still stops it at any time, during a pause too;
+   - with a GPU, add `--device cuda` and the pauses shrink to well under a second.
 
 For a first run, add `--max-speed 20`. The usual keys and safety limits apply; the towel
 demos stay inside them (reach up to 0.534 m against the 0.55 m cap, lowest TCP 0.128 m
@@ -252,14 +258,24 @@ command from the measured position) and pos_vel control with a motor speed cap o
 
 ## Inference speed
 
-Inference runs in a thread on the newest observation. Each 30 Hz tick executes the action
-of the latest chunk that belongs to "now". Measured on the dev laptop's CPU:
+**Streaming (default):** inference runs in a thread on the newest observation, and each
+30 Hz tick executes the action of the latest chunk that belongs to "now". Inference must
+be faster than a chunk.
+
+**`--sync`:** hold -> infer on the current observation -> play the chunk from its start
+-> repeat (`--sync-steps N` plays only the first N actions). It suits any speed, at the
+cost of pauses. `--timeout` then counts moving time only.
+
+Measured on the dev laptop's CPU:
 
 | policy | cameras | inference | chunk | ok on CPU? |
 |---|---|---|---|---|
 | act_rebot_grasp_keys_rel | 1 | ~260 ms | 30 (1 s) | yes |
 | act_rebot_sort_v1 | 3 | ~820 ms | 100 (3.3 s) | yes |
-| act_rebot_grasp_keys_abs | 3 | ~1.1 s | 30 (1 s) | **no** ("chunk ran out" in the log) |
+| act_rebot_grasp_keys_abs | 3 | ~1.1 s | 30 (1 s) | **no** ("chunk ran out" in the log): `--sync` |
+| act_rebot_grasp_towel_rel / _abs | 1 / 3 | ~0.16 / 0.25 s | 30 (1 s) | yes |
+| smolvla towel rel (checkpoint 1000) | 1 | ~6-10 s | 50 (1.7 s) | `--sync` (set in run.sh) |
+| smolvla towel abs (checkpoint 1000) | 3 | ~15 s | 50 (1.7 s) | `--sync` (set in run.sh) |
 
 ## Dry run without the arm
 

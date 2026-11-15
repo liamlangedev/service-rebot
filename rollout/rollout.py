@@ -191,9 +191,18 @@ def load_runner(args, mode: str):
 
 # ---------------------------------------------------------------------------- policy loop
 def run_policy(sess: Session, runner, cam_map: dict[str, str], grasp: bool) -> dict:
-    """30 Hz loop. Inference runs in a thread on the latest observation; each tick executes
-    the action of the newest chunk that belongs to 'now'. Stops on done / timeout / key /
-    safety, then holds."""
+    """Run the policy until done / timeout / key / safety, then return a summary (the
+    caller holds the arm).
+
+    Default (streaming): inference runs in a thread on the latest observation, and each
+    30 Hz tick executes the action of the newest chunk that belongs to "now". It needs
+    inference faster than a chunk.
+
+    --sync (slow policies, e.g. SmolVLA on a CPU): hold still -> infer on the current
+    observation -> play the chunk from its first action -> repeat. The arm waits during
+    inference, so the observation the chunk was planned from stays valid. --timeout then
+    counts only the time spent moving.
+    """
     from rebot_trash_sorting_agent.grasp_policy.done import DoneConfig, GraspDone
 
     args = sess.args
@@ -204,9 +213,65 @@ def run_policy(sess: Session, runner, cam_map: dict[str, str], grasp: bool) -> d
     sess.safety.set_anchor(state)
     done = GraspDone(DoneConfig(lift_m=args.lift_m)) if grasp else None
     lag = LagWatch(sess.limits)
+    ctx = {"prev_cmd": state.copy(), "t_start": time.monotonic(), "moving_s": 0.0}
+    infer_ms: list[float] = []
 
-    shared = {"obs": (state, images, time.monotonic()), "plan": None, "error": None,
-              "infer_ms": []}
+    def predict(st, imgs):
+        st_data = st.copy()
+        st_data[6] = sess.grip.to_data(st[6])
+        pimgs = {pname: imgs[src] for pname, src in cam_map.items()}
+        tic = time.monotonic()
+        acts, _ = runner.predict(st_data, pimgs, n=runner.chunk_size)
+        infer_ms.append((time.monotonic() - tic) * 1000)
+        return acts
+
+    def apply(a, st, now) -> str | None:
+        """Safety-filter and send one policy action; returns a stop reason or None."""
+        cmd = np.r_[a[:6], sess.grip.to_robot(float(a[6]))]
+        v = sess.safety.filter(cmd, ctx["prev_cmd"])
+        if v.stop:
+            return f"safety: {v.stop}"
+        sess.send(v.command)
+        ctx["prev_cmd"] = v.command
+        why = lag.update(now, v.command, st)
+        if why:
+            return f"safety: {why}"
+        tcp = sess.fk(st)
+        sess.log.append({"t": now - ctx["t_start"], "state": st, "policy_action": a,
+                         "command": v.command, "tcp": np.array(tcp),
+                         "clipped": ",".join(v.clipped)})
+        if done is not None:
+            closing = sess.grip.opening_data(float(a[6])) < 0.3
+            finger = sess.grip.opening_robot(st[6]) * 0.05  # metre-equivalent
+            if done.update(closing, finger, tcp[2]):
+                return f"gripped and lifted {done.lifted_m * 100:.1f} cm"
+        return None
+
+    def key_stop() -> bool:
+        return sess.keys.poll() in (" ", "s", "q")
+
+    sess.event("policy running" + (" (sync: infer, then play the chunk)" if args.sync else "")
+               + "; space = stop")
+    reason = "timeout"
+    if args.sync:
+        reason = _loop_sync(sess, predict, apply, key_stop, ctx, args)
+    else:
+        reason = _loop_streaming(sess, predict, apply, key_stop, ctx, args)
+
+    summary = {"reason": reason, "duration_s": round(time.monotonic() - ctx["t_start"], 2),
+               "moving_s": round(ctx["moving_s"], 2), "sync": bool(args.sync),
+               "ticks": len(sess.log), "inferences": len(infer_ms),
+               "infer_ms_median": round(float(np.median(infer_ms)), 1) if infer_ms else None,
+               "clipped_ticks": sum(1 for r in sess.log if r["clipped"])}
+    if done is not None:
+        summary.update(gripped=done.gripped, lifted_m=round(done.lifted_m, 4))
+    sess.event(f"policy stopped: {reason}")
+    return summary
+
+
+def _loop_streaming(sess, predict, apply, key_stop, ctx, args) -> str:
+    state, images = sess.observe()
+    shared = {"obs": (state, images, time.monotonic()), "plan": None, "error": None}
     lock = threading.Lock()
     running = threading.Event()
     running.set()
@@ -216,87 +281,93 @@ def run_policy(sess: Session, runner, cam_map: dict[str, str], grasp: bool) -> d
             with lock:
                 st, imgs, t_obs = shared["obs"]
             try:
-                st_data = st.copy()
-                st_data[6] = sess.grip.to_data(st[6])
-                pimgs = {pname: imgs[src] for pname, src in cam_map.items()}
-                tic = time.monotonic()
-                acts, _ = runner.predict(st_data, pimgs, n=runner.chunk_size)
+                acts = predict(st, imgs)
                 with lock:
                     shared["plan"] = (t_obs, acts)
-                    shared["infer_ms"].append((time.monotonic() - tic) * 1000)
             except Exception as exc:  # noqa: BLE001 - surfaced in the control loop
                 shared["error"] = exc
                 return
 
-    th = threading.Thread(target=infer_loop, daemon=True)
-    th.start()
-    sess.event("policy running; space = stop")
-    prev_cmd = state.copy()
+    threading.Thread(target=infer_loop, daemon=True).start()
     starved_plan = None
-    reason, t_start = "timeout", time.monotonic()
     try:
         while True:
             now = time.monotonic()
-            if now - t_start > args.timeout:
-                break
+            if now - ctx["t_start"] > args.timeout:
+                return "timeout"
             if shared["error"] is not None:
-                reason = f"inference error: {shared['error']}"
-                break
-            k = sess.keys.poll()
-            if k in (" ", "s", "q"):
-                reason = "stopped by key"
-                break
+                return f"inference error: {shared['error']}"
+            if key_stop():
+                return "stopped by key"
             state, images = sess.observe()
             with lock:
                 shared["obs"] = (state, images, now)
                 plan = shared["plan"]
             if plan is None:  # first inference not ready yet: hold
-                sess.send(prev_cmd)
+                sess.send(ctx["prev_cmd"])
                 time.sleep(DT)
                 continue
             t_obs, acts = plan
             i = int(round((now - t_obs) / DT))
             if i >= len(acts):
                 if starved_plan is not t_obs:
-                    sess.event("chunk ran out before the next inference; repeating its last action")
+                    sess.event("chunk ran out before the next inference; repeating its last "
+                               "action (slow policy? use --sync)")
                     starved_plan = t_obs
                 i = len(acts) - 1
-            a = acts[i]
-            cmd = np.r_[a[:6], sess.grip.to_robot(float(a[6]))]
-            v = sess.safety.filter(cmd, prev_cmd)
-            if v.stop:
-                reason = f"safety: {v.stop}"
-                break
-            sess.send(v.command)
-            prev_cmd = v.command
-            why = lag.update(now, v.command, state)
+            why = apply(acts[i], state, now)
             if why:
-                reason = f"safety: {why}"
-                break
-            tcp = sess.fk(state)
-            sess.log.append({"t": now - t_start, "state": state, "policy_action": a,
-                             "command": v.command, "tcp": np.array(tcp),
-                             "clipped": ",".join(v.clipped)})
-            if done is not None:
-                closing = sess.grip.opening_data(float(a[6])) < 0.3
-                finger = sess.grip.opening_robot(state[6]) * 0.05  # metre-equivalent
-                if done.update(closing, finger, tcp[2]):
-                    reason = f"gripped and lifted {done.lifted_m * 100:.1f} cm"
-                    break
+                return why
+            ctx["moving_s"] = now - ctx["t_start"]
             sleep = now + DT - time.monotonic()
             if sleep > 0:
                 time.sleep(sleep)
     finally:
         running.clear()
-    ms = shared["infer_ms"]
-    summary = {"reason": reason, "duration_s": round(time.monotonic() - t_start, 2),
-               "ticks": len(sess.log), "inferences": len(ms),
-               "infer_ms_median": round(float(np.median(ms)), 1) if ms else None,
-               "clipped_ticks": sum(1 for r in sess.log if r["clipped"])}
-    if done is not None:
-        summary.update(gripped=done.gripped, lifted_m=round(done.lifted_m, 4))
-    sess.event(f"policy stopped: {reason}")
-    return summary
+
+
+def _loop_sync(sess, predict, apply, key_stop, ctx, args) -> str:
+    n_play = args.sync_steps
+    while True:
+        if ctx["moving_s"] >= args.timeout:
+            return "timeout"
+        # 1. infer on the current observation while holding still
+        state, images = sess.observe()
+        box: dict = {}
+
+        def work(st=state, imgs=images):
+            try:
+                box["acts"] = predict(st, imgs)
+            except Exception as exc:  # noqa: BLE001
+                box["error"] = exc
+
+        th = threading.Thread(target=work, daemon=True)
+        th.start()
+        tic = time.monotonic()
+        while th.is_alive():
+            sess.send(ctx["prev_cmd"])          # hold
+            if key_stop():
+                return "stopped by key"
+            time.sleep(DT)
+        if "error" in box:
+            return f"inference error: {box['error']}"
+        sess.event(f"inference {time.monotonic() - tic:.1f} s; playing "
+                   f"{min(n_play or len(box['acts']), len(box['acts']))} actions")
+        # 2. play the chunk from its first action
+        acts = box["acts"][: n_play or None]
+        t0 = time.monotonic()
+        for i, a in enumerate(acts):
+            if key_stop():
+                return "stopped by key"
+            now = time.monotonic()
+            state = sess.state()
+            why = apply(a, state, now)
+            if why:
+                return why
+            ctx["moving_s"] += DT
+            sleep = t0 + (i + 1) * DT - time.monotonic()
+            if sleep > 0:
+                time.sleep(sleep)
 
 
 # ---------------------------------------------------------------------------- modes
@@ -427,7 +498,12 @@ def main() -> None:
                    help="max joint error after a slow move, else stop")
     p.add_argument("--max-step-deg", type=float, default=8.0, help="driver max_relative_target")
     p.add_argument("--motor-vel-deg", type=float, default=60.0, help="driver pos_vel speed [deg/s]")
-    p.add_argument("--timeout", type=float, default=None, help="policy time limit [s]")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="policy time limit [s] (with --sync: time spent moving)")
+    p.add_argument("--sync", action="store_true",
+                   help="slow policies: hold while inferring, then play the chunk from its start")
+    p.add_argument("--sync-steps", type=int, default=0,
+                   help="with --sync: actions played per inference (0 = the whole chunk)")
     # grasp
     p.add_argument("--lift-m", type=float, default=0.05)
     p.add_argument("--approach-s", type=float, default=5.0, help="duration of the slow approach")

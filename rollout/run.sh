@@ -55,7 +55,8 @@ case "$mode" in
     exec "$PY" rollout/rollout.py grasp-rel "${WRIST_CAM[@]}" \
       --policy "${SMOLVLA_TOWEL_REL:-niru-5/smolvla_rebot_grasp_towel_rel_2026-11-15_14-38-20}" \
       --policy-subfolder "checkpoints/${CKPT:-001000}/pretrained_model" \
-      --use-cams camera2 --task "pick up the towel" --max-speed 30 --max-offset 20 "$@" ;;
+      --use-cams camera2 --task "pick up the towel" --max-speed 30 --max-offset 20 \
+      --sync --timeout 15 "$@" ;;
   towel-act-abs)
     # final model (eval loss 0.270; flat from 3k); CKPT=00N000 for an earlier checkpoint
     exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" --policy niru-5/act_rebot_grasp_towel_abs \
@@ -66,7 +67,8 @@ case "$mode" in
     exec "$PY" rollout/rollout.py grasp-abs "${ALL_CAMS[@]}" \
       --policy "${SMOLVLA_TOWEL_ABS:-niru-5/smolvla_rebot_grasp_towel_abs_2026-11-15_14-38-42}" \
       --policy-subfolder "checkpoints/${CKPT:-001000}/pretrained_model" \
-      --start-dataset niru-5/rebot_grasp_towel_abs --start-episode 29 --task "pick up the towel" "$@" ;;
+      --start-dataset niru-5/rebot_grasp_towel_abs --start-episode 29 --task "pick up the towel" \
+      --sync --timeout 15 "$@" ;;
   dry-run)
     src="${DATASET_ROOT:-$HOME/.cache/rebot_sort_v1}"
     if [[ ! -f "$src/meta/info.json" ]]; then
