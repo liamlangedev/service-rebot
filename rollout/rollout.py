@@ -80,8 +80,38 @@ class Session:
     def state(self) -> np.ndarray:
         return state_of(self.robot.get_observation())
 
-    def send(self, cmd7: np.ndarray) -> None:
-        self.robot.send_action(to_action(cmd7))
+    def fresh_state(self, tol_deg: float = 0.5, tries: int = 15) -> np.ndarray:
+        """Read until two consecutive readings agree (after re-enabling torque the first
+        replies can still be the pre-torque-off positions)."""
+        prev = self.state()
+        for _ in range(tries):
+            time.sleep(0.03)
+            cur = self.state()
+            if np.max(np.abs(cur[:6] - prev[:6])) <= tol_deg:
+                return cur
+            prev = cur
+        return prev
+
+    def send(self, cmd7: np.ndarray) -> np.ndarray:
+        """Send a 7-D command; returns what the driver actually sent (after its step limit)."""
+        sent = self.robot.send_action(to_action(cmd7)) or {}
+        return np.array([sent.get(f"{n}.pos", c) for n, c in zip(robot_io.JOINTS, cmd7)])
+
+    def lock_here(self) -> np.ndarray:
+        """Hold the arm where it is now, right after torque was re-enabled.
+
+        If the driver had to clamp the hold command, the target was a stale reading (the
+        pose before a hand placement): re-read and retarget, never pull the arm back.
+        """
+        for _ in range(5):
+            target = self.fresh_state()
+            target[6] = self.grip.robot_open
+            sent = self.send(target)
+            if np.max(np.abs(sent[:6] - target[:6])) < 1.0:
+                return target
+            self.event("hold target was stale (driver clamped it); re-reading the arm")
+            time.sleep(0.05)
+        return self.fresh_state()
 
     def event(self, msg: str) -> None:
         stamp = f"[{time.monotonic() - self.t0:6.1f}s] {msg}"
@@ -437,7 +467,7 @@ def mode_grasp_rel(sess: Session, runner, cam_map) -> dict:
     ready = np.r_[READY_DEG, sess.grip.robot_open]
     if sess.args.via_ready and not sess.move_to(ready, 5.0, "ready pose"):
         return {"reason": "did not reach the ready pose"}
-    print("Place the gripper ~5 cm above the keys, wrist camera looking at them:\n"
+    print("Place the gripper ~5 cm above the object, wrist camera looking at it:\n"
           "  h = torque OFF (SUPPORT THE ARM, it will drop) / h again = torque ON and hold here\n"
           "  a = start the grasp from the current pose   q = quit")
     if sess.args.auto_start or not sess.keys.enabled:
@@ -451,11 +481,13 @@ def mode_grasp_rel(sess: Session, runner, cam_map) -> dict:
             if k == "h":
                 torque_on = not torque_on
                 if torque_on:
-                    target = sess.state()
-                    target[6] = sess.grip.robot_open
+                    # Re-enable first, then read: with torque off the motors don't report
+                    # fresh positions, so a reading taken before enabling is the pose from
+                    # before the hand placement, and holding it pulls the arm back there.
                     set_torque(sess.robot, True)
-                    sess.send(target)
-                    sess.event("torque ON, holding here")
+                    target = sess.lock_here()
+                    sess.event("torque ON, holding here: "
+                               f"joints {np.round(target[:6], 1).tolist()}")
                 else:
                     sess.event("torque OFF: move the arm by hand, h to lock")
                     set_torque(sess.robot, False)
