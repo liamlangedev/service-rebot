@@ -13,10 +13,11 @@ Most episodes run 13–19 s. One outlier is 50 s; it's kept for now.
 | Init | From scratch (ImageNet ResNet18) | Fine-tune `lerobot/smolvla_base` |
 | Cameras | All 3 | All 3, renamed to `camera1/2/3` |
 | Chunk size / actions executed | 100 / 100 | 50 / 50 |
-| Batch size / steps | 32 / 50k | 64 / 20k |
+| Batch size / steps | 32 / 40k | 64 / 20k |
 | Learning rate | 1e-5 (default) | 1e-4, cosine decay (default) |
 | Checkpoints | Every 5k steps, pushed to the Hub | Every 5k steps, pushed to the Hub |
-| HF Jobs flavor | `a10g-large` | `a100-large` |
+| HF Jobs flavor | `a100-large` | `a100-large` |
+| Tracking | Trackio → `niru-5/rebot-training` (private Space) | same |
 
 ## Run
 
@@ -40,3 +41,8 @@ as a secret.
 - With `--policy.path`, lerobot 0.7.0 ignores `--policy.repo_id` on remote runs. The SmolVLA model
   is pushed to a timestamped repo (`niru-5/smolvla_rebot_sort_v1_<date>_<time>`).
 - Run the policy on the robot at 30 Hz to match the dataset fps.
+- Loss curves are logged to Trackio, lerobot 0.7.0's replacement for W&B, in the private Space
+  `niru-5/rebot-training`. Remote jobs need `--trackio.space_id`, because the pod's local Trackio
+  database is deleted with the pod. Override it with `TRACKIO_SPACE=user/space`.
+- ACT on `a10g-large` ran at ~1.16 steps/s, limited by the GPU, so 50k steps would have taken
+  about 12 h. It was moved to `a100-large` with 40k steps and a 24 h timeout.

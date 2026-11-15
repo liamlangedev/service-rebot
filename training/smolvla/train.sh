@@ -29,6 +29,9 @@ exec "$LEROBOT_TRAIN" \
   --log_freq=200 \
   --job_name=smolvla_rebot_sort_v1 \
   --job.target="$TARGET" \
-  --job.timeout=12h \
+  --trackio.enable=true \
+  --trackio.space_id="${TRACKIO_SPACE:-$HF_USER/rebot-training}" \
+  --trackio.private=true \
+  --job.timeout=24h \
   --job.detach=true \
   "$@"
