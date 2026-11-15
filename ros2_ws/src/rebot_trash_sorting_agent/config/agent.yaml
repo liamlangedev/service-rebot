@@ -1,0 +1,47 @@
+# Planner and perception settings for rebot_trash_sorting_agent.
+#
+# The API key is NOT stored here. Put it in a gitignored .env next to the workspace:
+#   ros2_ws/.env  ->  GEMINI_API_KEY=...
+# or export it in the shell that starts the launch file. See README.md.
+
+vlm:
+  provider: gemini              # gemini | openai | mock
+  model: gemini-3.8-flash       # GA, vision + function calling, $0.75/$3.75 per M tokens
+  tool_mode: native             # native (function calling) | json (prompted JSON, for small models)
+  api_key_env: GEMINI_API_KEY
+  base_url: null                # openai-compatible endpoints only: http://127.0.0.1:8000/v1
+  thinking_level: low           # gemini only: low | medium | high | null (model default)
+  max_output_tokens: 2048
+  temperature: 0.2
+  timeout_s: 60
+  retries: 2
+  max_steps: 12                 # tool calls per task before giving up
+  history_images: 2             # keep at most this many camera frames in the conversation
+
+perception:
+  model: ${models}/yoloe-26l-seg.pt
+  text_encoder: mobileclip2_b.ts
+  device: cpu                   # cpu | cuda:0
+  conf: 0.12
+  # The detector is open-vocabulary. The task sentence supplies the nouns and is
+  # expanded into colour prompts at run time ("can" -> "red can", "white cup", ...).
+  # These defaults only cover the first list_objects call and unusual task wording.
+  # There is deliberately no per-object size or class geometry here: width and
+  # orientation are measured from the mask through the table homography.
+  classes:
+    - can
+    - cup
+  max_side: 1024                # longest image side sent to the VLM
+  jpeg_quality: 85
+  #: used to merge successive detections of the same object
+  merge_radius: 0.05
+
+run:
+  dry_run: false                # plan and validate without executing motion
+  task_timeout_s: 240
+  capture_timeout_s: 5.0        # how long to wait for a fresh camera frame
+  home_on_finish: false
+
+logging:
+  runs_dir: ${runs}
+  publish_events: true

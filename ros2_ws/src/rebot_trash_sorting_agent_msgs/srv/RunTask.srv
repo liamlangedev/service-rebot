@@ -1,0 +1,8 @@
+# Ask the agent to do something. Returns immediately: the task runs in the
+# background and progress is published on /agent/status and /agent/events.
+string task
+---
+# True when the task was queued. False when a task is already running or the
+# agent is not ready (no camera, no calibration, ...); message says why.
+bool accepted
+string message

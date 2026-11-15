@@ -7,3 +7,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+.env
+models/
+runs/
+calibration.yaml
