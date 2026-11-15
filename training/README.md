@@ -13,9 +13,9 @@ Most episodes run 13–19 s. One outlier is 50 s; it's kept for now.
 | Init | From scratch (ImageNet ResNet18) | Fine-tune `lerobot/smolvla_base` |
 | Cameras | All 3 | All 3, renamed to `camera1/2/3` |
 | Chunk size / actions executed | 100 / 100 | 50 / 50 |
-| Batch size / steps | 32 / 40k | 64 / 20k |
-| Learning rate | 1e-5 (default) | 1e-4, cosine decay (default) |
-| Checkpoints | Every 5k steps, pushed to the Hub | Every 5k steps, pushed to the Hub |
+| Batch size / steps | 96 / 13.5k | 128 / 10k |
+| Learning rate | 1e-5 (default) | 1e-4, cosine decay (warmup 500, decay 15k) |
+| Checkpoints | Every 1.5k steps, pushed to the Hub | Every 2.5k steps, pushed to the Hub |
 | HF Jobs flavor | `a100-large` | `a100-large` |
 | Tracking | Trackio → `niru-5/rebot-training` (private Space) | same |
 
@@ -46,3 +46,8 @@ as a secret.
   database is deleted with the pod. Override it with `TRACKIO_SPACE=user/space`.
 - ACT on `a10g-large` ran at ~1.16 steps/s, limited by the GPU, so 50k steps would have taken
   about 12 h. It was moved to `a100-large` with 40k steps and a 24 h timeout.
+- Batch sizes were raised to 96 (ACT) and 128 (SmolVLA), with steps scaled down so each run sees
+  about the same number of samples as 32 × 40k and 64 × 20k. On A100 at batch 32, ACT was already
+  limited by video decoding (`data_s` ≈ `updt_s`). `image_transforms.backend=gpu` would help, but
+  lerobot validates the config on the submitting machine, which has no GPU, so it can't be used
+  from here.

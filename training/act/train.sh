@@ -21,12 +21,12 @@ exec "$LEROBOT_TRAIN" \
   --policy.repo_id="$HF_USER/act_rebot_sort_v1" \
   --policy.chunk_size=100 \
   --policy.n_action_steps=100 \
-  --batch_size=32 \
+  --batch_size=96 \
   --num_workers=10 \
-  --steps=40000 \
-  --save_freq=5000 \
+  --steps=13500 \
+  --save_freq=1500 \
   --save_checkpoint_to_hub=true \
-  --log_freq=200 \
+  --log_freq=100 \
   --job_name=act_rebot_sort_v1 \
   --job.target="$TARGET" \
   --trackio.enable=true \
