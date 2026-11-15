@@ -474,10 +474,23 @@ class SkillRunner:
         plans: list[GraspPlan] = []
         for candidate in plan.candidates:
             grasp = ToolPose(candidate.x, candidate.y, candidate.z, candidate.yaw_deg)
-            clearance = max(pre_clear, self._table_z + obj.height_m + 0.04 - grasp.z) if obj.height_m else pre_clear
-            pre_grasp = grasp.offset(dz=clearance)
-            lift = grasp.offset(dz=lift_clear)
-            if self.motion.ik_feasible(pre_grasp) and self.motion.ik_feasible(grasp):
+            if not self.motion.ik_feasible(grasp):
+                continue
+            if obj.height_m:
+                pre_heights = [
+                    max(pre_clear, self._table_z + obj.height_m + 0.04 - grasp.z),
+                    max(0.03, self._table_z + obj.height_m + 0.015 - grasp.z),
+                ]
+            else:
+                pre_heights = [pre_clear]
+            pre_grasp = None
+            for clearance in pre_heights:
+                cand_pre = grasp.offset(dz=clearance)
+                if self.motion.ik_feasible(cand_pre):
+                    pre_grasp = cand_pre
+                    break
+            if pre_grasp is not None:
+                lift = grasp.offset(dz=lift_clear)
                 plans.append(
                     GraspPlan(
                         label=obj.label,

@@ -296,6 +296,7 @@ class AgentNode(Node):
         runs_dir = (self._config.agent.get("logging") or {}).get("runs_dir")
         events = EventLog(runs_dir, echo=self._publish_event)
         self._events_tail.clear()
+        self._scene.clear()
         try:
             vocabulary = vocabulary_from_task(
                 task,

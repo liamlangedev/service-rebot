@@ -188,6 +188,11 @@ class SceneModel:
         self._objects = [o for o in self._objects if o.label.lower() != label.strip().lower()]
         return len(self._objects) != before
 
+    def clear(self) -> None:
+        """Clear cached objects so the next task runs a fresh detection."""
+        self._objects.clear()
+        self._last_update = 0.0
+
     def summary_text(self, limit: int = 8) -> str:
         objects = self.all()[:limit]
         if not objects:
