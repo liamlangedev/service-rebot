@@ -50,16 +50,118 @@ def test_layout_matches_measurements():
     for w in ("near", "right", "left"):
         g = m.geom(f"wall_{w}")
         assert abs(g.pos[2] + g.size[2] - (ws.table_z + 0.37)) < 1e-6
-    # Camera heights above the table.
-    assert abs(m.camera("cam_corner").pos[2] - ws.table_z - 0.60) < 1e-6
-    assert abs(m.camera("cam_far").pos[2] - ws.table_z - 0.30) < 1e-6
+    # Table at the robot origin (the base plate is part of the robot mesh), and no
+    # separate plate geom any more.
+    top = m.geom("table_top")
+    assert abs(top.pos[2] + top.size[2]) < 1e-9 and ws.table_z == 0.0
+    assert not any(m.geom(i).name == "base_plate_geom" for i in range(m.ngeom))
 
 
 def test_camera_fov_from_diagonal():
-    m = env().model
-    assert abs(m.camera("cam_corner").fovy[0] - 49.4) < 0.2   # C920, 75 deg diagonal
-    assert abs(m.camera("cam_far").fovy[0] - 71.1) < 0.2      # 100 deg diagonal
-    assert abs(m.camera("wrist").fovy[0] - 71.1) < 0.2
+    from rebot_sim import camera_fovy
+    assert abs(camera_fovy({"fov_diagonal_deg": 75, "aspect": [4, 3]}) - 49.4) < 0.2
+    assert abs(camera_fovy({"fov_diagonal_deg": 100, "aspect": [4, 3]}) - 71.1) < 0.2
+    assert camera_fovy({"fovy": 42.0, "fov_diagonal_deg": 75}) == 42.0
+
+
+def test_cameras_match_real_frames():
+    """The calibration landmarks, projected through the compiled sim cameras,
+    land within 30 px of where they are in the real 1920x1080 frames."""
+    sys.path.insert(0, str(SIM / "tools"))
+    from calibrate_cameras import CAMERAS, H, W
+    e = env()
+    for cam, obs in CAMERAS.items():
+        c = e.data.cam(cam)
+        R, C = c.xmat.reshape(3, 3), c.xpos
+        f = H / 2 / np.tan(np.radians(e.model.cam_fovy[e.model.camera(cam).id]) / 2)
+        for label, P, px in obs["points"]:
+            pc = R.T @ (e.ws.world(*P) - C)
+            uv = np.array([W / 2 + f * pc[0] / -pc[2], H / 2 - f * pc[1] / -pc[2]])
+            err = np.linalg.norm(uv - px)
+            assert err < 30, f"{cam} {label}: {err:.0f} px off"
+
+
+def test_charuco_board_in_sim():
+    """The board drawn in the sim is detected and lies where to_workspace() says
+    (texture orientation, board geometry and camera model all agree)."""
+    from rebot_sim.charuco import BoardSpec, detect
+    import cv2
+    cfg = load_config()
+    cfg["charuco"] = {**cfg["charuco"], "enabled": True}
+    e = RealSetupEnv(cfg, objects=False)
+    e.hide_markers()
+    board = BoardSpec.from_config(cfg["charuco"])
+    for cam in ("cam_corner", "cam_far"):
+        img = cv2.cvtColor(e.render(cam, 1920, 1080), cv2.COLOR_RGB2BGR)
+        det = detect(board, img)
+        # The arm hides part of the board from cam_far.
+        assert det is not None and len(det) >= 12 and det.spans_2d(board), cam
+        c = e.data.cam(cam)
+        R, C = c.xmat.reshape(3, 3), c.xpos
+        f = 540 / np.tan(np.radians(e.model.cam_fovy[e.model.camera(cam).id]) / 2)
+        for p, px in zip(board.to_workspace(det.obj), det.corners):
+            pc = R.T @ (e.ws.world(*p) - C)
+            uv = np.array([960 + f * pc[0] / -pc[2], 540 - f * pc[1] / -pc[2]])
+            assert np.linalg.norm(uv - px) < 1.5, cam
+    e.close()
+
+
+def test_fake_capture_session_recovers_cameras():
+    """Full capture session against the simulated arm and cameras: the board
+    calibration must recover the sim's own camera poses and wrist mount."""
+    import json
+    import shutil
+    import subprocess
+    name = "_test_session"
+    out = SIM / "captures" / name
+    try:
+        subprocess.run([sys.executable, "-m", "capture.capture_session", "--fake", "--yes",
+                        "--pause", "0", "--poses", "reach", "--name", name, "--overwrite"],
+                       cwd=SIM, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                       timeout=600)
+        cal = json.loads((out / "session.json").read_text())["calibration"]
+        for cam in ("cam_corner", "cam_far"):
+            assert cal["fixed_cameras"][cam]["vs_sim_mm"] < 5, cam
+        wrist = cal["wrist_camera"]
+        assert wrist and wrist["spread_mm"] < 2
+        want = load_config()["wrist_camera"]["pos"]
+        assert np.allclose(wrist["entry"]["pos"], want, atol=0.002)
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+
+
+def test_tape_on_the_table():
+    """The yellow tape: a line flush against the base plate's right edge, the
+    length of the table, and three marks 12-13 cm from the right wall."""
+    e = env()
+    m, ws = e.model, e.ws
+    line = m.geom("tape_line")
+    assert abs((line.pos[1] + line.size[1]) - (-0.10)) < 1e-6      # touches the plate edge
+    assert abs(2 * line.size[0] - ws.depth) < 1e-6
+    for name, from_wall in (("tape_mark_near", 0.12), ("tape_mark_mid", 0.125),
+                            ("tape_mark_far", 0.13)):
+        g = m.geom(name)
+        right_wall_y = ws.robot_from_left - ws.width
+        assert abs((g.pos[1] - g.size[1]) - right_wall_y - from_wall) < 1e-6, name
+        assert m.geom_contype[g.id] == 0 and g.pos[2] < 0.001, name
+
+
+def test_ready_pose_fingertips_11cm_above_table():
+    """Measured on the real arm (soft gripper): at the ready pose the fingertips
+    are 11 cm above the table."""
+    from teleop.rebot_real import READY_QPOS
+    e = env()
+    e.mirror(READY_QPOS, 0.0)
+    tip = e.data.site("fingertip").xpos
+    assert abs(tip[2] - e.ws.table_z - 0.11) < 0.01, tip
+    e.reset()
+
+
+def test_wrist_camera_full_resolution():
+    e = env()
+    assert e.info.camera_resolutions["wrist"] == (1920, 1080)
+    assert e.render("wrist").shape == (1080, 1920, 3)
+    assert e.render("cam_corner").shape == (480, 640, 3)
 
 
 def test_objects_rest_upright_on_table():

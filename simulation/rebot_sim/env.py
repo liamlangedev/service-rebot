@@ -169,7 +169,19 @@ class RealSetupEnv(RebotSim):
         self.step(gripper=opening, n=int(secs / self.control_dt))
 
     # ------------------------------------------------------------------ cameras
-    def render(self, camera: str = "cam_corner", width: int = 640, height: int = 480) -> np.ndarray:
+    def hide_markers(self):
+        """Hide the teleop target marker and the debug sites, so renders show only
+        what a real camera would see."""
+        target = self.model.body("ik_target").id
+        self.model.geom_rgba[self.model.geom_bodyid == target, 3] = 0.0
+        self.model.site_rgba[:, 3] = 0.0
+
+    def render(self, camera: str = "cam_corner", width: int | None = None,
+               height: int | None = None) -> np.ndarray:
+        """RGB image; the size defaults to the real camera's (config `resolution`),
+        else 640x480."""
+        if width is None or height is None:
+            width, height = self.info.camera_resolutions.get(camera, (640, 480))
         key = (width, height)
         if key not in self._renderers:
             self._renderers[key] = mujoco.Renderer(self.model, height=height, width=width)

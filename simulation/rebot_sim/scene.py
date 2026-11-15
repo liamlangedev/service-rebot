@@ -5,14 +5,18 @@ replaces Seeed's demo table and cubes with the measured hackathon setup from
 real_setup.json (next to this file):
 
   * the wood table (texture cropped from the photos) and the floor below it
+  * the two green clamps on the robot's base plate (the plate itself is part of
+    the robot mesh: 20 x 14 x 1.4 cm, bottom at the robot origin)
   * cardboard walls behind and right of the robot, black board on the left
+  * the yellow tape on the table (a line next to the robot and three marks)
   * the white foam bin with its compartments (place targets `bin_0`, `bin_1`, ...)
   * the two external cameras (`cam_far`, `cam_corner`) at their measured spots
   * placeholder pick objects (a can and a paper cup), or your own meshes
 
 The robot base stays at the world origin (+x = towards the far edge, +y = towards
 the bin side), so the IK, teleop mapping and LeRobot recording work unchanged.
-The table top sits at z = 0.0.
+The table top is at z = 0 (the robot's base plate stands on it), the same frame
+as base_link in the ROS stack.
 """
 from __future__ import annotations
 
@@ -42,6 +46,8 @@ _COLORS = {
     "cardboard": [0.70, 0.58, 0.44, 1],
     "black": [0.07, 0.07, 0.08, 1],
     "foam": [0.96, 0.96, 0.95, 1],
+    "plate": [0.11, 0.11, 0.12, 1],
+    "clamp": [0.10, 0.50, 0.40, 1],
     "floor": [0.42, 0.38, 0.30, 1],
     "camera": [0.05, 0.05, 0.05, 1],
 }
@@ -88,6 +94,11 @@ class Workspace:
                          self.robot_from_left - from_left,
                          self.table_z + height])
 
+    def from_world(self, p) -> np.ndarray:
+        """World point -> workspace (from_left, from_near, height)."""
+        return np.array([self.robot_from_left - p[1], p[0] + self.robot_from_near,
+                         p[2] - self.table_z])
+
     @staticmethod
     def half(lo: float, hi: float) -> float:
         return abs(hi - lo) / 2
@@ -101,6 +112,8 @@ class SceneInfo:
     bin_sites: list[str] = field(default_factory=list)
     cameras: list[str] = field(default_factory=list)
     objects: list[str] = field(default_factory=list)
+    # Image size (width, height) of the real camera, where the config gives one.
+    camera_resolutions: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
@@ -120,15 +133,23 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
 
     _add_visual_settings(spec)
     _add_table(spec, ws, cfg["table"], _resolve(cfg, cfg["table"]["texture"]))
+    _add_clamps(spec, ws)
     _add_walls(spec, ws, cfg["walls"])
+    if cfg.get("tape"):
+        _add_tape(spec, ws, cfg["tape"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
+    if cfg.get("charuco", {}).get("enabled"):
+        _add_charuco(spec, ws, cfg["charuco"])
     info.cameras = _add_cameras(spec, ws, cfg["cameras"])
     if "wrist_camera" in cfg and spec.camera("wrist") is not None:
         wc, cam = cfg["wrist_camera"], spec.camera("wrist")
         cam.fovy = camera_fovy(wc)
         if "pos" in wc:
             cam.pos = wc["pos"]
-            cam.quat = _lookat_quat(wc["pos"], wc["look_at"], [0, 0, 1])
+            cam.quat = _camera_quat(wc["pos"], wc["look_at"], wc.get("roll_deg", 0.0))
+    for c in cfg["cameras"] + [{"name": "wrist", **cfg.get("wrist_camera", {})}]:
+        if c.get("resolution"):
+            info.camera_resolutions[c["name"]] = tuple(c["resolution"])
     if with_objects:
         info.objects = [_add_object(spec, ws, o, cfg) for o in cfg.get("objects", [])]
     return info
@@ -179,8 +200,8 @@ def _add_visual_settings(spec):
     vis.headlight.ambient = [0.30, 0.30, 0.30]
     vis.headlight.diffuse = [0.45, 0.45, 0.45]
     vis.rgba.haze = [0.55, 0.55, 0.55, 1]
-    vis.global_.offwidth = max(vis.global_.offwidth, 1280)
-    vis.global_.offheight = max(vis.global_.offheight, 960)
+    vis.global_.offwidth = max(vis.global_.offwidth, 1920)   # real cameras are 1920x1080
+    vis.global_.offheight = max(vis.global_.offheight, 1080)
     # Ceiling lights of the room (warm, from above).
     for i, pos in enumerate(([0.3, 0.3, 1.8], [0.3, -0.4, 1.8])):
         spec.worldbody.add_light(name=f"room_light_{i}", pos=pos, dir=[0, 0, -1],
@@ -210,6 +231,33 @@ def _add_table(spec, ws: Workspace, t, tex_path: Path):
                             material=_material(spec, "room_floor_mat", _COLORS["floor"]))
 
 
+# The robot mesh's base plate (base_link_matte_black): half sizes and thickness.
+BASE_PLATE_HALF = (0.07, 0.10)   # along x (near-far), y (left-right) [m]
+BASE_PLATE_T = 0.014
+
+
+def _add_clamps(spec, ws: Workspace):
+    """Two green C-clamps on the near corners of the robot's base plate (visual)."""
+    clamp = _material(spec, "clamp_mat", _COLORS["clamp"])
+    body = spec.worldbody.add_body(name="clamps")
+    hx, hy = BASE_PLATE_HALF
+    for i, side in enumerate((-1, 1)):
+        _box(body, f"clamp_{i}", [-hx + 0.02, side * (hy - 0.015), BASE_PLATE_T + 0.012],
+             [0.02, 0.008, 0.012], clamp, collide=False)
+
+
+def _add_tape(spec, ws: Workspace, t):
+    """Tape strips on the table (visual only, a fraction of a millimetre thick)."""
+    mat = _material(spec, "tape_mat", t.get("color", [0.96, 0.84, 0.10, 1]),
+                    specular=0.3, shininess=0.4)
+    body = spec.worldbody.add_body(name="tape")
+    for i, strip in enumerate(t["strips"]):
+        (l0, l1), (n0, n1) = strip["from_left"], strip["from_near"]
+        c = ws.world((l0 + l1) / 2, (n0 + n1) / 2, 0.00015)
+        _box(body, strip.get("name", f"tape_{i}"), c,
+             [Workspace.half(n0, n1), Workspace.half(l0, l1), 0.00015], mat, collide=False)
+
+
 def _add_walls(spec, ws: Workspace, w):
     t = w["thickness"]
     mats = {k: _material(spec, f"wall_{k}_mat", v) for k, v in _COLORS.items()
@@ -226,6 +274,42 @@ def _add_walls(spec, ws: Workspace, w):
         c = ws.world((l0 + l1) / 2, (n0 + n1) / 2, h / 2)
         _box(body, f"wall_{name}", c, [Workspace.half(n0, n1), Workspace.half(l0, l1), h / 2],
              mats[w[name]["color"]])
+
+
+# How the board image must be turned so MuJoCo's box-face texture mapping shows
+# it the right way round (found by rendering and detecting it, see the tests).
+_CHARUCO_TEX_OP = "rot90_cw"
+
+
+def _add_charuco(spec, ws: Workspace, c):
+    """The printed ChArUco board lying on the table (see charuco.py)."""
+    import cv2
+    from .charuco import BoardSpec
+    board = BoardSpec.from_config(c)
+    img = board.image(100)
+    img = {"none": img, "rot90_ccw": np.rot90(img, 1), "rot90_cw": np.rot90(img, -1),
+           "rot180": np.rot90(img, 2), "flipud": img[::-1], "fliplr": img[:, ::-1]}[
+        c.get("_tex_op", _CHARUCO_TEX_OP)]
+    img = np.ascontiguousarray(img)
+    # Name by content: MuJoCo caches assets by file name, so rewriting one file
+    # with a different board could reuse the stale image.
+    import hashlib
+    digest = hashlib.sha1(img.tobytes() + str(img.shape).encode()).hexdigest()[:12]
+    path = PKG_DIR / "textures" / "generated" / f"charuco_{digest}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(path), img)
+    tex = spec.add_texture(name="charuco_tex", type=mujoco.mjtTexture.mjTEXTURE_2D,
+                           file=str(path))
+    mat = spec.add_material(name="charuco_mat")
+    mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tex.name
+    mat.specular, mat.shininess = 0.0, 0.0
+    w, h = board.size
+    nl = board.near_left
+    center = ws.world(nl[0] + w / 2, nl[1] + h / 2, 0.00025)
+    spec.worldbody.add_geom(name="charuco_board", type=mujoco.mjtGeom.mjGEOM_BOX, pos=center,
+                            size=[h / 2, w / 2, 0.00025], material="charuco_mat",
+                            contype=0, conaffinity=0)
 
 
 def _add_bin(spec, ws: Workspace, b) -> list[str]:
@@ -275,22 +359,36 @@ def camera_fovy(cam: dict) -> float:
     return float(np.degrees(2 * np.arctan(half_diag * h / np.hypot(w, h))))
 
 
+def _camera_quat(pos, target, roll_deg: float = 0.0) -> np.ndarray:
+    """Looks from pos at target (image up = world up), then rolls the image by
+    roll_deg about the optical axis (positive = clockwise in the image)."""
+    quat = _lookat_quat(pos, target, [0, 0, 1])
+    if roll_deg:
+        q_roll, out = np.empty(4), np.empty(4)
+        mujoco.mju_axisAngle2Quat(q_roll, [0, 0, 1], np.radians(roll_deg))
+        mujoco.mju_mulQuat(out, quat, q_roll)
+        quat = out
+    return quat
+
+
 def _add_cameras(spec, ws: Workspace, cams) -> list[str]:
     mat = _material(spec, "camera_body_mat", _COLORS["camera"])
     names = []
     for cam in cams:
         pos = ws.world(cam["from_left"], cam["from_near"], cam["height"])
         target = ws.world(*cam["look_at"])
-        quat = _lookat_quat(pos, target, [0, 0, 1])
+        quat = _camera_quat(pos, target, cam.get("roll_deg", 0.0))
         spec.worldbody.add_camera(name=cam["name"], pos=pos, quat=quat, fovy=camera_fovy(cam))
         # Camera housing and its post down to the table (visual only).
         body = spec.worldbody.add_body(name=f"{cam['name']}_mount", pos=pos, quat=quat)
         _box(body, f"{cam['name']}_housing", [0, 0, 0.02], [0.045, 0.02, 0.02], mat,
              collide=False)
-        spec.worldbody.add_geom(name=f"{cam['name']}_post", type=mujoco.mjtGeom.mjGEOM_CAPSULE,
-                                fromto=np.concatenate([pos - [0, 0, 0.03],
-                                                       [pos[0], pos[1], ws.table_z]]),
-                                size=[0.008, 0, 0], material=mat, contype=0, conaffinity=0)
+        if cam.get("mount", "post") == "post":  # "none": e.g. a gooseneck from outside
+            spec.worldbody.add_geom(name=f"{cam['name']}_post",
+                                    type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                                    fromto=np.concatenate([pos - [0, 0, 0.03],
+                                                           [pos[0], pos[1], ws.table_z]]),
+                                    size=[0.008, 0, 0], material=mat, contype=0, conaffinity=0)
         names.append(cam["name"])
     return names
 

@@ -30,7 +30,9 @@ cameras:
 
   # The MuJoCo simulator publishes the same /table_cam and /wrist_cam topics from
   # its own cameras. This entry carries the homography for the simulated cam_corner
-  # (computed from real_setup.json, see scripts/sim_calibrate.py). It is disabled
+  # (computed from real_setup.json with scripts/sim_calibrate.py; the sim camera is
+  # calibrated to the real C920, and on the table this map agrees with the real
+  # calibration.yaml within ~1-2 mm). It is disabled
   # for the V4L2 driver so camera_node never tries to open a device that does not
   # exist; use table_camera:=table_sim with use_mujoco:=true.
   - name: table_sim
@@ -41,16 +43,16 @@ cameras:
     height: 480
     fps: 10
     frame_id: table_cam_optical_frame
-    fov_deg: 49.44
+    fov_deg: 43.30
     warmup_s: 0.0
     table_map:
       homography:
-        [0.00309380140, 0.00637099104, -1.98258864,
-         0.00315217492, -0.00411408670, 0.336328596,
-         0.00000000021, 0.00576788195, 1.0]
+        [0.00080112015023, 0.0018807373967, -0.39352181158,
+         0.0012313703074, -0.0010661406146, -0.067599830714,
+         -0.00021690820469, 0.0016701009168, 1]
       error_mm: 0.0
-      points: 69
-      source: mujoco cam_corner
+      points: 120
+      source: mujoco cam_corner (640x480, scene v1.4)
     m_per_px: null
 
   - name: front_camera
@@ -71,8 +73,8 @@ cameras:
   - name: wrist
     topic: /wrist_cam
     device: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
-    width: 640
-    height: 480
+    width: 1920                 # full resolution (the sim's wrist camera is modelled at 1920x1080)
+    height: 1080
     fps: 30
     fourcc: MJPG
     frame_id: wrist_cam_optical_frame

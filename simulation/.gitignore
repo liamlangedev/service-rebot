@@ -1,2 +1,6 @@
 renders/
 __pycache__/
+captures/
+capture/devices.json
+capture/devices.fake.json
+rebot_sim/textures/generated/
