@@ -32,8 +32,18 @@ class GripperError(RuntimeError):
     """The gripper could not be commanded."""
 
 
-def judge_holding(position: float | None, closed_m: float, torque: float | None,
-                  baseline_torque: float, gap_m: float, torque_delta_nm: float) -> bool:
+class HoldLost(GripperError):
+    """Holding feedback failed; do not release or retry blindly."""
+
+
+def judge_holding(
+    position: float | None,
+    closed_m: float,
+    torque: float | None,
+    baseline_torque: float,
+    gap_m: float,
+    torque_delta_nm: float,
+) -> bool:
     """Did the close end on an object?
 
     Position must show the finger stopped early **and**, when torque telemetry
@@ -49,16 +59,26 @@ def judge_holding(position: float | None, closed_m: float, torque: float | None,
     return abs(torque - baseline_torque) >= torque_delta_nm
 
 
-def judge_slip(position: float | None, torque: float | None, reference: dict[str, Any],
-               position_drop_m: float, torque_drop_nm: float) -> bool:
+def judge_slip(
+    position: float | None,
+    torque: float | None,
+    reference: dict[str, Any],
+    position_drop_m: float,
+    torque_drop_nm: float,
+) -> bool:
     """Did the hold change since the close (object sliding out of the jaw)?"""
     if position is None or not math.isfinite(position):
         return False
     ref_position = reference.get("position")
-    if ref_position is not None and ref_position - position > position_drop_m:
+    if ref_position is not None and abs(ref_position - position) > position_drop_m:
         return True
     ref_torque = reference.get("torque")
-    if torque is not None and ref_torque is not None and ref_torque - torque > torque_drop_nm:
+    baseline = float(reference.get("baseline_torque", 0.0))
+    if (
+        torque is not None
+        and ref_torque is not None
+        and abs(ref_torque - baseline) - abs(torque - baseline) > torque_drop_nm
+    ):
         return True
     return False
 
@@ -68,6 +88,7 @@ class GripperClient:
         from control_msgs.action import FollowJointTrajectory
         from rclpy.action import ActionClient
         from rclpy.callback_groups import ReentrantCallbackGroup
+        from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import JointState
 
         self._node = node
@@ -86,20 +107,35 @@ class GripperClient:
         self._slip_position = float(cfg.get("slip_position_drop_m", 0.003))
         self._slip_torque = float(cfg.get("slip_torque_drop_nm", 0.10))
         self._sample_s = float(cfg.get("sample_s", 0.35))
+        self._hold_preload_m = float(cfg.get("hold_preload_m", 0.0005))
+        self._stable_s = float(cfg.get("stable_hold_s", 0.3))
+        self._hold_timeout_s = float(cfg.get("hold_timeout_s", 1.5))
+        self._slip_debounce_s = float(cfg.get("slip_debounce_s", 0.15))
+        if not 0 <= self._hold_preload_m <= 0.002:
+            raise ValueError("hold_preload_m must be between zero and 0.002 m")
+        if not 0 < self._stable_s < self._hold_timeout_s or not 0 < self._slip_debounce_s <= 0.5:
+            raise ValueError("invalid stable hold or slip debounce timing")
 
         self._group = ReentrantCallbackGroup()
         self._client = ActionClient(
-            node, FollowJointTrajectory, self._action_name, callback_group=self._group
+            node,
+            FollowJointTrajectory,
+            self._action_name,
+            callback_group=self._group,
         )
         self._history: deque[tuple[float, float, float | None]] = deque(maxlen=400)
         self._baseline: float | None = None
         self._lock = threading.Lock()
         self._sub = node.create_subscription(
-            JointState, "/joint_states", self._on_state, 20, callback_group=self._group
+            JointState,
+            "/joint_states",
+            self._on_state,
+            qos_profile_sensor_data,
+            callback_group=self._group,
         )
         if not self._client.wait_for_server(timeout_sec=3.0):
             node.get_logger().warn(
-                f"{self._action_name} not available yet; gripper moves will fail until it is"
+                f"{self._action_name} not available yet; gripper moves will fail until it is",
             )
 
     # ------------------------------------------------------------------ state
@@ -159,34 +195,34 @@ class GripperClient:
 
     # ------------------------------------------------------------------ commands
     def open(self, plan_only: bool = False) -> dict[str, Any]:
-        result = self.command(self._open_m, self._open_s, label="gripper_open",
-                              plan_only=plan_only)
+        result = self.command(self._open_m, self._open_s, label="gripper_open", plan_only=plan_only)
         if plan_only:
             return result
         time.sleep(min(self._sample_s, 0.3))
         position, torque = self._median(self._sample_s)
         if torque is not None:
             self._baseline = torque
-        result.update(position=_round(position), torque=_round(torque),
-                      baseline_torque=_round(self._baseline))
+        result.update(position=_round(position), torque=_round(torque), baseline_torque=_round(self._baseline))
         return result
 
     def close(self, plan_only: bool = False) -> dict[str, Any]:
-        """Close to ``closed_m``, then measure whether the jaw ended up on an object."""
+        """Close gently until torque rises (or to ``closed_m``), then check holding."""
         if not plan_only and self._baseline is None:
             # No open() this session: take the free-air reading now, before pushing.
             _, torque = self._median(0.4)
             self._baseline = torque
-        result = self.command(self._closed_m, self._close_s, label="gripper_close",
-                              plan_only=plan_only)
-        if plan_only:
-            result["holding"] = True
-            return result
+
+        if plan_only or not (self._torque_enabled and self.torque_available):
+            result = self.command(self._closed_m, self._close_s, label="gripper_close", plan_only=plan_only)
+            if plan_only:
+                result["holding"] = True
+                return result
+        else:
+            result = self._step_close()
 
         time.sleep(self._sample_s)
         position, torque = self._median(self._sample_s)
-        holding = judge_holding(position, self._closed_m, torque, self.baseline_torque,
-                                self._gap_m, self._torque_delta)
+        holding = judge_holding(position, self._closed_m, torque, self.baseline_torque, self._gap_m, self._torque_delta)
         result.update(
             holding=holding,
             position=_round(position),
@@ -202,6 +238,159 @@ class GripperClient:
             result["note"] = "no /joint_states position for finger_left; cannot confirm a grasp"
         return result
 
+    def _step_close(self) -> dict[str, Any]:
+        """Close smoothly in one trajectory (~15 mm/s) and cancel on contact torque."""
+        from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+        cur = self.position()
+        start_m = cur if cur is not None else self._open_m
+        if start_m <= self._closed_m + 1e-4:
+            return {"label": "gripper_close", "target_m": round(self._closed_m, 4), "executed": True, "blocked": False}
+
+        if not self._client.wait_for_server(timeout_sec=self._timeout_s):
+            raise GripperError(f"{self._action_name} is not available")
+
+        speed_mps = 0.015
+        dt = 0.10
+        step_m = speed_mps * dt
+        trajectory = JointTrajectory(joint_names=[self._joint])
+        pos_m = start_m
+        t_s = 0.0
+        while pos_m > self._closed_m + 1e-4:
+            pos_m = max(self._closed_m, pos_m - step_m)
+            t_s += dt
+            point = JointTrajectoryPoint()
+            point.positions = [pos_m]
+            point.velocities = [0.0 if pos_m <= self._closed_m + 1e-4 else -speed_mps]
+            point.time_from_start.sec = int(t_s)
+            point.time_from_start.nanosec = int((t_s % 1.0) * 1e9)
+            trajectory.points.append(point)
+
+        goal = self._Action.Goal()
+        goal.trajectory = trajectory
+
+        started = time.monotonic()
+        accepted = threading.Event()
+        send_future = self._client.send_goal_async(goal)
+        send_future.add_done_callback(lambda _: accepted.set())
+        if not accepted.wait(timeout=self._timeout_s + 2.0):
+            raise GripperError("gripper_close: gripper action server did not answer")
+        handle = send_future.result()
+        if handle is None or not handle.accepted:
+            raise GripperError("gripper_close: gripper goal rejected (is the controller active?)")
+
+        done = threading.Event()
+        result_future = handle.get_result_async()
+        result_future.add_done_callback(lambda _: done.set())
+
+        deadline = started + max(self._timeout_s, t_s + 3.0)
+        while not done.wait(timeout=0.02):
+            if time.monotonic() > deadline:
+                handle.cancel_goal_async()
+                raise GripperError("gripper_close: gripper motion timed out")
+            pos, torque = self._median(0.06)
+            expected = max(self._closed_m, start_m - speed_mps * (time.monotonic() - started))
+            if (
+                pos is not None
+                and torque is not None
+                and pos - self._closed_m > self._gap_m
+                and (
+                    (pos - expected > 0.002 and abs(torque - self.baseline_torque) >= self._torque_delta)
+                    or abs(torque - self.baseline_torque) >= 0.50
+                )
+            ):
+                handle.cancel_goal_async()
+                if not done.wait(timeout=2.0):
+                    raise GripperError("contact reached but closing cancellation was not confirmed")
+                hold_target = max(self._closed_m, pos - self._hold_preload_m)
+                self.command(hold_target, 0.2, label="gripper_hold")
+                return {
+                    "label": "gripper_close",
+                    "target_m": round(hold_target, 4),
+                    "duration_s": round(time.monotonic() - started, 3),
+                    "executed": True,
+                    "blocked": True,
+                }
+
+        wrapped = result_future.result()
+        code = int(getattr(wrapped.result, "error_code", 0)) if wrapped is not None else -1
+        blocked = False
+        if code != 0:
+            blocked = code in (-4, -5)
+            if not blocked:
+                text = str(getattr(wrapped.result, "error_string", "") or "").strip()
+                raise GripperError(f"gripper_close: gripper error {code}" + (f" ({text})" if text else ""))
+
+        return {
+            "label": "gripper_close",
+            "target_m": round(self._closed_m, 4),
+            "duration_s": round(time.monotonic() - started, 3),
+            "executed": True,
+            "blocked": blocked,
+        }
+
+    def hold_snapshot(self, reference: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Read recent feedback without blocking the motion executor."""
+        position, torque = self._median(0.15)
+        reference = reference or {}
+        missing = position is None or (reference.get("torque") is not None and torque is None)
+        slipped = judge_slip(position, torque, reference, self._slip_position, self._slip_torque)
+        holding = (
+            not missing
+            and not slipped
+            and judge_holding(
+                position,
+                self._closed_m,
+                torque,
+                self.baseline_torque,
+                self._gap_m * 0.5,
+                self._torque_delta * 0.5,
+            )
+        )
+        return {
+            "holding": holding,
+            "slipped": slipped,
+            "feedback_missing": missing,
+            "position": _round(position),
+            "torque": _round(torque),
+            "baseline_torque": self.baseline_torque,
+            "torque_available": torque is not None,
+        }
+
+    def stable_hold(self, reference: dict[str, Any] | None = None) -> dict[str, Any]:
+        started = time.monotonic()
+        stable_since: float | None = None
+        result: dict[str, Any] = {"holding": False}
+        while time.monotonic() - started < self._hold_timeout_s:
+            result = self.hold_snapshot(reference)
+            if result["holding"]:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                if time.monotonic() - stable_since >= self._stable_s:
+                    return result
+            else:
+                stable_since = None
+            time.sleep(0.02)
+        return {**result, "holding": False, "reason": "hold did not remain stable"}
+
+    def hold_guard(self, reference: dict[str, Any]):
+        failed_since: float | None = None
+
+        def check() -> None:
+            nonlocal failed_since
+            state = self.hold_snapshot(reference)
+            if state["holding"]:
+                failed_since = None
+                return
+            if state["feedback_missing"]:
+                raise HoldLost("gripper feedback is stale or unavailable; motion stopped, holding state uncertain")
+            if failed_since is None:
+                failed_since = time.monotonic()
+            elif time.monotonic() - failed_since >= self._slip_debounce_s:
+                raise HoldLost("sustained grip loss; motion stopped without opening the gripper")
+
+        return check
+
     def check_hold(self, reference: dict[str, Any], sample_s: float | None = None) -> dict[str, Any]:
         """Re-measure the grasp after a lift and report a slip in either signal."""
         duration = self._sample_s if sample_s is None else sample_s
@@ -209,9 +398,14 @@ class GripperClient:
         position, torque = self._median(duration)
         slipped = judge_slip(position, torque, reference, self._slip_position, self._slip_torque)
         return {
-            "holding": not slipped and judge_holding(
-                position, self._closed_m, torque, self.baseline_torque,
-                self._gap_m * 0.5, self._torque_delta * 0.5,
+            "holding": not slipped
+            and judge_holding(
+                position,
+                self._closed_m,
+                torque,
+                self.baseline_torque,
+                self._gap_m * 0.5,
+                self._torque_delta * 0.5,
             ),
             "slipped": slipped,
             "position": _round(position),
@@ -221,8 +415,9 @@ class GripperClient:
             "torque_available": torque is not None,
         }
 
-    def command(self, target_m: float, seconds: float, label: str = "gripper",
-                plan_only: bool = False) -> dict[str, Any]:
+    def command(
+        self, target_m: float, seconds: float, label: str = "gripper", plan_only: bool = False
+    ) -> dict[str, Any]:
         from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
         target = max(0.0, float(target_m))

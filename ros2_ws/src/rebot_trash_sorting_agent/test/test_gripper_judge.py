@@ -40,3 +40,55 @@ def test_slip_is_detected_by_position_or_torque():
     assert judge_slip(0.010, 0.60, reference, 0.003, 0.10) is True  # finger closed further
     assert judge_slip(0.021, 0.40, reference, 0.003, 0.10) is True  # torque collapsed
     assert judge_slip(None, None, reference, 0.003, 0.10) is False  # no telemetry
+
+
+def test_negative_torque_and_finger_opening_also_detect_slip():
+    reference = {"position": 0.021, "torque": -0.6, "baseline_torque": -0.02}
+    assert judge_slip(0.021, -0.3, reference, 0.003, 0.10)
+    assert judge_slip(0.03, -0.6, reference, 0.003, 0.10)
+    assert not judge_slip(0.021, -0.7, reference, 0.003, 0.10)
+
+
+def test_hold_guard_debounces_slip_and_fails_on_missing_feedback(monkeypatch):
+    from types import SimpleNamespace
+
+    import pytest
+    from rebot_trash_sorting_agent.skills.gripper import GripperClient, HoldLost
+
+    clock = [0.0]
+    state = {"holding": False, "feedback_missing": False}
+    monkeypatch.setattr("rebot_trash_sorting_agent.skills.gripper.time.monotonic", lambda: clock[0])
+    client = SimpleNamespace(_slip_debounce_s=0.15, hold_snapshot=lambda reference: state)
+    guard = GripperClient.hold_guard(client, {})
+    guard()
+    clock[0] = 0.1
+    guard()
+    state["holding"] = True
+    guard()
+    state["holding"] = False
+    guard()
+    clock[0] = 0.3
+    with pytest.raises(HoldLost):
+        guard()
+    state["feedback_missing"] = True
+    with pytest.raises(HoldLost, match="feedback"):
+        GripperClient.hold_guard(client, {})()
+
+
+def test_stable_hold_requires_continuous_success(monkeypatch):
+    from types import SimpleNamespace
+
+    from rebot_trash_sorting_agent.skills.gripper import GripperClient
+
+    clock = [0.0]
+    monkeypatch.setattr("rebot_trash_sorting_agent.skills.gripper.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        "rebot_trash_sorting_agent.skills.gripper.time.sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    client = SimpleNamespace(
+        _stable_s=0.1, _hold_timeout_s=0.5, hold_snapshot=lambda reference: {"holding": clock[0] > 0.08}
+    )
+    result = GripperClient.stable_hold(client)
+    assert result["holding"] and clock[0] >= 0.18
+    client.hold_snapshot = lambda reference: {"holding": False}
+    assert not GripperClient.stable_hold(client)["holding"]

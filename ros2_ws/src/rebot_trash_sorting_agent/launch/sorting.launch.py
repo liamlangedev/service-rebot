@@ -48,16 +48,16 @@ def _launch(context, *args, **kwargs):
                     {
                         "randomize": _truthy(LaunchConfiguration("randomize").perform(context)),
                         "seed": int(LaunchConfiguration("seed").perform(context) or 0),
-                    }
+                    },
                 ],
-            )
+            ),
         )
 
     bringup = GroupAction(
         [
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    [FindPackageShare("rebot_trash_sorting"), "/launch/bringup.launch.py"]
+                    [FindPackageShare("rebot_trash_sorting"), "/launch/bringup.launch.py"],
                 ),
                 launch_arguments={
                     "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
@@ -67,19 +67,18 @@ def _launch(context, *args, **kwargs):
                     "channel": LaunchConfiguration("channel"),
                     "arm_namespace": LaunchConfiguration("arm_namespace"),
                 }.items(),
-            )
-        ]
+            ),
+        ],
     )
     agent = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            [FindPackageShare("rebot_trash_sorting_agent"), "/launch/agent.launch.py"]
+            [FindPackageShare("rebot_trash_sorting_agent"), "/launch/agent.launch.py"],
         ),
         launch_arguments={
             "config_dir": LaunchConfiguration("config_dir"),
             "provider": LaunchConfiguration("provider"),
             "vlm_model": LaunchConfiguration("vlm_model"),
             "dry_run": LaunchConfiguration("dry_run"),
-            "use_scene": "true",
             "use_camera_driver": "false" if use_mujoco else "true",
             "use_mujoco": "false" if use_mujoco else "true",
             "table_camera": table_camera or "table",
@@ -95,18 +94,23 @@ def _launch(context, *args, **kwargs):
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
-            DeclareLaunchArgument("use_fake_hardware", default_value="true",
-                                  description="mock ros2_control hardware (true) or the real arm (false)"),
-            DeclareLaunchArgument("use_mujoco", default_value="false",
-                                  description="run MuJoCo RealSetupEnv simulation (arm + cam_corner + wrist)"),
-            DeclareLaunchArgument("randomize", default_value="false",
-                                  description="randomize object poses in MuJoCo"),
-            DeclareLaunchArgument("seed", default_value="0",
-                                  description="random seed when randomize:=true"),
+            DeclareLaunchArgument(
+                "use_fake_hardware",
+                default_value="true",
+                description="mock ros2_control hardware (true) or the real arm (false)",
+            ),
+            DeclareLaunchArgument(
+                "use_mujoco",
+                default_value="false",
+                description="run MuJoCo RealSetupEnv simulation (arm + cam_corner + wrist)",
+            ),
+            DeclareLaunchArgument("randomize", default_value="false", description="randomize object poses in MuJoCo"),
+            DeclareLaunchArgument("seed", default_value="0", description="random seed when randomize:=true"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("gripper", default_value="soft", choices=["soft", "hard"]),
-            DeclareLaunchArgument("channel", default_value="/dev/ttyACM0",
-                                  description="USB2CAN serial port for the real arm"),
+            DeclareLaunchArgument(
+                "channel", default_value="/dev/ttyACM0", description="USB2CAN serial port for the real arm"
+            ),
             DeclareLaunchArgument("arm_namespace", default_value="rebotarm"),
             DeclareLaunchArgument("config_dir", default_value=""),
             DeclareLaunchArgument("provider", default_value=""),
@@ -116,5 +120,5 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("host", default_value="127.0.0.1"),
             DeclareLaunchArgument("port", default_value="8090"),
             OpaqueFunction(function=_launch),
-        ]
+        ],
     )

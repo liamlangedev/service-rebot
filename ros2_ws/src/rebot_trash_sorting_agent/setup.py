@@ -1,5 +1,5 @@
-from glob import glob
 import os
+from glob import glob
 
 from setuptools import find_packages, setup
 
@@ -29,7 +29,6 @@ setup(
             "camera_node = rebot_trash_sorting_agent.camera_node:main",
             "agent_node = rebot_trash_sorting_agent.agent_node:main",
             "dashboard_node = rebot_trash_sorting_agent.dashboard_node:main",
-            "workspace_scene_node = rebot_trash_sorting_agent.workspace_scene_node:main",
             "mujoco_sim_node = rebot_trash_sorting_agent.mujoco_sim_node:main",
             "grasp_policy_node = rebot_trash_sorting_agent.grasp_policy_node:main",
             # tools

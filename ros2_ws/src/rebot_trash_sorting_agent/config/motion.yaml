@@ -14,9 +14,13 @@ move_group:
   planner_id: ""                # "" = let the move_group default decide (OMPL)
   num_planning_attempts: 8
   allowed_planning_time: 5.0
-  velocity_scaling: 0.15        # conservative for the first real runs
+  velocity_scaling: 0.15        # default for contact, lift, failed-grasp recovery, and carrying
   acceleration_scaling: 0.15
   execute: true                 # false = plan only (dry_run still overrides this)
+  speed_profiles:
+    travel:
+      velocity_scaling: 0.30
+      acceleration_scaling: 0.20
 
 #: joint order: joint1..joint6 [rad]
 named_poses:
@@ -49,7 +53,7 @@ gripper:
   # reading `torque_delta` in the agent log: set the threshold above that noise.
   # For scale, the bridge's max_effort is 1.5, so 0.15 is ~10 % of a full push.
   torque_monitor: true
-  holding_torque_delta_nm: 0.15
+  holding_torque_delta_nm: 0.35
   #: after the lift, a drop of either signal below the close-time reading is a slip
   slip_position_drop_m: 0.003
   slip_torque_drop_nm: 0.10
@@ -58,18 +62,19 @@ gripper:
 
 grasp:
   #: The object's height is not observable from one RGB view on a plane, so try a
-  #: short ladder of pinch heights above the table, low first. If the jaws close on
-  #: nothing the skill retreats and tries the next rung, which is also how a person
-  #: recovers from grabbing too low. No per-class dimensions are involved.
-  pinch_heights_m: [0.03, 0.05]
+  #: short ladder of pinch heights above the table, high first so tall objects
+  #: (e.g. cans) are not crushed by the gripper base. If the jaws close on nothing
+  #: the skill retreats and tries the next rung. No per-class dimensions are involved.
+  pinch_heights_m: [0.09, 0.07, 0.05]
+  height_fractions: [0.80, 0.65]   # measured object-height fractions, when front_camera supplies height
   #: stop after this many reachable candidates (2 heights x 2 yaws = up to 4)
-  max_attempts: 3
+  max_attempts: 4
   #: the TCP (SRDF chain tip) sits at the fingertip, which is this far below the pinch
-  tcp_below_pinch: 0.020
+  tcp_below_pinch: 0.010
   #: used for the width warning when the mask's bottom edge is too short to measure
   assumed_width_m: 0.04
   #: pre-grasp pose: pinch this far above the grab point
-  pre_grasp_clearance: 0.12
+  pre_grasp_clearance: 0.10
   #: lift after closing: pinch this far above the grab point
   lift_clearance: 0.10
   #: finger rotations tried, in this order (the measured yaw is always first)
@@ -115,6 +120,16 @@ learned_grasp:
   #: object (keys) never does. false = report the check but don't reject the grasp.
   verify_hold: false
 
+tool_limits:
+  min_height_m: 0.002           # absolute move_to_pose floor above table; not obstacle avoidance
+  max_height_m: 0.60
+  max_radius_m: 0.65
+
+height_estimation:
+  min_height_m: 0.005
+  max_height_m: 0.35
+  match_margin_px: 20.0
+
 wrist_correction:
   #: Final XY correction from the wrist camera. Off until the camera is mounted and
   #: the axis mapping is checked; see README "wrist correction".
@@ -128,3 +143,19 @@ wrist_correction:
   #: if the first test run corrects the wrong way.
   u_to_base: [0.0, 1.0]         # [x, y]
   v_to_base: [1.0, 0.0]
+
+planning_scene:
+  #: MoveIt collision-object sync, finger-contact gating, and held-object clearance.
+  enabled: false
+  touch_links: [finger_left_link, finger_right_link]
+  padding_m: 0.01
+  unknown_width_m: 0.10
+  unknown_height_m: 0.25
+  carry_clearance_m: 0.04
+  release_clearance_m: 0.015
+
+visual_verification:
+  #: Wrist-camera stationary-target check before grasping.
+  enabled: false
+  max_shift_fraction: 0.035
+  max_area_ratio: 1.6

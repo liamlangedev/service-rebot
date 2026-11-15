@@ -22,8 +22,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..types import GraspCandidate, WorldObject
-from .poses import ToolPose
+from rebot_trash_sorting_agent.skills.poses import ToolPose
+from rebot_trash_sorting_agent.types import GraspCandidate, WorldObject
 
 
 @dataclass
@@ -43,7 +43,7 @@ class GraspPlan:
     def feasible(self) -> bool:
         return bool(self.candidates)
 
-    def offset(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> "GraspPlan":
+    def offset(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> GraspPlan:
         """Shift all three poses together (wrist view correction)."""
         return GraspPlan(
             label=self.label,
@@ -80,11 +80,14 @@ def plan_grasp(obj: WorldObject, motion: dict, table_z: float) -> GraspPlan:
     pinches = [float(p) for p in (cfg.get("pinch_heights_m") or [cfg.get("pinch_height", 0.035)])]
 
     notes: list[str] = []
+    if obj.height_m is not None and obj.height_m > 0:
+        fractions = cfg.get("height_fractions") or [0.6, 0.4]
+        pinches = [max(tcp_below + 0.003, float(fraction) * obj.height_m) for fraction in fractions]
+        notes.append(f"front_camera measured height {obj.height_m:.3f} m; using relative pinch heights")
     width = float(obj.width_m) if obj.width_m > 0.005 else assumed_width
     if obj.width_m <= 0.005:
         notes.append(
-            f"{obj.label}: bottom edge too short to measure; assuming "
-            f"{assumed_width * 100:.1f} cm wide"
+            f"{obj.label}: bottom edge too short to measure; assuming {assumed_width * 100:.1f} cm wide",
         )
     usable = max_open - margin
     fits = width <= usable
@@ -92,7 +95,7 @@ def plan_grasp(obj: WorldObject, motion: dict, table_z: float) -> GraspPlan:
         notes.append(
             f"{obj.label}: visible edge {width * 100:.1f} cm, jaw is "
             f"{max_open * 100:.1f} cm (usable {usable * 100:.1f} cm) - close across "
-            "the narrow side or the grasp will slip"
+            "the narrow side or the grasp will slip",
         )
     elif width > 0.8 * usable:
         notes.append(f"{obj.label}: close to the jaw limit ({width * 100:.1f} cm)")
@@ -109,7 +112,7 @@ def plan_grasp(obj: WorldObject, motion: dict, table_z: float) -> GraspPlan:
         if tcp_z < floor:
             notes.append(
                 f"pinch {pinch * 100:.1f} cm would put the fingertip in the table; "
-                f"raised to {floor + tcp_below - table_z:.3f} m"
+                f"raised to {floor + tcp_below - table_z:.3f} m",
             )
             tcp_z = floor
         actual_pinch = tcp_z + tcp_below - table_z
@@ -127,7 +130,7 @@ def plan_grasp(obj: WorldObject, motion: dict, table_z: float) -> GraspPlan:
                     score=max(score, 0.0),
                     label=obj.label,
                     pinch_m=actual_pinch,
-                )
+                ),
             )
             index += 1
 
@@ -135,7 +138,7 @@ def plan_grasp(obj: WorldObject, motion: dict, table_z: float) -> GraspPlan:
     grasp_pose = ToolPose(best.x, best.y, best.z, best.yaw_deg)
     return GraspPlan(
         label=obj.label,
-        pre_grasp=ToolPose(best.x, best.y, best.z + pre_clear, best.yaw_deg),
+        pre_grasp=ToolPose(best.x, best.y, max(best.z + pre_clear, table_z + (obj.height_m or 0) + 0.04), best.yaw_deg),
         grasp=grasp_pose,
         lift=ToolPose(best.x, best.y, best.z + lift_clear, best.yaw_deg),
         candidates=candidates,

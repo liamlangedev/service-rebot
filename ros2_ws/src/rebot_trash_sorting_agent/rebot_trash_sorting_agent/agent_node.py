@@ -31,21 +31,31 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 
-from .agent.events import EventLog
-from .agent.orchestrator import Orchestrator, OrchestratorSettings
-from .agent.prompts import system_prompt
-from .agent.tools import TOOLS
-from .config import Config, load_env_files
-from .perception.detector import vocabulary_from_task
-from .perception.scene import CameraClient, SceneModel
-from .perception.table_map import TableMap
-from .skills.gripper import GripperClient
-from .skills.learned_grasp import LearnedGraspClient
-from .skills.motion import MotionError, MoveItClient
-from .skills.skills import SkillRunner
-from .types import TaskResult
-from .vlm.json_tools import encode_jpeg
-from .vlm.registry import make_session
+from rebot_trash_sorting_agent.agent.events import EventLog
+from rebot_trash_sorting_agent.agent.orchestrator import (
+    Orchestrator,
+    OrchestratorSettings,
+)
+from rebot_trash_sorting_agent.agent.prompts import system_prompt
+from rebot_trash_sorting_agent.agent.tools import TOOLS
+from rebot_trash_sorting_agent.config import Config, load_env_files
+from rebot_trash_sorting_agent.perception.detector import (
+    vocabulary_from_task,
+)
+from rebot_trash_sorting_agent.perception.height import HeightCamera
+from rebot_trash_sorting_agent.perception.scene import (
+    CameraClient,
+    SceneModel,
+)
+from rebot_trash_sorting_agent.perception.table_map import TableMap
+from rebot_trash_sorting_agent.skills.gripper import GripperClient
+from rebot_trash_sorting_agent.skills.learned_grasp import LearnedGraspClient
+from rebot_trash_sorting_agent.skills.motion import MotionError, MoveItClient
+from rebot_trash_sorting_agent.skills.planning_scene import PlanningSceneClient
+from rebot_trash_sorting_agent.skills.skills import SkillRunner
+from rebot_trash_sorting_agent.types import TaskResult
+from rebot_trash_sorting_agent.vlm.json_tools import encode_jpeg
+from rebot_trash_sorting_agent.vlm.registry import make_session
 
 
 class LazyDetector:
@@ -63,6 +73,10 @@ class LazyDetector:
         if self._detector is not None:
             self._detector.set_vocabulary(words)
 
+    @property
+    def vocabulary(self) -> list[str]:
+        return list(self._settings.get("classes") or ())
+
     def detect(self, frame: Any):
         if self._error is not None:
             raise RuntimeError(self._error)
@@ -73,13 +87,13 @@ class LazyDetector:
             try:
                 detector = YoloeDetector(self._settings)
                 detector.load()
-            except Exception as exc:  # noqa: BLE001 - cache and report the real reason
+            except Exception as exc:
                 self._error = str(exc)
                 raise
             self._detector = detector
             self._node.get_logger().info(
                 f"detector loaded in {time.monotonic() - started:.1f} s "
-                f"({detector.model_path.name}, {len(detector.classes)} prompts)"
+                f"({detector.model_path.name}, {len(detector.classes)} prompts)",
             )
         return self._detector.detect(frame)
 
@@ -108,6 +122,7 @@ class AgentNode(Node):
         self._runner: SkillRunner | None = None
         self._worker: threading.Thread | None = None
         self._events_tail: deque[dict[str, Any]] = deque(maxlen=60)
+        self._holding: dict[str, Any] = {}
         self._cb = ReentrantCallbackGroup()
 
         self._table_name = self._str_param("table_camera") or "table"
@@ -119,12 +134,11 @@ class AgentNode(Node):
         )
         self._wrist_name = next(
             (c["name"] for c in self._config.camera_list if c["name"] == "wrist"),
-            next((c["name"] for c in self._config.camera_list
-                  if c["name"] != self._table_name), None),
+            next((c["name"] for c in self._config.camera_list if c["name"] != self._table_name), None),
         )
 
         self._scene = SceneModel(
-            merge_radius=float(self._config.perception.get("merge_radius", 0.05))
+            merge_radius=float(self._config.perception.get("merge_radius", 0.05)),
         )
         timeout = float(self._config.run.get("capture_timeout_s", 5.0))
         self._camera = CameraClient(self, self._table_topic, timeout_s=timeout)
@@ -134,17 +148,40 @@ class AgentNode(Node):
             else None
         )
         self._detector = LazyDetector(self._config.perception, self)
+        front_cfg = next(
+            (
+                camera
+                for camera in self._config.camera_list
+                if camera["name"] == "front_camera" and camera.get("enabled", True)
+            ),
+            None,
+        )
+        self._front_camera = (
+            CameraClient(self, self._config.capture_topic("front_camera"), timeout_s=timeout) if front_cfg else None
+        )
+        front_map = self._config.table_map("front_camera") if front_cfg else None
+        self._height_camera = HeightCamera.from_mapping((front_map or {}).get("height_camera"))
         self._motion = MoveItClient(self, self._config.motion)
+        scene_cfg = dict(self._config.motion.get("planning_scene") or {})
+        self._planning_scene = (
+            PlanningSceneClient(self, self._motion, scene_cfg, self._config.places)
+            if scene_cfg.get("enabled", False)
+            else None
+        )
         self._gripper = GripperClient(self, dict(self._config.motion.get("gripper") or {}))
         learned_cfg = dict(self._config.motion.get("learned_grasp") or {})
         self._learned_grasp = (LearnedGraspClient(self, learned_cfg)
                                if learned_cfg.get("enabled") else None)
 
         self._status_pub = self.create_publisher(
-            __import__("std_msgs.msg", fromlist=["String"]).String, "/agent/status", 10
+            __import__("std_msgs.msg", fromlist=["String"]).String,
+            "/agent/status",
+            10,
         )
         self._event_pub = self.create_publisher(
-            __import__("std_msgs.msg", fromlist=["String"]).String, "/agent/events", 50
+            __import__("std_msgs.msg", fromlist=["String"]).String,
+            "/agent/events",
+            50,
         )
         from sensor_msgs.msg import CompressedImage
 
@@ -155,14 +192,12 @@ class AgentNode(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
 
-        from std_msgs.msg import Empty, String
-
         from rebot_trash_sorting_agent_msgs.srv import RunTask
+        from std_msgs.msg import Empty, String
         from std_srvs.srv import Trigger
 
         self.create_subscription(String, "/agent/task", self._on_task_topic, 10, callback_group=self._cb)
-        self.create_subscription(Empty, "/agent/cancel", lambda _: self._stop("topic"), 10,
-                                 callback_group=self._cb)
+        self.create_subscription(Empty, "/agent/cancel", lambda _: self._stop("topic"), 10, callback_group=self._cb)
         self.create_service(RunTask, "/agent/run", self._on_run, callback_group=self._cb)
         self.create_service(Trigger, "/agent/stop", self._on_stop, callback_group=self._cb)
         self.create_timer(1.0, self._publish_status, callback_group=self._cb)
@@ -202,14 +237,13 @@ class AgentNode(Node):
     def _log_startup(self) -> None:
         vlm = self._config.vlm
         self.get_logger().info(
-            f"planner: {vlm.provider}/{vlm.model} ({vlm.tool_mode} tools, "
-            f"max {vlm.max_steps} steps)"
+            f"planner: {vlm.provider}/{vlm.model} ({vlm.tool_mode} tools, max {vlm.max_steps} steps)",
         )
         self.get_logger().info(f"camera: {self._table_topic}")
         if self._table_map is None:
             self.get_logger().warn(
                 "table camera is NOT calibrated: run "
-                "'ros2 run rebot_trash_sorting_agent calibrate_table' before picking"
+                "'ros2 run rebot_trash_sorting_agent calibrate_table' before picking",
             )
         else:
             self.get_logger().info(f"table map: {self._table_map.describe()}")
@@ -217,7 +251,7 @@ class AgentNode(Node):
             self.get_logger().warn("dry run: no motion will be executed")
         if vlm.provider != "mock" and not self._config.api_key():
             self.get_logger().error(
-                f"no API key in ${vlm.api_key_env}: set it in ros2_ws/.env or export it"
+                f"no API key in ${vlm.api_key_env}: set it in ros2_ws/.env or export it",
             )
 
     # ------------------------------------------------------------------ inputs
@@ -249,8 +283,7 @@ class AgentNode(Node):
         self._result = None
         self._state = "running"
         self._publish_status()
-        self._worker = threading.Thread(target=self._run_task, args=(task,), name="agent_task",
-                                        daemon=True)
+        self._worker = threading.Thread(target=self._run_task, args=(task,), name="agent_task", daemon=True)
         self._worker.start()
         return True, "task accepted"
 
@@ -274,14 +307,16 @@ class AgentNode(Node):
         runs_dir = (self._config.agent.get("logging") or {}).get("runs_dir")
         events = EventLog(runs_dir, echo=self._publish_event)
         self._events_tail.clear()
+        self._scene.clear()
         try:
             vocabulary = vocabulary_from_task(
-                task, self._config.perception.get("classes") or ()
+                task,
+                self._config.perception.get("classes") or (),
             )
             self._detector.set_vocabulary(vocabulary)
             self.get_logger().info(
                 f"task vocabulary ({len(vocabulary)}): {', '.join(vocabulary[:8])}"
-                + (" ..." if len(vocabulary) > 8 else "")
+                + (" ..." if len(vocabulary) > 8 else ""),
             )
             session = make_session(
                 self._config.vlm,
@@ -301,6 +336,11 @@ class AgentNode(Node):
                 table_map=self._table_map,
                 plan_only=bool(self._config.run.get("dry_run", False)),
                 wrist_camera=self._wrist_camera,
+                front_camera=self._front_camera,
+                height_camera=self._height_camera,
+                baseline_classes=self._config.perception.get("classes") or (),
+                holding=self._holding,
+                planning_scene=self._planning_scene,
                 annotated_sink=self._publish_annotated,
                 learned_grasp=self._learned_grasp,
             )
@@ -319,8 +359,7 @@ class AgentNode(Node):
             )
             result = self._orchestrator.run(task)
         except Exception as exc:  # noqa: BLE001 - e.g. missing API key or SDK
-            result = TaskResult(task=task, success=False, summary="agent could not start", steps=0,
-                                error=str(exc))
+            result = TaskResult(task=task, success=False, summary="agent could not start", steps=0, error=str(exc))
             events.emit("task_error", error=str(exc))
         finally:
             self._runner = None
@@ -338,17 +377,18 @@ class AgentNode(Node):
         lines = []
         if self._table_map is None:
             lines.append(
-                "TABLE CAMERA NOT CALIBRATED: positions are unavailable until "
-                "scripts/calibrate_table.py has been run."
+                "TABLE CAMERA NOT CALIBRATED: positions are unavailable until scripts/calibrate_table.py has been run.",
             )
         else:
             error = self._table_map.error_mm
             lines.append(
-                "table camera calibrated"
-                + (f" (reprojection error {error:.1f} mm)" if error is not None else "")
+                "table camera calibrated" + (f" (reprojection error {error:.1f} mm)" if error is not None else ""),
             )
         lines.append("objects from the last camera view:")
         lines.append(self._scene.summary_text())
+        lines.append("active detector classes: " + ", ".join(self._detector.vocabulary))
+        held = self._holding.get("object")
+        lines.append(f"gripper holding: {held.label if held else 'nothing confirmed'}")
         return "\n".join(lines)
 
     def capture_jpeg(self) -> bytes | None:
@@ -394,6 +434,10 @@ class AgentNode(Node):
             "camera": self._table_topic,
             "frames": self._camera.frames_received,
             "wrist_frames": self._wrist_camera.frames_received if self._wrist_camera else 0,
+            "front_frames": self._front_camera.frames_received if self._front_camera else 0,
+            "height_calibrated": self._height_camera is not None,
+            "detector_classes": self._detector.vocabulary,
+            "holding": self._holding["object"].label if self._holding else None,
             "objects": self._scene.as_summaries(),
             "events": list(self._events_tail)[-12:],
             "updated": round(time.time(), 3),
