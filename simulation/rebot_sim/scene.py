@@ -5,7 +5,6 @@ replaces Seeed's demo table and cubes with the measured hackathon setup from
 real_setup.json (next to this file):
 
   * the wood table (texture cropped from the photos) and the floor below it
-  * the black base plate the arm is clamped to (plus the two green clamps)
   * cardboard walls behind and right of the robot, black board on the left
   * the white foam bin with its compartments (place targets `bin_0`, `bin_1`, ...)
   * the two external cameras (`cam_far`, `cam_corner`) at their measured spots
@@ -13,7 +12,7 @@ real_setup.json (next to this file):
 
 The robot base stays at the world origin (+x = towards the far edge, +y = towards
 the bin side), so the IK, teleop mapping and LeRobot recording work unchanged.
-The table top sits `base_plate.thickness` below the origin.
+The table top sits at z = 0.0.
 """
 from __future__ import annotations
 
@@ -43,8 +42,6 @@ _COLORS = {
     "cardboard": [0.70, 0.58, 0.44, 1],
     "black": [0.07, 0.07, 0.08, 1],
     "foam": [0.96, 0.96, 0.95, 1],
-    "plate": [0.11, 0.11, 0.12, 1],
-    "clamp": [0.10, 0.50, 0.40, 1],
     "floor": [0.42, 0.38, 0.30, 1],
     "camera": [0.05, 0.05, 0.05, 1],
 }
@@ -112,9 +109,8 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
     _remove_demo_scene(spec)
 
     ws_cfg, rob = cfg["workspace"], cfg["robot"]
-    plate = cfg["base_plate"]
     ws = Workspace(ws_cfg["width"], ws_cfg["depth"], rob["from_left"], rob["from_near"],
-                   table_z=-plate["thickness"])
+                   table_z=0.0)
     info = SceneInfo(ws, cfg)
 
     if rob.get("yaw_deg"):
@@ -124,7 +120,6 @@ def apply_real_setup(spec: mujoco.MjSpec, cfg: dict | None = None,
 
     _add_visual_settings(spec)
     _add_table(spec, ws, cfg["table"], _resolve(cfg, cfg["table"]["texture"]))
-    _add_base_plate(spec, ws, plate)
     _add_walls(spec, ws, cfg["walls"])
     info.bin_sites = _add_bin(spec, ws, cfg["bin"])
     info.cameras = _add_cameras(spec, ws, cfg["cameras"])
@@ -213,21 +208,6 @@ def _add_table(spec, ws: Workspace, t, tex_path: Path):
     spec.worldbody.add_geom(name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE,
                             pos=[0, 0, floor_z], size=[3, 3, 0.05],
                             material=_material(spec, "room_floor_mat", _COLORS["floor"]))
-
-
-def _add_base_plate(spec, ws: Workspace, p):
-    mat = _material(spec, "base_plate_mat", _COLORS["plate"], specular=0.3)
-    body = spec.worldbody.add_body(name="base_plate")
-    c = ws.world(ws.robot_from_left, ws.robot_from_near + p["center_offset_near_far"],
-                 p["thickness"] / 2)
-    _box(body, "base_plate_geom", c,
-         [p["size_near_far"] / 2, p["size_left_right"] / 2, p["thickness"] / 2], mat)
-    # Two green C-clamps holding the plate (visual only).
-    clamp = _material(spec, "clamp_mat", _COLORS["clamp"])
-    for i, side in enumerate((-1, 1)):
-        cc = c + [-p["size_near_far"] / 2 + 0.02, side * (p["size_left_right"] / 2 - 0.015),
-                  p["thickness"] / 2 + 0.012]
-        _box(body, f"clamp_{i}", cc, [0.02, 0.008, 0.012], clamp, collide=False)
 
 
 def _add_walls(spec, ws: Workspace, w):

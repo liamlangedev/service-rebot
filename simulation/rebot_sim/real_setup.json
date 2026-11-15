@@ -11,7 +11,7 @@
     "Values marked in _assumed are guesses from the photos: measure and correct them here."
   ],
   "_assumed": [
-    "base_plate.*", "wrist_camera.pos", "wrist_camera.look_at", "bin.wall", "bin.floor", "cameras.*.look_at",
+    "wrist_camera.pos", "wrist_camera.look_at", "bin.wall", "bin.floor", "cameras.*.look_at",
     "cameras.*.fov_diagonal_deg is read as a DIAGONAL fov (spec-sheet style)",
     "objects.cup.bottom_radius"
   ],
@@ -22,9 +22,6 @@
             "texture": "textures/table_wood.png", "texture_tile": 0.46},
 
   "robot": {"from_left": 0.60, "from_near": 0.075, "yaw_deg": 0.0},
-
-  "base_plate": {"size_near_far": 0.15, "size_left_right": 0.19, "thickness": 0.012,
-                 "center_offset_near_far": 0.0},
 
   "walls": {
     "thickness": 0.006,
