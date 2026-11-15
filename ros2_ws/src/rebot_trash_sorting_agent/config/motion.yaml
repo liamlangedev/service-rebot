@@ -1,0 +1,115 @@
+# Motion: MoveIt point-to-point, gripper, and the grasp model.
+#
+# The arm is driven only through moveit_msgs/action/MoveGroup on /move_action.
+# Named poses are plain joint vectors so they can be planned even without the SRDF
+# (and so this file is the single place to change them). They are collision-free
+# against the measured cell: the old SRDF 'ready' ([0,-0.75,-0.55,0,0,0]) put link2
+# 16 mm into the near wall.
+
+move_group:
+  action: /move_action
+  group: arm
+  tip_link: gripper_tcp
+  base_frame: base_link
+  planner_id: ""                # "" = let the move_group default decide (OMPL)
+  num_planning_attempts: 8
+  allowed_planning_time: 5.0
+  velocity_scaling: 0.15        # conservative for the first real runs
+  acceleration_scaling: 0.15
+  execute: true                 # false = plan only (dry_run still overrides this)
+
+#: joint order: joint1..joint6 [rad]
+named_poses:
+  ready: [0.0, -1.51, -1.30, 1.36, 0.0, 0.0]   # tool down, 11 cm above the table
+  home: [0.0, -1.30, -2.00, 1.00, 0.0, 0.0]    # folded, clear of the walls
+  observe: [0.0, -1.51, -1.30, 1.36, 0.0, 0.0]
+
+#: joint tolerance for named-pose goals [rad]
+joint_tolerance: 0.02
+
+gripper:
+  action: /gripper_controller/follow_joint_trajectory
+  joint: finger_left
+  open_m: 0.045                 # finger_left range is 0 (closed) .. 0.05 (open)
+  closed_m: 0.0
+  close_seconds: 1.2
+  open_seconds: 0.8
+  #: a close that stops more than this above the command means something is held
+  holding_gap_m: 0.004
+  timeout_s: 5.0
+
+  # --- torque monitor -------------------------------------------------------
+  # The DM motors publish motor torque in /joint_states.effort (finger_left), so
+  # a grasp needs no extra sensor. The value is NOT calibrated to newtons: it is
+  # compared against the free-air reading taken while the gripper was open, which
+  # is measured automatically on every open(). Mock hardware reports exact zeros,
+  # which is treated as "no telemetry" and falls back to finger position.
+  #
+  # Tune `holding_torque_delta_nm` by opening and closing on nothing once and
+  # reading `torque_delta` in the agent log: set the threshold above that noise.
+  # For scale, the bridge's max_effort is 1.5, so 0.15 is ~10 % of a full push.
+  torque_monitor: true
+  holding_torque_delta_nm: 0.15
+  #: after the lift, a drop of either signal below the close-time reading is a slip
+  slip_position_drop_m: 0.003
+  slip_torque_drop_nm: 0.10
+  #: how long to sample /joint_states after a gripper move
+  sample_s: 0.35
+
+grasp:
+  #: The object's height is not observable from one RGB view on a plane, so try a
+  #: short ladder of pinch heights above the table, low first. If the jaws close on
+  #: nothing the skill retreats and tries the next rung, which is also how a person
+  #: recovers from grabbing too low. No per-class dimensions are involved.
+  pinch_heights_m: [0.03, 0.05]
+  #: stop after this many reachable candidates (2 heights x 2 yaws = up to 4)
+  max_attempts: 3
+  #: the TCP (SRDF chain tip) sits at the fingertip, which is this far below the pinch
+  tcp_below_pinch: 0.020
+  #: used for the width warning when the mask's bottom edge is too short to measure
+  assumed_width_m: 0.04
+  #: pre-grasp pose: pinch this far above the grab point
+  pre_grasp_clearance: 0.12
+  #: lift after closing: pinch this far above the grab point
+  lift_clearance: 0.10
+  #: finger rotations tried, in this order (the measured yaw is always first)
+  yaw_candidates_deg: [0, 90]
+  #: beyond this the object does not fit between the fingers
+  max_open_width_m: 0.095
+  #: the jaw is 0.10 m open at 0.05; keep a margin
+  min_width_margin_m: 0.005
+
+place:
+  #: TCP height above the table surface when releasing on the table
+  table_release_height: 0.06
+  #: TCP height above the bin rim when releasing into the bin
+  bin_release_clearance: 0.05
+  #: how far above the release pose the arm approaches from. Bin poses that cannot
+  #: reach this high still work: the arm then descends straight to the release pose.
+  approach_clearance: 0.10
+  #: the bin is unreachable straight down (verified with MoveIt: no IK solution at
+  #: any height); the tool has to lean towards +y over the rim.
+  bin_tilt_deg: 40
+  bin_tilt_fallbacks_deg: [50, 35]
+  #: go back to the folded pose after each successful release
+  return_home_after_pick: false
+  #: placement on the table: candidate grid in base_link, first feasible spot wins
+  free_spots:
+    x: [0.18, 0.22, 0.26, 0.30]
+    y: [-0.20, -0.12, -0.04, 0.04, 0.12, 0.20]
+  #: keep the object this far from the walls and other objects
+  spot_clearance: 0.06
+
+wrist_correction:
+  #: Final XY correction from the wrist camera. Off until the camera is mounted and
+  #: the axis mapping is checked; see README "wrist correction".
+  enabled: false
+  camera: wrist
+  #: metres of base-frame motion per pixel of image error, at the grasp height
+  m_per_px: 0.00025
+  max_offset_m: 0.04
+  #: image axis -> base axis mapping. The wrist camera looks along the tool axis, so
+  #: image +u roughly maps to base +y and image +v to base +x (tool down). Flip signs
+  #: if the first test run corrects the wrong way.
+  u_to_base: [0.0, 1.0]         # [x, y]
+  v_to_base: [1.0, 0.0]

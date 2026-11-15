@@ -1,0 +1,72 @@
+# RGB camera capture for the agent.
+#
+# There is no camera driver in this repository, so camera_node opens the devices
+# itself with OpenCV/V4L2 and publishes <topic>/image_raw + <topic>/camera_info.
+# `device` is whatever OpenCV accepts: an index (0, 1) or a path (/dev/video2,
+# /dev/v4l/by-id/...). Swapping a camera is a one-line edit here.
+#
+# table_map is the pixel -> base_link(x, y) homography at z = table.z, written by
+#   ros2 run rebot_trash_sorting_agent calibrate_table --points "..."
+# Until it is filled in, the agent refuses pick/place tasks but still starts and
+# can run list_objects for debugging.
+
+cameras:
+  - name: table
+    topic: /table_cam
+    device: /dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0
+    width: 1280
+    height: 720
+    fps: 30
+    fourcc: MJPG
+    frame_id: table_cam_optical_frame
+    fov_deg: 75                 # only used for the informational camera_info K
+    warmup_s: 1.0
+    #: homography H (row-major 3x3) with [u, v, 1] -> [x, y, 1] in metres at table.z.
+    #: Leave it null and let calibrate_table.py write config/calibration.yaml instead;
+    #: an inline value here wins over that file.
+    table_map: null
+    #: real object width / (mask pixel width) at the table plane, if you want a size hint
+    m_per_px: null
+
+  # The MuJoCo simulator publishes the same /table_cam and /wrist_cam topics from
+  # its own cameras. This entry carries the homography for the simulated cam_corner
+  # (computed from real_setup.json with scripts/sim_calibrate.py; the sim camera is
+  # calibrated to the real C920, and on the table this map agrees with the real
+  # calibration.yaml within ~1-2 mm). It is disabled
+  # for the V4L2 driver so camera_node never tries to open a device that does not
+  # exist; use table_camera:=table_sim with use_mujoco:=true.
+  - name: table_sim
+    topic: /table_cam
+    device: null
+    enabled: false
+    width: 640
+    height: 480
+    fps: 10
+    frame_id: table_cam_optical_frame
+    fov_deg: 43.30
+    warmup_s: 0.0
+    table_map:
+      homography:
+        [0.00080112015023, 0.0018807373967, -0.39352181158,
+         0.0012313703074, -0.0010661406146, -0.067599830714,
+         -0.00021690820469, 0.0016701009168, 1]
+      error_mm: 0.0
+      points: 120
+      source: mujoco cam_corner (640x480, scene v1.4)
+    m_per_px: null
+
+  - name: wrist
+    topic: /wrist_cam
+    device: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
+    width: 1920                 # full resolution (the sim's wrist camera is modelled at 1920x1080)
+    height: 1080
+    fps: 30
+    fourcc: MJPG
+    frame_id: wrist_cam_optical_frame
+    fov_deg: 100
+    warmup_s: 1.0
+    #: the wrist camera is used as a second view and for the optional final
+    #: correction; it is deliberately NOT calibrated metric (the duct-taped
+    #: mount moves). Leave table_map null.
+    table_map: null
+    m_per_px: null
