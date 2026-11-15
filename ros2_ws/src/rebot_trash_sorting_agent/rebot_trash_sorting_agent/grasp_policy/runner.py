@@ -81,11 +81,14 @@ class PolicyRunner:
         self.anchor = np.asarray(anchor_state, dtype=np.float32).copy()
         self.policy.reset()
 
-    def predict(self, state: np.ndarray, images: dict[str, np.ndarray]) -> tuple[np.ndarray, bool]:
-        """Next `n_steps` absolute actions [n, 7] (dataset degrees) and whether any were clipped.
+    def predict(self, state: np.ndarray, images: dict[str, np.ndarray],
+                n: int | None = None) -> tuple[np.ndarray, bool]:
+        """Next `n` (default `n_steps`, at most the chunk size) absolute actions [n, 7] in
+        dataset degrees, and whether any were clipped.
 
         `images` maps short camera names to RGB HWC uint8 frames of any size.
         """
+        n = self.n_steps if n is None else max(1, min(int(n), self.chunk_size))
         if self.anchor is None:
             raise RuntimeError("call start() first")
         from lerobot.policies.utils import prepare_observation_for_inference
@@ -104,7 +107,7 @@ class PolicyRunner:
             batch = prepare_observation_for_inference(obs, torch.device(self.cfg.device),
                                                       task=self.cfg.task)
             batch = self.pre(batch)
-            chunk = self.policy.predict_action_chunk(batch)[:, : self.n_steps]
+            chunk = self.policy.predict_action_chunk(batch)[:, :n]
             chunk = self.post(chunk)
         actions = chunk.squeeze(0).float().cpu().numpy()
         if self.cfg.mode == "relative":

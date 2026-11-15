@@ -267,24 +267,58 @@ class GraspPolicyNode(Node):
         arm, finger, images = self._snapshot()
         self._runner.start(ros_to_data(arm, finger, self.gmap))
         start = time.monotonic()
-        info: dict[str, Any] = {"inferences": 0, "clipped": False}
+        info: dict[str, Any] = {"inferences": 0, "clipped": False, "infer_ms": 0.0}
         last_grip_cmd: float | None = None
         finished, reason = False, "timeout"
+        n_steps = self._runner.n_steps
 
+        def infer() -> dict[str, Any]:
+            """Observe now and predict; the result is stamped with the observation time."""
+            arm_, finger_, images_ = self._snapshot()
+            t_obs = time.monotonic()
+            acts, clip = self._runner.predict(ros_to_data(arm_, finger_, self.gmap), images_,
+                                              n=self._runner.chunk_size)
+            return {"t_obs": t_obs, "actions": acts, "clipped": clip,
+                    "ms": (time.monotonic() - t_obs) * 1000}
+
+        def start_infer() -> tuple[threading.Thread, dict[str, Any]]:
+            box: dict[str, Any] = {}
+
+            def work():
+                try:
+                    box.update(infer())
+                except Exception as exc:  # noqa: BLE001 - re-raised in the control loop
+                    box["error"] = exc
+            th = threading.Thread(target=work, daemon=True)
+            th.start()
+            return th, box
+
+        pred = infer()
         while not finished:
             if self._cancel.is_set():
                 reason = "cancelled"
                 break
             if time.monotonic() - start > timeout:
                 break
-            arm, finger, images = self._snapshot()
-            actions, clipped = self._runner.predict(ros_to_data(arm, finger, self.gmap), images)
             info["inferences"] += 1
-            info["clipped"] = info["clipped"] or clipped
+            info["clipped"] = info["clipped"] or pred["clipped"]
+            info["infer_ms"] = round(pred["ms"], 1)
+            # Actions are timed from the observation; drop those whose time has passed
+            # (inference latency), then execute the next n_steps.
+            skip = int(round((time.monotonic() - pred["t_obs"]) / dt))
+            actions = pred["actions"][skip:skip + n_steps]
+            if len(actions) == 0:
+                pred = infer()
+                continue
             ros = [data_to_ros(a, self.gmap) for a in actions]
             self._send_arm(np.array([r[0] for r in ros]), dt)
             chunk_t0 = time.monotonic()
+            # start the next inference early enough to be ready when this chunk ends
+            lead = min(len(actions), int(np.ceil(pred["ms"] / 1000 / dt)) + 1)
+            pending = None
             for i, (a, (_, grip_m)) in enumerate(zip(actions, ros)):
+                if pending is None and i >= len(actions) - lead:
+                    pending = start_infer()
                 if last_grip_cmd is None or abs(grip_m - last_grip_cmd) > 0.002:
                     self._send_gripper(grip_m, dt)
                     last_grip_cmd = grip_m
@@ -299,6 +333,12 @@ class GraspPolicyNode(Node):
                     finished, reason = True, "gripped and lifted"
                     break
                 self._publish_status(done, start, finger, info)
+            if pending is None:
+                pending = start_infer()
+            pending[0].join()
+            if "error" in pending[1]:
+                raise pending[1]["error"]
+            pred = pending[1]
 
         self._hold()
         with self._lock:
