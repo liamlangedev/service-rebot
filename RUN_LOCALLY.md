@@ -25,7 +25,7 @@ item's trained policy, and Claude watches the front camera until the item is in 
 | Models (public, no access needed) | **SmolVLA** `RoboCrafty/smolvla_rebot_merged_V2` (https://huggingface.co/RoboCrafty/smolvla_rebot_merged_V2), 0.45B, chunk 50; the one tested most with the concierge. **XVLA** `niru-5/xvla_rebot_merged_V2` (https://huggingface.co/niru-5/xvla_rebot_merged_V2), 0.9B, chunk 30. |
 | Training data | `RoboCrafty/rebot_sort_merged_V2` (public): 640x360 frames from `front_wide`, `gripper`, `high_oblique`; tasks `pick up the bottle and put it in the designated bin` and `pick up the towel and put it in the designated bin` |
 | Downloads | Automatic on first use (`--policy <repo>`), into `~/.cache/huggingface/hub`. SmolVLA also pulls its base VLM `HuggingFaceTB/SmolVLM2-500M-Video-Instruct` on first load. To prefetch: `hf download RoboCrafty/smolvla_rebot_merged_V2` |
-| GPU Space | `niru-5/rebot-policy-server` is **private** (Niranjan's account) and only needed when the computer is too slow (CPU). This runbook does not use it. |
+| GPU Space | Not needed: inference runs on this computer. (`--remote-url` in the scripts is for Niranjan's private GPU Space; ignore it.) |
 | Claude API key | Needed for the concierge. Not in git. Put it in `.env` in the repo root (step 2). |
 | Python | 3.12 (lerobot 0.7.0 needs >= 3.12) |
 
@@ -51,8 +51,8 @@ uv pip install -r requirements.txt          # lerobot[rebot,dataset,smolvla,xvla
 ```bash
 python -c "import lerobot, motorbridge, torch; print(lerobot.__version__, torch.__version__, 'cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))"
 ```
-prints `0.7.0`, a torch version and `cuda` or `mps`. With `cpu` the policy is too slow for the arm (~30 s per chunk); ask
-Niranjan for access to the GPU Space and use `--remote-url https://niru-5-rebot-policy-server.hf.space` (see `teleoperation/REAL_ARM.md`).
+prints `0.7.0`, a torch version and `cuda` or `mps`. If it prints `cpu`, the GPU is not visible to torch (install the
+CUDA build of torch, or check the driver): on CPU the policy is far too slow for the arm (~30 s per chunk).
 
 If ROS is sourced in the shell (`/opt/ros/...` on `PYTHONPATH`), run Python with `env -u PYTHONPATH` or open a clean shell.
 
