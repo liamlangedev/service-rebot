@@ -1,0 +1,21 @@
+{
+  "_comment": "skill name -> exact training prompt. The orchestrator can only pick a name from here. 'scene' and 'pickup' are plain-language hints for the vision checks; edit them to match your table.",
+  "scene": {
+    "bin": "the designated bin: the white foam box on the right side of the table in the front_wide view",
+    "camera": "front_wide shows the whole table, with the robot at the top and the bin on the right"
+  },
+  "skills": {
+    "bottle": {
+      "prompt": "pick up the bottle and put it in the designated bin",
+      "duration": 45,
+      "pickup": "bottles start on the table in the pick-up area (left and middle of the table), not in the bin",
+      "looks_like": "a plastic drinks bottle (EDIT: describe your bottle, e.g. a green and white water bottle, standing or lying)"
+    },
+    "towel": {
+      "prompt": "pick up the towel and put it in the designated bin",
+      "duration": 45,
+      "pickup": "the towel starts on the table in the pick-up area (left and middle of the table), not in the bin",
+      "looks_like": "a cloth towel, flat or loosely folded (EDIT: describe your towel)"
+    }
+  }
+}
