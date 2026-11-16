@@ -43,7 +43,12 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-## 3. Verify & Launch
+## 3. Verify & Launch the Arm Only
+
+Run these commands from `ros2_ws/` after sourcing the environment above. In each
+additional terminal, source the ROS setup and `install/setup.bash` again.
+These launches start the arm driver or fake hardware, MoveIt, and RViz, but not
+the camera streams, detector, or sorting agent.
 
 ```bash
 # Check rebot_trash_sorting + OpenCV/cv_bridge + rebotarm_msgs linkage
@@ -57,3 +62,36 @@ ros2 launch rebot_trash_sorting bringup.launch.py use_fake_hardware:=false chann
 # (In another terminal, enable the motors before clicking Execute in RViz:
 #  ros2 service call /rebotarm/enable std_srvs/srv/Trigger)
 ```
+
+## 4. Calibrate & Run the Sorting Pipeline
+
+Follow the [agent calibration and pipeline guide](src/rebot_trash_sorting_agent/README.md)
+for camera devices, detector/planner dependencies, API key configuration, and the
+ordered startup commands. The calibration flow records five table marks once,
+then clicks those marks in the table and `front_camera` images. Front-camera
+intrinsics default to a horizontal-FOV approximation; a configured calibrated
+`camera_matrix` takes precedence. No approximation flag is needed.
+
+After calibration, with no separate bringup or camera processes running, the
+combined real-hardware command is:
+
+```bash
+ros2 launch rebot_trash_sorting_agent sorting.launch.py \
+  config_dir:="$PWD/src/rebot_trash_sorting_agent/config" \
+  use_fake_hardware:=false channel:=/dev/ttyACM0
+```
+
+This starts the arm, MoveIt, configured USB cameras, agent, dashboard, and a
+MuJoCo mirror. It requires the simulation dependencies even when controlling
+real hardware. The linked guide gives a split launch without the mirror, and
+explains how to reuse arm bringup from calibration without a second driver.
+
+For observation-only verification, set `run.dry_run: true` in the selected
+`agent.yaml`; the current `dry_run:=true` launch override does not persist that
+setting. Do not assume that `provider:=mock` prevents motion. Open
+http://127.0.0.1:8090/ for tasks and the table/wrist streams; the front stream is
+available on `/front_camera/image_raw` but is not displayed on the dashboard.
+
+Custom scene collision publishers have been removed: unmodelled table objects,
+walls, and bins are not avoided automatically. Clear the arm's workspace before
+motion or shutdown; driver shutdown can move the arm to its upright home pose.

@@ -25,7 +25,13 @@ perception:
   conf: 0.12
   # The detector is open-vocabulary. The task sentence supplies the nouns and is
   # expanded into colour prompts at run time ("can" -> "red can", "white cup", ...).
-  # These defaults only cover the first list_objects call and unusual task wording.
+  # BASELINE/FALLBACK ONLY, NOT AN EXHAUSTIVE CLASS LIST.
+  # The orchestrator inspects its image and supplies additional short object names
+  # through detect_objects(classes=[...]) or list_objects(classes=[...]). Those
+  # runtime classes extend this baseline; objects need not be preconfigured here.
+  # Invalid/absent suggestions retain the baseline/task vocabulary. Prompts are
+  # bounded to 32 total; up to 16 baseline names are retained within that budget.
+  # Reuse the active vocabulary across views/frames instead of rediscovering each frame.
   # There is deliberately no per-object size or class geometry here: width and
   # orientation are measured from the mask through the table homography.
   classes:

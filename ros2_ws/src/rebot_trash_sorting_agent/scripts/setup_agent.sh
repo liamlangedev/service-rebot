@@ -58,8 +58,15 @@ check cv2 numpy yaml torch ultralytics google.genai || {
 cat <<'EOF'
 
 done. next steps:
-  1. weights:   ./scripts/fetch_models.sh [DIR_WITH_WEIGHTS]
-  2. api key:   echo 'GEMINI_API_KEY=...' >> ros2_ws/.env && chmod 600 ros2_ws/.env
-  3. cameras:   ros2 launch rebot_trash_sorting_agent agent.launch.py provider:=mock dry_run:=true
-  4. table map: ros2 run rebot_trash_sorting_agent calibrate_table --points "x,y;x,y;x,y;x,y"
+  Run the following from ros2_ws/ after sourcing ROS and install/setup.bash:
+  1. Set perception.model to existing detector weights in the selected agent.yaml.
+  2. Put GEMINI_API_KEY in ros2_ws/.env (or .env from ros2_ws/), with permissions 600.
+  3. Set camera devices and enable front_camera in the selected cameras.yaml.
+  4. Start arm bringup and camera_node in separate terminals before calibration.
+  5. Record five marks once, then click them in both fixed views:
+     ros2 run rebot_trash_sorting_agent calibrate_table --config-dir "$PWD/src/rebot_trash_sorting_agent/config" --from-arm --count 5 --joint-states-topic /rebotarm/joint_states
+  Intrinsics fall back to configured horizontal FOV automatically.
+  For the complete startup order and no-motion verification, follow:
+     src/rebot_trash_sorting_agent/README.md
+  provider:=mock is NOT a no-motion mode; use run.dry_run: true in agent.yaml.
 EOF

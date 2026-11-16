@@ -55,6 +55,21 @@ cameras:
       source: mujoco cam_corner (640x480, scene v1.4)
     m_per_px: null
 
+  - name: front_camera
+    topic: /front_camera
+    device: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._KD-USB_Cameras_KD-USB_Cameras-video-index0
+    enabled: true
+    width: 640
+    height: 480
+    fps: 15
+    fourcc: MJPG
+    frame_id: front_camera_optical_frame
+    fov_deg: 100                # horizontal FOV, approximate-intrinsics mode only
+    warmup_s: 1.0
+    camera_matrix: null         # calibrated 3x3 K (row-major 9 values), at this resolution
+    distortion: []             # OpenCV distortion coefficients, if calibrated
+    table_map: null
+
   - name: wrist
     topic: /wrist_cam
     device: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0

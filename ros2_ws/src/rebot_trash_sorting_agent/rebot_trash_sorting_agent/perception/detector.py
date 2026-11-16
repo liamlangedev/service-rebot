@@ -10,11 +10,12 @@ Weights are not committed. ``scripts/fetch_models.sh`` copies or downloads them 
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import os
-from pathlib import Path
 import re
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -26,16 +27,103 @@ from .scene import combine
 #: attributes make a bare noun ("can") survive contact with colour and shape.
 _COLOURS = ("red", "orange", "yellow", "green", "blue", "black", "white", "silver")
 _STOPWORDS = {
-    "a", "an", "the", "this", "that", "these", "those", "it", "them", "its",
-    "please", "now", "then", "and", "or", "but", "to", "into", "in", "on", "at",
-    "from", "with", "for", "of", "by", "up", "down", "over", "under", "left",
-    "right", "front", "back", "near", "far", "table", "robot", "arm", "gripper",
-    "bin", "bins", "compartment", "compartments", "trash", "waste", "recycling",
-    "put", "place", "pick", "move", "drop", "take", "grab", "sort", "throw",
-    "bring", "get", "remove", "clean", "clear", "release", "hold", "lift", "send",
-    "there", "here", "one", "two", "first", "second", "all",
+    "a",
+    "an",
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "them",
+    "its",
+    "please",
+    "now",
+    "then",
+    "and",
+    "or",
+    "but",
+    "to",
+    "into",
+    "in",
+    "on",
+    "at",
+    "from",
+    "with",
+    "for",
+    "of",
+    "by",
+    "up",
+    "down",
+    "over",
+    "under",
+    "left",
+    "right",
+    "front",
+    "back",
+    "near",
+    "far",
+    "table",
+    "robot",
+    "arm",
+    "gripper",
+    "bin",
+    "bins",
+    "compartment",
+    "compartments",
+    "trash",
+    "waste",
+    "recycling",
+    "put",
+    "place",
+    "pick",
+    "move",
+    "drop",
+    "take",
+    "grab",
+    "sort",
+    "throw",
+    "bring",
+    "get",
+    "remove",
+    "clean",
+    "clear",
+    "release",
+    "hold",
+    "lift",
+    "send",
+    "there",
+    "here",
+    "one",
+    "two",
+    "first",
+    "second",
+    "all",
 }
 _MAX_PROMPTS = 32
+
+
+def discovery_vocabulary(classes: Any, fallback: Iterable[str] = ()) -> list[str]:
+    """Bound VLM text prompts while reserving space for the baseline vocabulary."""
+
+    def clean(values: Iterable[Any]) -> list[str]:
+        result: list[str] = []
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            label = " ".join(value.lower().split())
+            if not re.fullmatch(r"[a-z0-9][a-z0-9 -]{0,63}", label) or len(label.split()) > 6 or label in _STOPWORDS:
+                continue
+            if label not in result:
+                result.append(label)
+            if len(result) == _MAX_PROMPTS:
+                break
+        return result
+
+    baseline = clean(fallback)[: _MAX_PROMPTS // 2]
+    discovered = clean(classes) if isinstance(classes, (list, tuple)) else []
+    additions = [label for label in discovered if label not in baseline]
+    return additions[: _MAX_PROMPTS - len(baseline)] + baseline
 
 
 def vocabulary_from_task(task: str, base: Iterable[str] = ()) -> list[str]:
@@ -52,7 +140,8 @@ def vocabulary_from_task(task: str, base: Iterable[str] = ()) -> list[str]:
     phrases = [
         f"{colour} {noun}"
         for colour, noun in re.findall(
-            r"\b(" + "|".join(_COLOURS) + r")\s+([a-z][a-z0-9_-]+)", text
+            r"\b(" + "|".join(_COLOURS) + r")\s+([a-z][a-z0-9_-]+)",
+            text,
         )
         if noun not in _STOPWORDS
     ]
@@ -85,15 +174,14 @@ class YoloeDetector:
             from ultralytics import YOLOE  # noqa: F401  (import check)
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError(
-                "local perception needs ultralytics + torch: run scripts/setup_agent.sh "
-                "or pip install ultralytics"
+                "local perception needs ultralytics + torch: run scripts/setup_agent.sh or pip install ultralytics",
             ) from exc
 
         model_path = Path(str(settings.get("model", "yoloe-26l-seg.pt"))).expanduser()
         if not model_path.is_file():
             raise FileNotFoundError(
                 f"detector weights not found: {model_path}\n"
-                "run scripts/fetch_models.sh (or set perception.model in agent.yaml)"
+                "run scripts/fetch_models.sh (or set perception.model in agent.yaml)",
             )
         self.model_path = model_path
         self.classes = [str(c) for c in (settings.get("classes") or ["can", "cup"])]
@@ -158,7 +246,11 @@ def detections_from_result(result: Any) -> list[Detection]:
     confs = boxes.conf.cpu().numpy() if hasattr(boxes.conf, "cpu") else np.asarray(boxes.conf)
     classes = boxes.cls.cpu().numpy() if hasattr(boxes.cls, "cpu") else np.asarray(boxes.cls)
     for index in range(len(xyxy)):
-        label = names.get(int(classes[index]), str(int(classes[index]))) if isinstance(names, dict) else str(names[int(classes[index])])
+        label = (
+            names.get(int(classes[index]), str(int(classes[index])))
+            if isinstance(names, dict)
+            else str(names[int(classes[index])])
+        )
         polygon: tuple[tuple[float, float], ...] = ()
         if index < len(polygons):
             points = np.asarray(polygons[index], dtype=float)
@@ -170,25 +262,34 @@ def detections_from_result(result: Any) -> list[Detection]:
                 score=float(confs[index]),
                 bbox=tuple(float(v) for v in xyxy[index]),
                 polygon=polygon,
-            )
+            ),
         )
     return out
 
 
-def annotate(bgr: np.ndarray, detections: Iterable[Detection], colour: tuple[int, int, int] = (0, 200, 0)) -> np.ndarray:
-    """Draw boxes, labels and contact points (for the dashboard and debugging)."""
+def annotate(
+    bgr: np.ndarray, detections: Iterable[Detection], colour: tuple[int, int, int] = (0, 200, 0)
+) -> np.ndarray:
+    """Draw segmentation masks, boxes, labels and contact points."""
     import cv2
 
     frame = bgr.copy()
     for det in detections:
+        if len(det.polygon) >= 3:
+            polygon = np.asarray(det.polygon, dtype=np.int32).reshape(-1, 1, 2)
+            overlay = frame.copy()
+            cv2.fillPoly(overlay, [polygon], colour)
+            cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, dst=frame)
+            cv2.polylines(frame, [polygon], True, colour, 2)
         x1, y1, x2, y2 = (int(v) for v in det.bbox)
         cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
         text = f"{det.label} {det.score:.2f}"
         (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
         ty = max(y1, th + baseline + 6)
         cv2.rectangle(frame, (x1, ty - th - baseline - 6), (x1 + tw + 8, ty), colour, -1)
-        cv2.putText(frame, text, (x1 + 4, ty - baseline - 3),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (10, 14, 18), 2, cv2.LINE_AA)
+        cv2.putText(
+            frame, text, (x1 + 4, ty - baseline - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (10, 14, 18), 2, cv2.LINE_AA
+        )
         try:
             u, v = det.bottom_mid_px()
             cv2.circle(frame, (int(u), int(v)), 4, (0, 0, 255), -1)

@@ -7,16 +7,16 @@ view so the planner can be told "visible" versus "remembered".
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
 import time
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
-from ..ros_image import imgmsg_to_bgr
-from ..types import Detection, WorldObject
-from .table_map import TableMap
+from rebot_trash_sorting_agent.perception.table_map import TableMap
+from rebot_trash_sorting_agent.ros_image import imgmsg_to_bgr
+from rebot_trash_sorting_agent.types import Detection, WorldObject
 
 
 class CameraClient:
@@ -88,8 +88,12 @@ class SceneModel:
         self._last_update = 0.0
 
     # ------------------------------------------------------------------ updates
-    def update(self, detections: Iterable[Detection], table_map: TableMap | None,
-               stamp: float | None = None) -> list[WorldObject]:
+    def update(
+        self,
+        detections: Iterable[Detection],
+        table_map: TableMap | None,
+        stamp: float | None = None,
+    ) -> list[WorldObject]:
         now = time.monotonic() if stamp is None else stamp
         self._last_update = now
         fresh: list[WorldObject] = []
@@ -98,9 +102,18 @@ class SceneModel:
                 continue
             x, y = table_map.project(det)
             width, yaw = table_map.footprint(det)
-            fresh.append(WorldObject(label=det.label, x=x, y=y, z=table_map.table_z,
-                                     score=det.score, width_px=det.width_px,
-                                     width_m=width, yaw_deg=yaw))
+            fresh.append(
+                WorldObject(
+                    label=det.label,
+                    x=x,
+                    y=y,
+                    z=table_map.table_z,
+                    score=det.score,
+                    width_px=det.width_px,
+                    width_m=width,
+                    yaw_deg=yaw,
+                ),
+            )
 
         matched: set[int] = set()
         for obj in fresh:
@@ -117,9 +130,11 @@ class SceneModel:
                 match.y = alpha * obj.y + (1 - alpha) * match.y
                 match.score = obj.score
                 match.width_px = obj.width_px or match.width_px
+                match.height_m = None
                 if obj.width_m > 0.0:
-                    match.width_m = (alpha * obj.width_m + (1 - alpha) * match.width_m
-                                     if match.width_m > 0.0 else obj.width_m)
+                    match.width_m = (
+                        alpha * obj.width_m + (1 - alpha) * match.width_m if match.width_m > 0.0 else obj.width_m
+                    )
                 match.yaw_deg = _blend_angle(match.yaw_deg, obj.yaw_deg, alpha)
                 match.seen_count += 1
                 match.age_s = 0.0
@@ -173,6 +188,11 @@ class SceneModel:
         self._objects = [o for o in self._objects if o.label.lower() != label.strip().lower()]
         return len(self._objects) != before
 
+    def clear(self) -> None:
+        """Clear cached objects so the next task runs a fresh detection."""
+        self._objects.clear()
+        self._last_update = 0.0
+
     def summary_text(self, limit: int = 8) -> str:
         objects = self.all()[:limit]
         if not objects:
@@ -182,6 +202,7 @@ class SceneModel:
             lines.append(
                 f"- {obj.label}: state={obj.state}, x={obj.x:.3f}, y={obj.y:.3f}, "
                 f"width={obj.width_m:.3f} m, yaw={obj.yaw_deg:.0f} deg, seen={obj.seen_count}x"
+                + (f", height={obj.height_m:.3f} m" if obj.height_m is not None else ""),
             )
         return "\n".join(lines)
 
@@ -197,10 +218,12 @@ def _blend_angle(old_deg: float, new_deg: float, alpha: float) -> float:
     """Exponential smoothing for a line orientation (period 180 deg)."""
     old = math.radians(2.0 * old_deg)
     new = math.radians(2.0 * new_deg)
-    return 0.5 * math.degrees(math.atan2(
-        alpha * math.sin(new) + (1.0 - alpha) * math.sin(old),
-        alpha * math.cos(new) + (1.0 - alpha) * math.cos(old),
-    ))
+    return 0.5 * math.degrees(
+        math.atan2(
+            alpha * math.sin(new) + (1.0 - alpha) * math.sin(old),
+            alpha * math.cos(new) + (1.0 - alpha) * math.cos(old),
+        ),
+    )
 
 
 def combine(detections: Sequence[Detection]) -> list[Detection]:
