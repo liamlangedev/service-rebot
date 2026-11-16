@@ -5,6 +5,8 @@
   "save_width": 640,
   "save_height": 360,
   "fps": 30,
+  "_comment_fourcc": "Linux/V4L2 defaults to uncompressed YUYV, which these USB2 cameras deliver at only 10 fps at 1280x720. MJPG gives 30 fps.",
+  "fourcc": "MJPG",
   "cameras": {
     "front_wide": 2,
     "gripper": 4,
