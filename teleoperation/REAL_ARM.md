@@ -143,6 +143,36 @@ First runs: put the keys and bin in the training layout, keep a hand on the powe
 The policy can only do what the 640x480-camera, `front_wide` / `gripper` / `high_oblique` data showed it; a different camera
 position or crop will degrade it. A dataset recorded with `record_episodes.py` now (16:9, 640x360) does not match these policies.
 
+## Orchestrator: Gemini calls the policy by voice or text
+
+Two processes, so the model is loaded once and every request reuses it:
+
+```bash
+# terminal 1: loads the policy and the arm once, serves skills on http://127.0.0.1:8000
+python robot_server.py --port /dev/tty.usbmodem00000000050C1 --policy RoboCrafty/smolvla_rebot_merged_V2_15000 \
+    --device mps --cam-height 360
+
+# terminal 2: needs a Google AI Studio key in the environment (never commit it)
+export GEMINI_API_KEY=...
+python orchestrator.py            # then type: "I need a towel" / "clean up the table" / "stop"
+```
+
+- `config/skills.json` maps skill names (`bottle`, `towel`, `keys`) to the exact training prompts and the run time.
+  Gemini can only pick a name; it cannot write prompts or send joint commands.
+- Gemini's tools: `fetch(item)` (runs the skill, blocks, arm returns to ready), `look(camera)` (a camera frame it can see),
+  `stop()`. It looks before fetching and after, retries once on failure.
+- **Supervision.** `fetch` does not wait for the timer. Before moving, it asks the LLM (with the front camera image) whether the item
+  is at the pick-up area; if not, it reports "none left" and the arm stays put. While the skill runs, about every 4 s it sends the
+  first and the current frame to the LLM, which answers done / working / stuck / failed. Two "done" in a row end the skill and send
+  the arm home; two "stuck", or no arm motion for 10 s, give up with a reason and a suggestion for the user. No automatic retries.
+  Edit the plain-language hints (`scene`, per-skill `pickup`) in `config/skills.json` to match your table. `--judge-model` picks a
+  smaller, faster model for these checks.
+- **Buttons.** STOP (or Esc) ends everything and blocks further robot actions for that request; "Task done" ends the skill and lets
+  the assistant wrap up.
+- Server API: `GET /skills /status /frame?camera=...`, `POST /run {"skill": ...}`, `POST /stop`. S / G / H still work on the keyboard.
+- Test without the robot: `python robot_server.py --fake --http-port 8000`, then run the orchestrator.
+- `--model` selects the Gemini model (default `gemini-3.8-flash`; use whichever current model has image input and tool calling).
+
 ## Push to the Hub
 
 ```bash
