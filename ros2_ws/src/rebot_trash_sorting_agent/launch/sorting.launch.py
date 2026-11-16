@@ -29,6 +29,7 @@ def _launch(context, *args, **kwargs):
     del args, kwargs
     fake = _truthy(LaunchConfiguration("use_fake_hardware").perform(context))
     use_mujoco = _truthy(LaunchConfiguration("use_mujoco").perform(context))
+    hardware_mode = "simulation" if use_mujoco else ("fake" if fake else "real")
     namespace = LaunchConfiguration("arm_namespace").perform(context).strip("/") or "rebotarm"
     joint_states = "/joint_states" if (fake or use_mujoco) else f"/{namespace}/joint_states"
     table_camera = LaunchConfiguration("table_camera").perform(context).strip()
@@ -79,6 +80,7 @@ def _launch(context, *args, **kwargs):
             "provider": LaunchConfiguration("provider"),
             "vlm_model": LaunchConfiguration("vlm_model"),
             "dry_run": LaunchConfiguration("dry_run"),
+            "hardware_mode": hardware_mode,
             "use_camera_driver": "false" if use_mujoco else "true",
             "use_mujoco": "false" if use_mujoco else "true",
             "table_camera": table_camera or "table",

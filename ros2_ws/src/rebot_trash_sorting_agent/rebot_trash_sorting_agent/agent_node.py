@@ -105,6 +105,7 @@ class AgentNode(Node):
         self.declare_parameter("provider", "")
         self.declare_parameter("vlm_model", "")
         self.declare_parameter("dry_run", False)
+        self.declare_parameter("hardware_mode", "unknown")
         self.declare_parameter("max_steps", 0)
         self.declare_parameter("table_camera", "table")
 
@@ -429,7 +430,9 @@ class AgentNode(Node):
             "busy": self._busy.is_set(),
             "provider": self._config.vlm.provider,
             "model": self._config.vlm.model,
+            "api_key_configured": bool(self._config.api_key()),
             "dry_run": bool(self._config.run.get("dry_run", False)),
+            "hardware_mode": self._str_param("hardware_mode") or "unknown",
             "calibrated": self._table_map is not None,
             "camera": self._table_topic,
             "frames": self._camera.frames_received,

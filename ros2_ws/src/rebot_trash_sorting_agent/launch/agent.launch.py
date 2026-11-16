@@ -35,6 +35,11 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "dry_run", default_value="false", description="plan and measure but never move the arm"
             ),
+            DeclareLaunchArgument(
+                "hardware_mode",
+                default_value="unknown",
+                description="explicit safety status: real | fake | simulation | unknown",
+            ),
             DeclareLaunchArgument("max_steps", default_value="0", description="override the per-task tool-call budget"),
             DeclareLaunchArgument(
                 "use_camera_driver",
@@ -87,6 +92,7 @@ def generate_launch_description() -> LaunchDescription:
                         "provider": LaunchConfiguration("provider"),
                         "vlm_model": LaunchConfiguration("vlm_model"),
                         "dry_run": ParameterValue(LaunchConfiguration("dry_run"), value_type=bool),
+                        "hardware_mode": LaunchConfiguration("hardware_mode"),
                         "max_steps": ParameterValue(LaunchConfiguration("max_steps"), value_type=int),
                         "table_camera": LaunchConfiguration("table_camera"),
                     },

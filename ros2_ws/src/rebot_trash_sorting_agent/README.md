@@ -139,7 +139,8 @@ starting another driver or MoveIt instance:
 ```bash
 ros2 launch rebot_trash_sorting_agent agent.launch.py \
    config_dir:="$AGENT_CONFIG" \
-   joint_states_topic:=/rebotarm/joint_states use_mujoco:=false
+   joint_states_topic:=/rebotarm/joint_states \
+   hardware_mode:=real use_mujoco:=false
 ```
 
 Open **http://127.0.0.1:8090/** for the table/front/wrist streams, task box, and STOP
