@@ -25,22 +25,52 @@ from google.genai import types
 SKILLS_CONFIG = Path(__file__).resolve().parent / "config" / "skills.json"
 FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3-flash", "gemini-flash-latest"]  # tried in order if the main model fails; names unchecked
 
-SYSTEM = """You are the brain of a robot arm that can fetch and tidy objects. The arm picks an object and puts it in
-the designated bin. You control it ONLY through the tools:
-- fetch(item): run the learned skill for one item. It blocks until done and supervises itself: it checks that the item is
-  present first, watches the cameras while the arm works, and ends the skill as soon as the item is in the bin, or reports
-  why it is stuck or failed. The result tells you what happened (status, reason, suggestion).
-- look(camera): get a current camera image. Cameras: front_wide (whole workspace), high_oblique, gripper.
-- stop(): stop the arm now.
-Rules:
-- To bring or tidy an item, just call fetch(item). If it says nothing is there, tell the user there is none left.
-- Do NOT retry automatically after a failure. Tell the user briefly what happened and give the suggestion (for example
-  "rotate the bottle a little"), then wait for them. Only retry if the user asks.
-- Say just "Stopped." ONLY when the result status is "aborted" (the operator pressed STOP). For any other result, explain in a
-  sentence what happened, using the reason and suggestion from the result.
-- Fetch one item at a time. For "clean up", fetch each item type that has a skill, one after another, and stop if one fails.
-- Items without a skill are not possible: say so.
-- Keep spoken replies short (one or two sentences), friendly, and say what you are about to do before long actions."""
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
+_CLAUDE_FALLBACK_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")  # accept the server-side refusal fallback
+_CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+
+def concierge_prompt(skills: dict, skill_cfg: dict, concierge: dict) -> str:
+    """System prompt of the concierge: understands what a guest needs and hands out the matching item."""
+    venue = concierge.get("venue", "a wellness spa")
+    handout = concierge.get("handout", "the hand-out tray (the white box on the right of the counter)")
+    lines = []
+    for name in skills:
+        c = skill_cfg.get(name, {})
+        lines.append(f"- {name}: {c.get('offer', name)}. Good for: {c.get('good_for', 'when a guest asks for it')}.")
+    items = "\n".join(lines)
+    return f"""You are the friendly concierge robot at {venue}. Guests talk to you (by voice or text) and you hand out the
+items they need with your robot arm: the arm picks the item up from the counter and places it in {handout}, where the
+guest takes it.
+
+Items you can hand out (nothing else):
+{items}
+
+How to help:
+- Work out what the guest actually needs, also when they do not name the item ("I'm off to the sauna" -> towel,
+  "I'm so thirsty" -> water). If a need clearly matches one item, say in a short sentence what you are getting and
+  call fetch(item). If it is really unclear, ask one short question first.
+- One item at a time. If the guest needs several, hand them out one after another.
+- If they want something you do not have (a bathrobe, slippers, food, ...), say kindly that you can only offer the
+  items above, suggest one if it helps, and call notify_staff so a staff member can help them.
+- Use notify_staff also when a guest has a complaint, feels unwell, needs a human, or anything is wrong with the robot.
+  The staff see it on their operator screen. Never mention internal details (skills, cameras, policies, errors) to guests.
+
+Tools:
+- fetch(item): hands out one item. It blocks until done and supervises itself (checks the item is there, watches the arm,
+  ends as soon as the item is in the tray). The result tells you what happened (status, reason, suggestion).
+- look(camera): current camera image (front_wide shows the whole counter), if you need to check something yourself.
+- notify_staff(message, urgency): alert the staff on the operator screen.
+- stop(): stop the arm immediately.
+
+After fetch:
+- status "done": tell the guest it is ready in the tray; offer briefly if they need anything else.
+- status "no_item": that item has run out. Apologise, say a staff member will restock it (they are already notified).
+- any other status (stuck, failed, ran_out_of_time, error): apologise briefly and say a staff member is on the way (they
+  are already notified). Do NOT retry on your own; only if the guest asks.
+- status "aborted": the staff pressed STOP. Just say "Stopped." and do nothing else.
+
+Style: warm, calm, short (one or two sentences; it is read aloud). Reply in the guest's language."""
 
 
 EVENT = None  # optional hook (kind, text): the web UI sets it to receive progress
@@ -61,14 +91,50 @@ class Robot:
 
     def __init__(self, url: str, config_path: Path = SKILLS_CONFIG):
         self.http = httpx.Client(base_url=url, timeout=30.0)
-        self.skills = self.http.get("/skills").json()
+        self.skills = self._wait_for_server(url)
         cfg = json.loads(config_path.read_text()) if config_path.exists() else {}
         self.scene, self.skill_cfg = cfg.get("scene", {}), cfg.get("skills", {})
+        self.system_prompt = concierge_prompt(self.skills, self.skill_cfg, cfg.get("concierge", {}))
         self.attempts: dict[str, int] = {}
         self.aborted = False
+        self.request = ""      # the guest's current request (for issue reports)
         self.judge = None  # set by Brain: judge(kind, item, images, **info) -> dict
+        self.report = None  # set by the web UI: report(issue dict) -> operator dashboard
         if "motion_deg_3s" not in self._status():
             log("  [robot] WARNING: robot_server.py is an old version (no motion data, no stop reasons). Restart it.")
+
+    def _wait_for_server(self, url: str, timeout_s: float = 600.0) -> dict:
+        """The robot server may still be connecting to the arm (or waiting for Enter): wait instead of crashing."""
+        t0, said = time.time(), False
+        while True:
+            try:
+                return self.http.get("/skills").raise_for_status().json()
+            except httpx.HTTPError:
+                if time.time() - t0 > timeout_s:
+                    raise SystemExit(f"robot server at {url} did not come up within {timeout_s:.0f} s")
+                if not said:
+                    print(f"waiting for the robot server at {url} (start robot_server.py; it prints 'robot ready.')...",
+                          flush=True)
+                    said = True
+                time.sleep(1.0)
+
+    def issue(self, kind: str, severity: str, message: str, item: str | None = None, reason: str = "",
+              suggestion: str = "", snapshot: bool = True) -> None:
+        """Send a problem to the operator dashboard (or print it when there is no dashboard)."""
+        log(f"  [issue] {severity}: {message}" + (f" ({reason})" if reason else ""), kind="issue_log")
+        if self.report is None:
+            return
+        img = self.look("front_wide") if snapshot else None
+        try:
+            self.report({"kind": kind, "severity": severity, "message": message, "item": item, "reason": reason,
+                         "suggestion": suggestion, "request": self.request, "snapshot": img})
+        except Exception as e:  # noqa: BLE001 - reporting must never break the robot flow
+            print(f"[issue] could not report: {e!r}")
+
+    def notify_staff(self, message: str, urgency: str = "normal") -> dict:
+        sev = {"high": "error", "urgent": "error", "low": "info"}.get(str(urgency).lower(), "warning")
+        self.issue("staff_request", sev, message, snapshot=False)
+        return {"ok": True, "note": "the staff have been notified on the operator screen"}
 
     def _status(self) -> dict:
         return self.http.get("/status").json()
@@ -91,12 +157,20 @@ class Robot:
             pre = self.judge("pre", item, [before], pickup=hint, bin=bin_desc, looks_like=looks)
             log(f"  [judge] before: present={pre.get('present')} sees '{pre.get('what_i_see', '')}' - {pre.get('reason', '')}")
             if pre.get("present") is False:
+                self.issue("no_item", "warning", f"Out of {item}: none at the pick-up area", item=item,
+                           reason=pre.get("reason", ""), suggestion=f"restock the {item} at the pick-up area")
                 return {"ok": False, "status": "no_item", "message": f"There is no {item} left at the pick-up area, so nothing was done.",
                         "reason": pre.get("reason", "")}
 
-        r = self.http.post("/run", json={"skill": item})
+        try:
+            r = self.http.post("/run", json={"skill": item})
+        except httpx.HTTPError as e:
+            self.issue("robot_offline", "error", f"Robot server not reachable when starting '{item}'", item=item,
+                       reason=repr(e), suggestion="check that robot_server.py is running", snapshot=False)
+            return {"ok": False, "status": "error", "reason": "the robot is not reachable"}
         if r.status_code != 200:
-            return {"ok": False, "error": r.text}
+            self.issue("robot_error", "error", f"Robot refused to start '{item}'", item=item, reason=r.text[:300])
+            return {"ok": False, "status": "error", "reason": r.text[:300]}
         log(f"  [robot] running {item!r}...")
 
         # 2. supervise: every few seconds compare the scene with the start and decide done / working / stuck
@@ -114,6 +188,8 @@ class Robot:
                     pass  # we ended it ourselves (done / stuck / failed); keep that verdict
                 elif last.get("reason") == "operator_done":
                     verdict = "done"
+                elif last.get("finished") is False:  # the skill crashed (e.g. the inference Space failed)
+                    verdict, reason = "error", str(last.get("note") or "the skill stopped with an error")
                 elif last.get("stopped_early"):
                     verdict = "ended_early"
                 else:
@@ -151,6 +227,13 @@ class Robot:
                         self.http.post("/stop", params={"reason": "stuck"})
                 next_check = time.time() + self.CHECK_EVERY
         log(f"  [robot] finished: {verdict}")
+        if verdict == "aborted":
+            self.issue("aborted", "info", f"STOP pressed while handing out '{item}'", item=item)
+        elif verdict != "done":
+            what = {"stuck": "got stuck", "failed": "failed", "ran_out_of_time": "ran out of time",
+                    "ended_early": "was ended early", "error": "stopped with an error"}.get(verdict, verdict)
+            self.issue(f"skill_{verdict}", "error" if verdict in ("failed", "error") else "warning",
+                       f"Handing out '{item}' {what}", item=item, reason=reason, suggestion=suggestion)
         res = {"ok": verdict == "done", "status": verdict, "reason": reason, "suggestion": suggestion,
                "message": "the arm is back at its ready pose"}
         if verdict == "ran_out_of_time":
@@ -189,7 +272,16 @@ def tool_declarations(skills: dict) -> list[types.Tool]:
             parameters=S(type="OBJECT", properties={"camera": S(type="STRING", enum=["front_wide", "high_oblique", "gripper"])},
                          required=["camera"])),
         types.FunctionDeclaration(name="stop", description="Stop the arm immediately.", parameters=S(type="OBJECT", properties={})),
+        types.FunctionDeclaration(
+            name="notify_staff", description=NOTIFY_DESC,
+            parameters=S(type="OBJECT", properties={"message": S(type="STRING"),
+                                                    "urgency": S(type="STRING", enum=["low", "normal", "high"])},
+                         required=["message"])),
     ])]
+
+
+NOTIFY_DESC = ("Alert the human staff on the operator screen: a guest needs something we do not have, a complaint, "
+               "a guest feels unwell or asks for a person, or something is wrong with the robot. One short sentence.")
 
 
 def generate(client, models: list[str], contents, cfg):
@@ -213,7 +305,7 @@ def generate(client, models: list[str], contents, cfg):
 
 
 def handle(client, model, robot: Robot, contents: list, tools, max_turns: int = 14) -> str:
-    cfg = types.GenerateContentConfig(system_instruction=SYSTEM, tools=tools)
+    cfg = types.GenerateContentConfig(system_instruction=robot.system_prompt, tools=tools)
     for _ in range(max_turns):
         log("  [gemini] thinking...")
         t0 = time.time()
@@ -240,6 +332,9 @@ def handle(client, model, robot: Robot, contents: list, tools, max_turns: int = 
                     parts.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
             elif c.name == "stop":
                 parts.append(types.Part.from_function_response(name=c.name, response=robot.stop()))
+            elif c.name == "notify_staff":
+                parts.append(types.Part.from_function_response(
+                    name=c.name, response=robot.notify_staff(args.get("message", ""), args.get("urgency", "normal"))))
             else:
                 parts.append(types.Part.from_function_response(name=c.name, response={"ok": False, "error": "unknown tool"}))
         contents.append(types.Content(role="user", parts=parts))
@@ -257,7 +352,23 @@ def claude_tools(skills: dict) -> list[dict]:
          "input_schema": {"type": "object", "properties": {"camera": {"type": "string", "enum": ["front_wide", "high_oblique", "gripper"]}},
                           "required": ["camera"]}},
         {"name": "stop", "description": "Stop the arm immediately.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "notify_staff", "description": NOTIFY_DESC,
+         "input_schema": {"type": "object", "properties": {
+             "message": {"type": "string"}, "urgency": {"type": "string", "enum": ["low", "normal", "high"]}},
+             "required": ["message"]}},
     ]
+
+
+CLAUDE_EFFORT = os.environ.get("CLAUDE_EFFORT", "low")  # Opus 5.5 always thinks; low keeps spoken replies quick
+
+
+def claude_create(client, model: str, **kwargs):
+    """messages.create for current Claude models: adaptive thinking (always on for Opus 5.5) at CLAUDE_EFFORT, no
+    sampling parameters, and on Opus 5.5 / Sonnet 5.5 the server-side refusal fallback."""
+    kwargs.setdefault("output_config", {"effort": CLAUDE_EFFORT})
+    if model in _CLAUDE_FALLBACK_MODELS:
+        return client.beta.messages.create(model=model, betas=[_CLAUDE_FALLBACK_BETA], fallbacks="default", **kwargs)
+    return client.messages.create(model=model, **kwargs)
 
 
 def handle_claude(client, model: str, robot: Robot, messages: list, tools, max_turns: int = 14) -> str:
@@ -265,9 +376,14 @@ def handle_claude(client, model: str, robot: Robot, messages: list, tools, max_t
     for _ in range(max_turns):
         log("  [claude] thinking...")
         t0 = time.time()
-        resp = client.messages.create(model=model, max_tokens=1024, system=SYSTEM, tools=tools, messages=messages)
+        resp = claude_create(client, model, max_tokens=16000, system=robot.system_prompt, tools=tools,
+                             messages=messages)
         log(f"  [claude] answered in {time.time() - t0:.1f} s")
-        messages.append({"role": "assistant", "content": resp.content})
+        if resp.stop_reason == "refusal":
+            robot.issue("llm_refusal", "warning", "The assistant declined a guest request",
+                        reason=str(getattr(resp, "stop_details", "") or ""), snapshot=False)
+            return "I'm sorry, I can't help with that. A staff member will be happy to assist you."
+        messages.append({"role": "assistant", "content": resp.content})  # thinking blocks included, unchanged
         uses = [b for b in resp.content if b.type == "tool_use"]
         if not uses:
             return "".join(b.text for b in resp.content if b.type == "text")
@@ -275,14 +391,16 @@ def handle_claude(client, model: str, robot: Robot, messages: list, tools, max_t
         for u in uses:
             log(f"  [claude] {u.name}({u.input})")
             if u.name == "fetch":
-                content = str(robot.fetch(u.input.get("item", "")))
+                content = json.dumps(robot.fetch(u.input.get("item", "")))
+            elif u.name == "notify_staff":
+                content = json.dumps(robot.notify_staff(u.input.get("message", ""), u.input.get("urgency", "normal")))
             elif u.name == "look":
                 img = robot.look(u.input.get("camera", "front_wide"))
                 content = ([{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                          "data": base64.b64encode(img).decode()}}]
                            if img else "camera unavailable")
             elif u.name == "stop":
-                content = str(robot.stop())
+                content = json.dumps(robot.stop())
             else:
                 content = "unknown tool"
             results.append({"type": "tool_result", "tool_use_id": u.id, "content": content})
@@ -372,7 +490,7 @@ class Brain:
             import anthropic
             if not os.environ.get("ANTHROPIC_API_KEY"):
                 sys.exit("Set ANTHROPIC_API_KEY.")
-            self.model = model or "claude-sonnet-5"
+            self.model = model or DEFAULT_CLAUDE_MODEL
             self.client = anthropic.Anthropic(timeout=60.0, max_retries=3)
             self.tools, self.fn = claude_tools(robot.skills), handle_claude
         elif backend == "gemini":
@@ -386,6 +504,16 @@ class Brain:
             self.model, self.client, self.tools, self.fn = "keywords", None, None, handle_demo
         self.judge_model = judge_model or self.model
         robot.judge = self.judge
+        # Short conversation memory (plain text turns), so "towel or water?" -> "water, please" works.
+        self.history: list[tuple[str, str]] = []  # (guest text, reply)
+        self.last_active = 0.0
+
+    MAX_HISTORY = 6            # remembered exchanges
+    NEW_GUEST_AFTER_S = 300.0  # forget the conversation after this long without a request
+
+    def reset(self):
+        """New guest: forget the conversation."""
+        self.history.clear()
 
     def judge(self, kind: str, item: str, images: list[bytes], **info) -> dict:
         """One quick vision call; returns a dict (empty if the answer could not be parsed, which callers treat as 'unknown')."""
@@ -404,8 +532,9 @@ class Brain:
                                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                              "data": base64.b64encode(img).decode()}}]
                 content.append({"type": "text", "text": prompt})
-                r = self.client.messages.create(model=self.judge_model, max_tokens=250,
-                                                messages=[{"role": "user", "content": content}])
+                # room for Opus 5.5's (always-on) thinking before the short JSON answer
+                r = claude_create(self.client, self.judge_model, max_tokens=4000,
+                                  messages=[{"role": "user", "content": content}])
                 return parse_json("".join(b.text for b in r.content if b.type == "text"))
             parts = []
             for lab, img in zip(labels, images):
@@ -421,18 +550,34 @@ class Brain:
     def ask(self, text: str) -> str:
         self.robot.attempts.clear()
         self.robot.aborted = False
-        contents = ([{"role": "user", "content": text}] if self.backend in ("claude", "demo")
-                    else [types.Content(role="user", parts=[types.Part(text=text)])])
-        return self.fn(self.client, self.model, self.robot, contents, self.tools)
+        self.robot.request = text
+        if time.time() - self.last_active > self.NEW_GUEST_AFTER_S:
+            self.reset()
+        self.last_active = time.time()
+        if self.backend == "demo":
+            contents = [{"role": "user", "content": text}]
+        elif self.backend == "claude":
+            contents = [m for u, a in self.history for m in ({"role": "user", "content": u},
+                                                              {"role": "assistant", "content": a})]
+            contents.append({"role": "user", "content": text})
+        else:
+            contents = [types.Content(role=r, parts=[types.Part(text=t)])
+                        for u, a in self.history for r, t in (("user", u), ("model", a))]
+            contents.append(types.Content(role="user", parts=[types.Part(text=text)]))
+        reply = self.fn(self.client, self.model, self.robot, contents, self.tools)
+        if reply and not self.robot.aborted:
+            self.history = (self.history + [(text, reply)])[-self.MAX_HISTORY:]
+        self.last_active = time.time()
+        return reply
 
 
 def add_backend_args(p):
     p.add_argument("--server", default="http://127.0.0.1:8000")
-    p.add_argument("--backend", choices=["gemini", "claude", "demo"], default="gemini")
+    p.add_argument("--backend", choices=["gemini", "claude", "demo"], default="claude")
     p.add_argument("--judge-model", default=None,
                    help="model for the quick progress checks every few seconds (default: same as --model; a smaller, faster one is fine)")
     p.add_argument("--model", default=None,
-                   help="gemini default gemini-3.8-flash; claude default claude-sonnet-5 (use any current model with vision + tools)")
+                   help=f"gemini default gemini-3.8-flash; claude default {DEFAULT_CLAUDE_MODEL} (any current model with vision + tools)")
 
 
 def main():

@@ -4,3 +4,4 @@ assets/
 third_party/
 *.egg-info/
 review/
+logs/

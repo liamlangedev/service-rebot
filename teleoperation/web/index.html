@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>reBot assistant</title>
+<title>reBot concierge</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { --bg:#070b14; --panel:#0e1626; --line:#1b2a44; --cy:#32e6ff; --gr:#3dff9a; --am:#ffb830; --pu:#a77bff; --rd:#ff4d5e; --tx:#d9e6ff; --mut:#6f86ad; }
@@ -56,7 +56,7 @@
 </head>
 <body>
 <header>
-  <h1>reBot <span>assistant</span></h1>
+  <h1>reBot <span>concierge</span></h1>
   <div class="pill" id="pillState"><span class="dot" id="dot"></span><b id="stateLabel">connecting</b></div>
   <div class="pill" id="pillSkill" style="display:none">task <b id="skillLabel"></b> · <b id="elapsed">0</b>s</div>
   <div class="pill" id="pillBrain"></div>
@@ -96,7 +96,7 @@
 </main>
 
 <footer>
-  <input id="input" placeholder="Ask for something: “I need a towel”, “clean up”…" autocomplete="off">
+  <input id="input" placeholder="How can I help? “I'm off to the sauna”, “I'm thirsty”…" autocomplete="off">
   <button id="mic" title="Speak">🎤</button>
   <button id="send">Send</button>
   <button id="done" title="Task is finished: put the arm back and let the assistant check">Task done ✓</button>
@@ -162,6 +162,7 @@ function toolLine(raw) {
   const m = raw.match(/^\[(\w+)\]\s*(.*)$/); if (!m) return;
   const who = m[1], rest = m[2];
   if (/thinking|answered/.test(rest)) { return; }
+  if (who === 'judge' || who === 'issue') return;  // camera checks and issues go to the operator page only
   if (who === 'robot') add('tool robot', '🦾 ' + rest);
   else if (/^look/.test(rest)) add('tool', '👁 looking: ' + (rest.match(/\(\W*(\w+)/)||[])[1]);
   else if (/^fetch/.test(rest)) add('tool', '⚙ fetch ' + (rest.match(/item\W+(\w+)/)||[])[1]);
@@ -179,6 +180,7 @@ es.onmessage = e => {
   else if (ev.kind === 'reply') { add('msg reply', ev.text); $('subtitle').textContent = clean(ev.text); speak(ev.text); }
   else if (ev.kind === 'error') { add('msg error', ev.text); setState('idle'); }
   else if (ev.kind === 'state') setState(ev.text);
+  else if (ev.kind === 'reset') { $('log').innerHTML = ''; $('subtitle').textContent = ''; }
   else if (ev.kind === 'log') toolLine(ev.text);
 };
 

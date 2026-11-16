@@ -1,5 +1,9 @@
 {
-  "_comment": "skill name -> exact training prompt. The orchestrator can only pick a name from here. 'scene' and 'pickup' are plain-language hints for the vision checks; edit them to match your table.",
+  "_comment": "skill name -> exact training prompt. The orchestrator can only pick a name from here. 'scene', 'pickup' and 'looks_like' are plain-language hints for the vision checks; 'concierge', 'offer' and 'good_for' shape the concierge's system prompt. Edit them to match your setup.",
+  "concierge": {
+    "venue": "a thermal spa in Leukerbad",
+    "handout": "the hand-out tray (the white foam box on the right of the counter)"
+  },
   "scene": {
     "bin": "the designated bin: the white foam box on the right side of the table in the front_wide view",
     "camera": "front_wide shows the whole table, with the robot at the top and the bin on the right"
@@ -8,14 +12,18 @@
     "bottle": {
       "prompt": "pick up the bottle and put it in the designated bin",
       "duration": 45,
+      "offer": "a bottle of sparkling water",
+      "good_for": "thirst, after the sauna or the thermal baths, a guest who feels hot or asks for a drink or water",
       "pickup": "bottles start on the table in the pick-up area (left and middle of the table), not in the bin",
-      "looks_like": "a plastic drinks bottle (EDIT: describe your bottle, e.g. a green and white water bottle, standing or lying)"
+      "looks_like": "a green glass sparkling-water bottle with a white label, standing or lying"
     },
     "towel": {
       "prompt": "pick up the towel and put it in the designated bin",
       "duration": 45,
+      "offer": "a fresh towel",
+      "good_for": "the sauna, the thermal pools, a shower, drying off, a guest who is wet or cold",
       "pickup": "the towel starts on the table in the pick-up area (left and middle of the table), not in the bin",
-      "looks_like": "a cloth towel, flat or loosely folded (EDIT: describe your towel)"
+      "looks_like": "a white cloth towel, usually rolled up; rolled up it can look like a white bottle, but it is soft cloth, not a bottle"
     }
   }
 }

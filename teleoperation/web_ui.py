@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Web UI for the robot assistant: live cameras, animated face, chat, voice (browser), big STOP button.
+"""Web UI for the robot concierge: a guest page and an operator dashboard.
 
   python robot_server.py --port <PORT> --policy <checkpoint> ...        # terminal 1
-  python web_ui.py --backend claude                                      # terminal 2, then open http://localhost:8080
+  python web_ui.py                                                       # terminal 2 (Claude Opus 5.5 by default)
 
-Voice uses the browser's own speech recognition and speech synthesis (use Chrome or Edge; no extra API key).
+  http://localhost:8080/           guest page: animated face, chat, voice, live cameras, STOP
+  http://localhost:8080/operator   operator dashboard: issues (failed / stuck hand-outs, items that ran out, robot or
+                                   assistant errors, staff requests from the concierge) with camera snapshots,
+                                   acknowledge / resolve, STOP, Task done, New guest, conversation and technical log
+
+Guests never see technical errors; those go to the operator dashboard (and logs/issues.json).
+Voice uses the browser's speech recognition and synthesis (Chrome or Edge). Use --host 0.0.0.0 to open the operator
+page from another device on the network.
 No robot: `python robot_server.py --fake` and `python web_ui.py --backend demo`.
 """
 import argparse
@@ -12,51 +19,90 @@ import asyncio
 import json
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import orchestrator as orch
+from issues import IssueLog
 
 WEB = Path(__file__).resolve().parent / "web"
+LOGS = Path(__file__).resolve().parent / "logs"
+GUEST_SORRY = "I'm sorry, something went wrong on my side. A staff member has been notified and will help you."
 
 
 class Say(BaseModel):
     text: str
 
 
+class IssueAction(BaseModel):
+    note: str = ""
+
+
 def make_app(brain: orch.Brain, robot_url: str) -> FastAPI:
-    app = FastAPI(title="reBot assistant")
+    app = FastAPI(title="reBot concierge")
     robot = brain.robot
     http = httpx.Client(base_url=robot_url, timeout=10.0)
     subs: list[asyncio.Queue] = []
     loop_ref: dict = {}
     busy = threading.Lock()
 
-    def emit(kind: str, text: str):
-        ev = {"kind": kind, "text": text, "t": time.time()}
+    recent: deque = deque(maxlen=300)  # conversation + technical log, for an operator page opened later
+
+    def emit(kind: str, text: str, **extra):
+        ev = {"kind": kind, "text": text, "t": time.time(), **extra}
+        if kind in ("user", "reply", "error", "log", "issue_log", "reset"):
+            recent.append(ev)
         lp = loop_ref.get("loop")
         if lp:
             for q in list(subs):
                 lp.call_soon_threadsafe(q.put_nowait, ev)
 
+    issues = IssueLog(LOGS, on_change=lambda event, issue: emit(event, issue["message"], issue=issue))
+    robot.report = lambda d: issues.add(**d)
     orch.EVENT = emit
+
+    def monitor_robot():
+        """Robot server unreachable -> one issue (deduplicated); back online -> resolved automatically."""
+        offline = False
+        while True:
+            try:
+                http.get("/status", timeout=3.0).raise_for_status()
+                if offline:
+                    offline = False
+                    issues.resolve_kind("robot_offline", "robot server reachable again")
+                    emit("log", "[robot] robot server is reachable again")
+            except Exception as e:  # noqa: BLE001
+                if not offline:
+                    offline = True
+                    issues.add("robot_offline", "error", "Robot server not reachable", reason=repr(e)[:200],
+                               suggestion="check that robot_server.py is running (and the arm is powered)",
+                               dedupe_s=3600)
+            time.sleep(3.0)
 
     @app.on_event("startup")
     async def _startup():
         loop_ref["loop"] = asyncio.get_running_loop()
+        threading.Thread(target=monitor_robot, daemon=True).start()
 
+    # ---------------------------------------------------------------- pages
     @app.get("/")
     def index():
         return FileResponse(WEB / "index.html")
 
+    @app.get("/operator")
+    def operator():
+        return FileResponse(WEB / "operator.html")
+
     @app.get("/api/info")
     def info():
-        return {"skills": robot.skills, "backend": brain.backend, "model": brain.model}
+        return {"skills": robot.skills, "backend": brain.backend, "model": brain.model,
+                "judge_model": brain.judge_model}
 
     @app.get("/api/status")
     def status():
@@ -65,6 +111,7 @@ def make_app(brain: orch.Brain, robot_url: str) -> FastAPI:
         except Exception as e:
             return JSONResponse({"state": "offline", "error": str(e)}, status_code=200)
 
+    # ---------------------------------------------------------------- guest actions
     @app.post("/api/say")
     def say(req: Say):
         text = req.text.strip()
@@ -79,9 +126,15 @@ def make_app(brain: orch.Brain, robot_url: str) -> FastAPI:
                 emit("state", "thinking")
                 reply = brain.ask(text) or "Done."
                 emit("reply", reply)
-            except Exception as e:
-                robot.stop()
-                emit("error", f"{e!r}")
+            except Exception as e:  # noqa: BLE001 - guests get a polite message, the operator the details
+                try:
+                    robot.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                issues.add("assistant_error", "error", "The assistant failed while handling a request",
+                           reason=repr(e)[:500], request=text,
+                           suggestion="check the web_ui terminal; API key, network or robot server")
+                emit("error", GUEST_SORRY)
             finally:
                 emit("state", "idle")
                 busy.release()
@@ -101,6 +154,47 @@ def make_app(brain: orch.Brain, robot_url: str) -> FastAPI:
         emit("log", "[operator] marked the task as done")
         return {"ok": True}
 
+    # ---------------------------------------------------------------- operator
+    @app.post("/api/reset")
+    def reset():
+        """New guest: the concierge forgets the conversation."""
+        brain.reset()
+        emit("log", "[operator] new guest: conversation cleared")
+        emit("reset", "new guest")
+        return {"ok": True}
+
+    @app.get("/api/recent")
+    def recent_events():
+        return {"events": list(recent)}
+
+    @app.get("/api/issues")
+    def list_issues():
+        return {"issues": issues.list(), "counts": issues.counts()}
+
+    @app.post("/api/issues/{iid}/{action}")
+    def issue_action(iid: str, action: str, body: IssueAction | None = None):
+        status_for = {"ack": "acknowledged", "resolve": "resolved", "reopen": "open"}
+        if action not in status_for:
+            raise HTTPException(404, f"unknown action {action!r}")
+        issue = issues.set_status(iid, status_for[action], (body.note if body else ""))
+        if issue is None:
+            raise HTTPException(404, f"no issue {iid}")
+        return issue
+
+    @app.get("/api/issues/{iid}/snapshot")
+    def issue_snapshot(iid: str):
+        p = issues.snapshot_path(iid)
+        if p is None:
+            raise HTTPException(404, "no snapshot")
+        return FileResponse(p, media_type="image/jpeg")
+
+    @app.post("/api/issues/test")
+    def issue_test():
+        """Create a sample issue (to check the operator page and its alert sound)."""
+        return issues.add("test", "warning", "Test issue from the operator page", reason="manual test",
+                          suggestion="resolve it", snapshot=robot.look("front_wide"))
+
+    # ---------------------------------------------------------------- streams
     @app.get("/api/events")
     async def events():
         q: asyncio.Queue = asyncio.Queue()
@@ -148,7 +242,9 @@ def main():
     args = p.parse_args()
     robot = orch.Robot(args.server)
     brain = orch.Brain(args.backend, args.model, robot, args.judge_model)
-    print(f"UI on http://{args.host}:{args.port}   backend {args.backend} ({brain.model})   skills {list(robot.skills)}")
+    print(f"guest page    http://{args.host}:{args.port}/\n"
+          f"operator page http://{args.host}:{args.port}/operator\n"
+          f"backend {args.backend} ({brain.model}, checks: {brain.judge_model})   skills {list(robot.skills)}")
     try:
         uvicorn.run(make_app(brain, args.server), host=args.host, port=args.port, log_level="warning")
     finally:

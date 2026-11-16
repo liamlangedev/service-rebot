@@ -146,8 +146,12 @@ class Runner:
 
     def frame_jpeg(self, camera: str) -> bytes:
         if self.fake:
-            img = np.full((self.args.cam_height or 360, self.args.cam_width or 640, 3), 90, np.uint8)
-            cv2.putText(img, f"fake {camera}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
+            photo = Path(self.args.fake_images or "") / f"{camera}.jpg"
+            if self.args.fake_images and photo.is_file():  # --fake-images DIR: <camera>.jpg (any size)
+                img = cv2.resize(cv2.cvtColor(cv2.imread(str(photo)), cv2.COLOR_BGR2RGB), (640, 360))
+            else:
+                img = np.full((self.args.cam_height or 360, self.args.cam_width or 640, 3), 90, np.uint8)
+                cv2.putText(img, f"fake {camera}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
         else:
             if camera not in self.camera_names:
                 raise KeyError(camera)
@@ -284,12 +288,14 @@ def make_app(runner: Runner) -> FastAPI:
 def main():
     fake = "--fake" in sys.argv
     argv_rest = [a for a in sys.argv[1:] if a not in ("--fake",)]
-    host, http_port = "127.0.0.1", 8000
+    host, http_port, fake_images = "127.0.0.1", 8000, None
     clean = []
     it = iter(argv_rest)
     for a in it:
         if a == "--http-port":
             http_port = int(next(it))
+        elif a == "--fake-images":  # with --fake: serve DIR/<camera>.jpg instead of gray frames
+            fake_images = next(it)
         elif a == "--host":
             host = next(it)
         else:
@@ -300,6 +306,7 @@ def main():
     import rollout_policy as rp
     args = rp.parse_args()
     args.fake = fake
+    args.fake_images = fake_images
     # (--cam-width/--cam-height stay unset unless given: the policy's own training size is used, see make_policy)
     if not fake and not args.port:
         raise SystemExit("--port is required (or use --fake)")

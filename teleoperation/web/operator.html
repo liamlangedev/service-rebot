@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>reBot operator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#070b14; --panel:#0e1626; --line:#1b2a44; --cy:#32e6ff; --gr:#3dff9a; --am:#ffb830; --rd:#ff4d5e; --bl:#6aa8ff;
+          --tx:#d9e6ff; --mut:#6f86ad; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:radial-gradient(1200px 700px at 50% -10%, #0f2140 0%, var(--bg) 60%); color:var(--tx);
+         font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; min-height:100vh; padding:12px;
+         display:grid; grid-template-rows:auto 1fr; gap:12px; }
+  header { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  header h1 { font-size:17px; letter-spacing:.18em; margin:0 6px 0 0; font-weight:600; text-transform:uppercase; }
+  header h1 span { color:var(--am); }
+  .pill { padding:4px 12px; border-radius:99px; border:1px solid var(--line); background:var(--panel); font-size:13px; color:var(--mut); white-space:nowrap; }
+  .pill b { color:var(--tx); font-weight:600; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--mut); margin-right:7px; vertical-align:middle; }
+  .count { font-variant-numeric:tabular-nums; }
+  .count.err b { color:var(--rd); } .count.warn b { color:var(--am); }
+  .spacer { flex:1; }
+  button { cursor:pointer; border:1px solid var(--line); background:var(--panel); color:var(--tx); border-radius:12px; padding:9px 14px; font-size:14px; }
+  button:hover { border-color:var(--cy); }
+  #stop { background:#3a0d16; border-color:var(--rd); color:#ffd1d6; font-weight:700; letter-spacing:.12em; padding:9px 22px; }
+  #stop:hover { box-shadow:0 0 18px #ff4d5e88; }
+  #done { border-color:var(--gr); color:var(--gr); }
+  header.alert { animation:flash 1.2s ease-out 2; }
+  @keyframes flash { 0% { box-shadow:0 0 0 0 #ff4d5e00; } 30% { box-shadow:0 0 0 6px #ff4d5e66; border-radius:14px; } 100% { box-shadow:0 0 0 0 #ff4d5e00; } }
+
+  main { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:12px; min-height:0; }
+  .card { background:linear-gradient(180deg,#0e1830,#0b1322); border:1px solid var(--line); border-radius:16px; padding:12px; min-height:0; }
+  .card h2 { margin:0 0 10px; font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--mut); font-weight:600;
+             display:flex; align-items:center; gap:10px; }
+  .tabs { margin-left:auto; display:flex; gap:6px; }
+  .tabs button { padding:4px 10px; font-size:12px; border-radius:8px; }
+  .tabs button.on { border-color:var(--cy); color:var(--cy); }
+  #issues { display:flex; flex-direction:column; gap:10px; overflow:auto; max-height:calc(100vh - 120px); padding-right:4px; }
+  .empty { color:var(--mut); text-align:center; padding:40px 10px; }
+  .issue { display:grid; grid-template-columns:6px 1fr auto; gap:12px; background:#0b1426; border:1px solid var(--line);
+           border-radius:12px; padding:10px 12px 10px 0; }
+  .issue .bar { border-radius:12px 0 0 12px; }
+  .issue.error .bar { background:var(--rd); } .issue.warning .bar { background:var(--am); } .issue.info .bar { background:var(--bl); }
+  .issue.resolved { opacity:.55; }
+  .issue .top { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+  .issue .msg { font-weight:600; font-size:15px; }
+  .sev { font-size:10px; letter-spacing:.16em; text-transform:uppercase; padding:2px 7px; border-radius:6px; }
+  .error .sev { background:#3a1220; color:#ffb3bd; } .warning .sev { background:#3a2a08; color:#ffd58a; } .info .sev { background:#10264a; color:#b5d3ff; }
+  .meta { color:var(--mut); font-size:12px; }
+  .tag { font-size:12px; padding:1px 8px; border-radius:99px; border:1px solid var(--line); color:var(--cy); }
+  .state { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--mut); }
+  .state.open { color:var(--rd); } .state.acknowledged { color:var(--am); } .state.resolved { color:var(--gr); }
+  .detail { margin-top:4px; font-size:13px; color:#b9c8e6; }
+  .detail .k { color:var(--mut); }
+  .sugg { margin-top:4px; font-size:13px; color:var(--gr); }
+  .req { margin-top:4px; font-size:13px; color:var(--tx); font-style:italic; }
+  .actions { display:flex; gap:6px; margin-top:8px; }
+  .actions button { padding:5px 10px; font-size:12px; border-radius:8px; }
+  .thumb { width:150px; height:84px; object-fit:cover; border-radius:8px; border:1px solid var(--line); cursor:zoom-in; align-self:center; }
+
+  .side { display:grid; grid-template-rows:auto minmax(0,1fr) minmax(0,1fr); gap:12px; min-height:0; max-height:calc(100vh - 80px); }
+  .cam { position:relative; border-radius:12px; overflow:hidden; background:#000; border:1px solid var(--line); aspect-ratio:16/9; }
+  .cam img { width:100%; height:100%; object-fit:cover; display:block; }
+  .cam label { position:absolute; left:10px; top:8px; font-size:11px; letter-spacing:.2em; text-transform:uppercase; padding:3px 8px; border-radius:6px; background:#000a; color:var(--cy); }
+  .cam.live::after { content:""; position:absolute; inset:0; border:2px solid var(--am); border-radius:12px; pointer-events:none; }
+  .scroll { overflow:auto; display:flex; flex-direction:column; gap:6px; height:calc(100% - 28px); padding-right:4px; }
+  .line { font-size:13px; }
+  .line.user { color:#9fd0ff; } .line.user::before { content:"guest  "; color:var(--mut); font-size:11px; letter-spacing:.1em; }
+  .line.reply { color:var(--tx); } .line.reply::before { content:"robot  "; color:var(--mut); font-size:11px; letter-spacing:.1em; }
+  .line.err { color:#ffb3bd; }
+  .log { font:12px/1.4 ui-monospace,Menlo,monospace; color:#9fb2d4; }
+  .log.judge { color:var(--mut); } .log.robot { color:var(--gr); } .log.issue { color:var(--am); }
+  .ts { color:#4a5f85; margin-right:6px; }
+  #zoom { position:fixed; inset:0; background:#000c; display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
+  #zoom img { max-width:92vw; max-height:88vh; border-radius:12px; border:1px solid var(--line); }
+  @media (max-width:1000px) { main { grid-template-columns:1fr; } #issues, .side { max-height:none; } }
+</style>
+</head>
+<body>
+<header id="hdr">
+  <h1>reBot <span>operator</span></h1>
+  <div class="pill"><span class="dot" id="dot"></span><b id="robotState">connecting</b></div>
+  <div class="pill" id="pillSkill" style="display:none">handing out <b id="skill"></b> · <b id="elapsed">0</b>s</div>
+  <div class="pill count err">errors <b id="nErr">0</b></div>
+  <div class="pill count warn">warnings <b id="nWarn">0</b></div>
+  <div class="pill" id="brain"></div>
+  <div class="spacer"></div>
+  <button id="sound" title="Alert sound for new issues">🔔 on</button>
+  <button id="test" title="Create a sample issue">Test alert</button>
+  <button id="reset" title="Forget the conversation (next guest)">New guest</button>
+  <button id="done" title="End the running hand-out now">Task done ✓</button>
+  <button id="stop">STOP</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Issues <span class="tabs"><button id="tabOpen" class="on">Open</button><button id="tabAll">All</button></span></h2>
+    <div id="issues"><div class="empty">No issues. New problems appear here with a sound.</div></div>
+  </section>
+
+  <section class="side">
+    <div class="cam" id="cam"><label>front</label><img src="/api/cam/front_wide" alt="front camera"></div>
+    <div class="card"><h2>Conversation</h2><div class="scroll" id="convo"></div></div>
+    <div class="card"><h2>Technical log</h2><div class="scroll" id="log"></div></div>
+  </section>
+</main>
+
+<div id="zoom"><img alt="snapshot"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let issues = [], filter = 'open', sound = true, audio = null;
+
+/* ---------- issues ---------- */
+const fmtTime = t => new Date(t * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+function ago(t) { const s = Math.max(0, Date.now()/1000 - t); return s < 60 ? `${Math.round(s)} s ago` : s < 3600 ? `${Math.round(s/60)} min ago` : `${Math.round(s/3600)} h ago`; }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render() {
+  const list = issues.filter(i => filter === 'all' || i.status !== 'resolved');
+  const box = $('issues');
+  if (!list.length) { box.innerHTML = `<div class="empty">${filter === 'all' ? 'No issues yet.' : 'No open issues. New problems appear here with a sound.'}</div>`; }
+  else box.innerHTML = list.map(i => `
+    <div class="issue ${i.severity} ${i.status}" data-id="${i.id}">
+      <div class="bar"></div>
+      <div>
+        <div class="top"><span class="sev">${esc(i.severity)}</span><span class="msg">${esc(i.message)}</span>
+          ${i.item ? `<span class="tag">${esc(i.item)}</span>` : ''}${i.count > 1 ? `<span class="tag">×${i.count}</span>` : ''}</div>
+        <div class="meta">${fmtTime(i.t)} · ${ago(i.last || i.t)} · <span class="state ${i.status}">${i.status}</span> · ${esc(i.kind)}</div>
+        ${i.reason ? `<div class="detail"><span class="k">why:</span> ${esc(i.reason)}</div>` : ''}
+        ${i.suggestion ? `<div class="sugg">→ ${esc(i.suggestion)}</div>` : ''}
+        ${i.request ? `<div class="req">guest asked: “${esc(i.request)}”</div>` : ''}
+        <div class="actions">
+          ${i.status === 'open' ? `<button data-act="ack">Acknowledge</button>` : ''}
+          ${i.status !== 'resolved' ? `<button data-act="resolve">Resolve</button>` : `<button data-act="reopen">Reopen</button>`}
+        </div>
+      </div>
+      ${i.snapshot ? `<img class="thumb" src="/api/issues/${i.id}/snapshot" alt="snapshot">` : '<div></div>'}
+    </div>`).join('');
+  const open = issues.filter(i => i.status === 'open');
+  const nErr = open.filter(i => i.severity === 'error').length, nWarn = open.filter(i => i.severity === 'warning').length;
+  $('nErr').textContent = nErr; $('nWarn').textContent = nWarn;
+  document.title = (nErr + nWarn ? `(${nErr + nWarn}) ` : '') + 'reBot operator';
+}
+function upsert(issue) {
+  const k = issues.findIndex(i => i.id === issue.id);
+  if (k >= 0) issues[k] = issue; else issues.unshift(issue);
+  render();
+}
+$('issues').onclick = async e => {
+  const b = e.target.closest('button[data-act]'), img = e.target.closest('img.thumb');
+  if (img) { $('zoom').querySelector('img').src = img.src; $('zoom').style.display = 'flex'; return; }
+  if (!b) return;
+  const id = b.closest('.issue').dataset.id;
+  const r = await fetch(`/api/issues/${id}/${b.dataset.act}`, {method:'POST', headers:{'content-type':'application/json'}, body:'{}'});
+  if (r.ok) upsert(await r.json());
+};
+$('zoom').onclick = () => $('zoom').style.display = 'none';
+$('tabOpen').onclick = () => { filter = 'open'; $('tabOpen').classList.add('on'); $('tabAll').classList.remove('on'); render(); };
+$('tabAll').onclick = () => { filter = 'all'; $('tabAll').classList.add('on'); $('tabOpen').classList.remove('on'); render(); };
+setInterval(render, 30000);  // refresh the "x min ago" labels
+
+/* ---------- alert sound ---------- */
+function chime(sev) {
+  if (!sound) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const notes = sev === 'error' ? [880, 660, 880] : [660, 880];
+    notes.forEach((f, n) => {
+      const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + n * 0.16;
+      o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+      o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.15);
+    });
+  } catch (_) {}
+}
+$('sound').onclick = () => { sound = !sound; $('sound').textContent = sound ? '🔔 on' : '🔕 off'; if (sound) chime('warning'); };
+function alertNew(issue) {
+  if (issue.severity === 'info') return;
+  chime(issue.severity);
+  const h = $('hdr'); h.classList.remove('alert'); void h.offsetWidth; h.classList.add('alert');
+}
+
+/* ---------- conversation + technical log ---------- */
+function add(boxId, cls, text, t) {
+  const box = $(boxId), d = document.createElement('div'); d.className = cls;
+  d.innerHTML = `<span class="ts">${fmtTime(t || Date.now()/1000)}</span>${esc(text)}`;
+  box.appendChild(d); while (box.children.length > 300) box.firstChild.remove(); box.scrollTop = 1e9;
+}
+function logLine(text, t) {
+  const who = (text.match(/^\[(\w+)\]/) || [])[1] || '';
+  if (/thinking\.\.\.$/.test(text)) return;
+  add('log', 'log ' + (who === 'judge' ? 'judge' : who === 'robot' ? 'robot' : who === 'issue' ? 'issue' : ''), text, t);
+}
+
+function show(ev) {
+  if (ev.kind === 'user') add('convo', 'line user', ev.text, ev.t);
+  else if (ev.kind === 'reply') add('convo', 'line reply', ev.text, ev.t);
+  else if (ev.kind === 'error') add('convo', 'line err', ev.text, ev.t);
+  else if (ev.kind === 'reset') add('convo', 'line', '— new guest —', ev.t);
+  else if (ev.kind === 'log' || ev.kind === 'issue_log') logLine(ev.text, ev.t);
+}
+// what happened before this page was opened, then live events
+fetch('/api/recent').then(r => r.json()).then(d => {
+  d.events.forEach(show);
+  const es = new EventSource('/api/events');
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.kind === 'issue') { upsert(ev.issue); alertNew(ev.issue); }
+    else if (ev.kind === 'issue_update') upsert(ev.issue);
+    else show(ev);
+  };
+});
+
+/* ---------- controls ---------- */
+const post = path => fetch(path, {method:'POST'});
+$('stop').onclick = () => post('/api/stop');
+$('done').onclick = () => post('/api/done');
+$('reset').onclick = () => post('/api/reset');
+$('test').onclick = () => post('/api/issues/test');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('stop').click(); });
+
+fetch('/api/info').then(r => r.json()).then(i => { $('brain').innerHTML = `brain <b>${esc(i.model)}</b>`; });
+fetch('/api/issues').then(r => r.json()).then(d => { issues = d.issues; render(); });
+
+async function poll() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    const run = s.state === 'running' || s.state === 'stopping';
+    $('robotState').textContent = s.state === 'offline' ? 'robot offline' : s.state;
+    $('dot').style.background = s.state === 'offline' ? 'var(--rd)' : run ? 'var(--am)' : 'var(--gr)';
+    $('pillSkill').style.display = run ? '' : 'none';
+    if (run) { $('skill').textContent = s.skill; $('elapsed').textContent = Math.round(s.elapsed); }
+    $('cam').classList.toggle('live', run);
+  } catch (_) { $('robotState').textContent = 'ui offline'; $('dot').style.background = 'var(--rd)'; }
+  setTimeout(poll, 1000);
+}
+poll();
+</script>
+</body>
+</html>

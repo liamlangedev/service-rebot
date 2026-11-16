@@ -219,13 +219,27 @@ python orchestrator.py            # then type: "I need a towel" / "clean up the 
 python robot_server.py --port /dev/ttyACM0 --cameras-file config/cameras_linux.json \
     --remote-url https://niru-5-rebot-policy-server.hf.space --policy RoboCrafty/smolvla_rebot_merged_V2
 
-# terminal 2: chat UI with Claude; open http://localhost:8080 in Chrome
-python web_ui.py --backend claude
+# terminal 2: concierge UI with Claude Opus 5.5 (the default backend and model)
+python web_ui.py
+#   guest page     http://localhost:8080/          (Chrome: voice works there)
+#   operator page  http://localhost:8080/operator  (--host 0.0.0.0 to open it from another device)
 ```
 
 The API key is read from `.env` in the repo root (git-ignored; `ANTHROPIC_API_KEY=...`, `ANTHROPIC_TOKEN=...` also
 accepted). `robot_server.py` takes the same `--remote-url` / `--policy` / `--keys` options as `rollout_policy.py`, and at
-Ctrl-C releases torque in place after a 3 s warning instead of driving to the folded pose.
+Ctrl-C releases torque in place after a 3 s warning instead of driving to the folded pose. `web_ui.py` waits for the robot
+server if it is not up yet.
+
+**Concierge.** The assistant is a spa concierge (`concierge`, `offer`, `good_for` in `config/skills.json`): it works out
+what a guest needs ("I'm off to the sauna" -> towel, "I'm thirsty" -> sparkling water), hands it out into the tray, keeps a
+short memory of the conversation (cleared after 5 min idle or with *New guest*), and calls `notify_staff` for anything it
+cannot do. `CLAUDE_EFFORT=low|medium|high` sets how long Opus 5.5 thinks (default low, for quick spoken replies).
+
+**Operator page.** Guests only get a polite "a staff member has been notified"; the details go to `/operator`:
+failed / stuck / timed-out hand-outs, an item that ran out (with what the camera check saw), robot server offline (resolved
+automatically when it is back), assistant/API errors, STOP presses and staff requests from the concierge. Each issue
+has the reason, a suggestion, the guest's request and a front-camera snapshot; Acknowledge / Resolve, an alert chime,
+STOP, Task done and New guest. Issues are kept in `logs/issues.json` (+ `logs/snapshots/`), git-ignored.
 
 ## Push to the Hub
 
