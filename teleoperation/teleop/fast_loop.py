@@ -18,6 +18,7 @@ from lerobot.cameras import DepthCamera
 
 class FastLoop:
     current: "FastLoop | None" = None
+    key_backend = "pynput"  # "terminal": S/G/H read from the terminal (teleop/term_keys.py), needed under Wayland
 
     def __init__(self, robot, rate: float = 200.0, mit=None):
         self.robot, self.rate, self.mit = robot, rate, mit
@@ -59,6 +60,13 @@ class FastLoop:
 
     # ---- keys: S = stop, G = resume, H = return to ready --------------------
     def _start_keys(self):
+        if FastLoop.key_backend == "terminal":  # Wayland: read keys from the terminal instead of pynput
+            from teleop.term_keys import TerminalKeys
+            actions = {"s": self.stop, "g": self.resume, "h": self.return_to_ready}
+            tk = TerminalKeys.get()
+            tk.add_callback(lambda k: actions[k]() if k in actions else None)
+            tk.start()
+            return
         try:
             from pynput import keyboard
         except Exception as e:

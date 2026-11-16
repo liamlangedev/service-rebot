@@ -36,8 +36,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-from pynput import keyboard
-
 from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
@@ -52,6 +50,8 @@ from teleop.fast_loop import FastLoop
 from teleop.mit_ff import MitFF, MitParams
 from teleop.ready_move import move_to_ready
 from teleop.rebot_real import JOINT_NAMES, READY_QPOS, q_to_action
+from teleop.term_keys import TerminalKeys
+from teleop.term_keys import pick_backend as pick_key_backend
 
 # Gains used while recording the dataset (see REAL_ARM.md); the policy must see the same dynamics.
 RECORDING_MIT = dict(kp_scale=3.0, kd_scale=3.0, wrist_scale=0.4, friction_scale=1.3)
@@ -96,6 +96,9 @@ def parse_args():
     p.add_argument("--park", choices=["ask", "yes", "no"], default="ask")
     p.add_argument("--yes", action="store_true", help="skip the Enter prompt before the first ready move")
     p.add_argument("--dry-run", action="store_true", help="load the policy and run it on a fake observation; no robot")
+    p.add_argument("--keys", choices=["auto", "pynput", "terminal"], default="auto",
+                   help="where Right/Esc/S/G/H are read from. pynput needs an X11 session; terminal works under Wayland "
+                        "but only while this terminal has focus. auto = terminal under Wayland, else pynput")
     p.add_argument("--dry-run-image", default=None,
                    help="with --dry-run: use this image (any size) for every camera instead of random noise")
     for f in fields(MitParams):
@@ -241,14 +244,29 @@ class PolicyDriver:
 
 
 class Keys:
-    def __init__(self):
+    """Right = go, Esc = quit. backend "pynput" (X11) or "terminal" (teleop/term_keys.py, works under Wayland;
+    the terminal must have focus). With the terminal backend, keys are read once FastLoop.start() runs."""
+
+    def __init__(self, backend: str = "pynput"):
         self.go, self.quit = threading.Event(), threading.Event()
-        keyboard.Listener(on_press=self._on_press).start()
+        if backend == "terminal":
+            from teleop.term_keys import TerminalKeys
+            TerminalKeys.get().add_callback(self._on_name)
+        else:
+            from pynput import keyboard
+            self._kb = keyboard
+            keyboard.Listener(on_press=self._on_press).start()
+
+    def _on_name(self, name: str):
+        if name == "right":
+            self.go.set()
+        elif name == "esc":
+            self.quit.set()
 
     def _on_press(self, key):
-        if key == keyboard.Key.right:
+        if key == self._kb.Key.right:
             self.go.set()
-        elif key == keyboard.Key.esc:
+        elif key == self._kb.Key.esc:
             self.quit.set()
 
 
@@ -320,7 +338,11 @@ def main():
     hi = np.array([lim[n][1] - 3 for n in JOINT_NAMES] + [g_hi])
     max_step = np.array([args.max_step_deg] * 6 + [args.max_gripper_step_deg])
 
-    keys = Keys()
+    key_backend = pick_key_backend(args.keys)
+    FastLoop.key_backend = key_backend
+    print(f"keys: {key_backend}" + (" (keep THIS terminal focused: -> / Esc / S / G / H are read from it)"
+                                     if key_backend == "terminal" else ""))
+    keys = Keys(key_backend)
     robot.connect()
     loop = FastLoop(robot, rate=200.0, mit=MitFF(robot, params))
     runs = 0
@@ -382,6 +404,8 @@ def main():
             while loop._mode == "returning" and time.time() - t0 < 20.0:
                 time.sleep(0.05)
     finally:
+        if key_backend == "terminal":
+            TerminalKeys.get().stop()  # give the terminal back to input()
         park = args.park == "yes"
         if args.park == "ask":
             try:

@@ -165,6 +165,11 @@ python rollout_policy.py --port /dev/ttyACM0 --remote-url https://niru-5-rebot-p
     --task "pick up the bottle and put it in the designated bin" --duration 60 --max-step-deg 2
 ```
 
+**Wayland (Ubuntu's default session):** pynput sees no keys there. `--keys auto` (default) then reads
+-> / Esc / S / G / H from the terminal running the script instead, so keep that terminal focused. Force it with
+`--keys terminal`, or `--keys pynput` on X11. Test the keys first without the arm: `python -m teleop.term_keys`.
+Linux camera indices for the Ubuntu laptop: `--cameras-file config/cameras_linux.json`.
+
 Measured on the T4: ~0.8 s server inference, ~1.4 s round trip per chunk. The arm holds its last target while the next chunk
 is requested, so there is a short pause every 30 steps (1 s). Running locally on a CUDA machine instead:
 `--policy niru-5/xvla_rebot_merged_V2`. Serve a different checkpoint: set `POLICY_REPO` (and `POLICY_SUBFOLDER`) in the Space
