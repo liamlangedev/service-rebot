@@ -1,4 +1,5 @@
-FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
+# lerobot 0.7.0 needs Python >= 3.12. torch's default Linux wheels from PyPI bundle CUDA, so no CUDA base image is needed.
+FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg git \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -u 1000 user

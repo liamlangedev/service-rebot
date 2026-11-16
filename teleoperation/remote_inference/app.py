@@ -5,7 +5,7 @@ joint state (deg), the policy's camera frames as JPEG, and the task text. The se
 unnormalized joint targets (deg), which the robot then plays at 30 Hz through its 200 Hz MIT loop.
 
 Env vars: POLICY_REPO (default niru-5/xvla_rebot_merged_V2), POLICY_SUBFOLDER, POLICY_REVISION,
-HF_TOKEN (only for private policy repos). Run locally: uvicorn app:app --port 7860
+POLICY_DTYPE (auto | bfloat16 | float32), POLICY_DENOISING_STEPS, HF_TOKEN (only for private policy repos). Run locally: uvicorn app:app --port 7860
 """
 import base64
 import os
@@ -40,7 +40,20 @@ def load():
         path = os.path.join(path, SUBFOLDER)
     cfg = PreTrainedConfig.from_pretrained(path)
     cfg.pretrained_path, cfg.device = path, DEVICE
-    pol = get_policy_class(cfg.type).from_pretrained(path, config=cfg).to(DEVICE).eval()
+    if hasattr(cfg, "dtype"):
+        # Checkpoints trained in bf16 (XVLA) fail in cuDNN on GPUs without native bf16 (T4: "unable to find an
+        # engine"); use fp32 there.
+        want = os.environ.get("POLICY_DTYPE", "auto")
+        if want == "auto":
+            native_bf16 = DEVICE == "cuda" and torch.cuda.get_device_capability()[0] >= 8
+            want = "bfloat16" if native_bf16 or DEVICE == "cpu" else "float32"
+        cfg.dtype = getattr(torch, want)
+    for attr in ("num_denoising_steps", "num_inference_steps"):
+        if os.environ.get("POLICY_DENOISING_STEPS") and hasattr(cfg, attr):
+            setattr(cfg, attr, int(os.environ["POLICY_DENOISING_STEPS"]))
+    with torch.device(DEVICE):  # build on the target device instead of random-initialising on the CPU first
+        pol = get_policy_class(cfg.type).from_pretrained(path, config=cfg)
+    pol = pol.to(DEVICE).eval()
     pre_, post_ = make_pre_post_processors(policy_cfg=cfg, pretrained_path=path,
                                            preprocessor_overrides={"device_processor": {"device": DEVICE}})
     return pol, pre_, post_, cfg
@@ -68,6 +81,8 @@ class Obs(BaseModel):
 @app.get("/info")
 def info():
     return {"policy": REPO, "subfolder": SUBFOLDER, "type": cfg.type, "device": DEVICE,
+            "gpu": torch.cuda.get_device_name() if DEVICE == "cuda" else None,
+            "dtype": str(getattr(cfg, "dtype", None)),
             "chunk_size": cfg.chunk_size, "n_action_steps": cfg.n_action_steps,
             "image_sizes": {n: [h, w] for n, (h, w) in IMAGE_SIZES.items()}, "action_names": ACTION_NAMES}
 
