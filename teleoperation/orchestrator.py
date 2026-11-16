@@ -343,10 +343,30 @@ def parse_json(text: str) -> dict:
         return {}
 
 
+def load_env():
+    """Read KEY=VALUE lines from .env in the repo root and teleoperation/ (git-ignored) into os.environ, without
+    overriding variables already set. ANTHROPIC_TOKEN is accepted as an alias of ANTHROPIC_API_KEY."""
+    here = Path(__file__).resolve().parent
+    for path in (here.parent / ".env", here / ".env"):
+        if not path.is_file():
+            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.removeprefix("export ").split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k and v and k not in os.environ:
+                os.environ[k] = v
+    if not os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("ANTHROPIC_TOKEN"):
+        os.environ["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_TOKEN"]
+
+
 class Brain:
     """One backend (gemini / claude / demo) with a single entry point: ask(text) -> reply."""
 
     def __init__(self, backend: str, model: str | None, robot: Robot, judge_model: str | None = None):
+        load_env()
         self.backend, self.robot = backend, robot
         if backend == "claude":
             import anthropic

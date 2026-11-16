@@ -4,6 +4,10 @@
   python robot_server.py --port /dev/tty.usbmodem00000000050C1 --policy RoboCrafty/smolvla_rebot_merged_V2_15000 \
       --device mps --cam-height 360
 
+  # inference on the GPU Space instead of this machine (--policy picks one of the Space's models; default XVLA)
+  python robot_server.py --port /dev/ttyACM0 --cameras-file config/cameras_linux.json \
+      --remote-url https://niru-5-rebot-policy-server.hf.space --policy RoboCrafty/smolvla_rebot_merged_V2
+
   GET  /skills            skill names the orchestrator may use
   GET  /status            {"state": "idle|running|stopping", "skill": ..., "elapsed": ...}
   POST /run   {"skill": "towel"}      start a skill (409 if busy); the arm returns to ready when it ends
@@ -60,7 +64,6 @@ class Runner:
         from lerobot.cameras.opencv import OpenCVCameraConfig
         from lerobot.robots.rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfig
         from lerobot.robots.rebot_b601_follower.motor_family import MOTOR_PROFILES, GripperControlMode, MotorFamily
-        from lerobot.utils.feature_utils import hw_to_dataset_features
         from record_episodes import _retrying
         from teleop import gripper_limits
         from teleop.fast_loop import FastLoop
@@ -80,8 +83,9 @@ class Runner:
         g_lo, g_hi = gripper_limits.bounds(limits)
         params = MitParams(**{f.name: getattr(a, f"mit_{f.name}") for f in fields(MitParams)})
 
-        self.policy, self.pre, self.post, cfg = rp.load_policy(a, self.device)
-        print(f"policy {cfg.type} on {self.device}: chunk {cfg.chunk_size}, n_action_steps {self.policy.config.n_action_steps}")
+        # Local checkpoint or the remote GPU server (--remote-url, e.g. the HF Space); same interface either way.
+        # sizes: robot camera -> (h, w) the policy was trained on (undoes camera renaming such as camera1).
+        self.pol, self.sizes = rp.make_policy(a, self.device)
 
         cameras = {n: OpenCVCameraConfig(index_or_path=i, width=cap_w, height=cap_h, fps=a.fps, warmup_s=3,
                                          fourcc=cam_file.get("fourcc")) for n, i in cam_file["cameras"].items()}
@@ -93,13 +97,19 @@ class Runner:
         for cam in self.robot.cameras.values():
             cam.connect = _retrying(cam.connect, cam)
         self.camera_names = list(cameras)
-        self.ds_features = {**hw_to_dataset_features(self.robot.action_features, "action"),
-                            **hw_to_dataset_features(self.robot.observation_features, "observation")}
+        missing = set(self.sizes) - set(self.camera_names)
+        if missing:
+            raise SystemExit(f"policy expects cameras {sorted(self.sizes)}, {sorted(missing)} missing from {a.cameras_file}")
         lim = MOTOR_PROFILES[MotorFamily.DM].joint_limits
         self.lo = np.array([lim[n][0] + 3 for n in rp.JOINT_NAMES] + [g_lo])
         self.hi = np.array([lim[n][1] - 3 for n in rp.JOINT_NAMES] + [g_hi])
         self.max_step = np.array([a.max_step_deg] * 6 + [a.max_gripper_step_deg])
 
+        # S / G / H: pynput needs X11; under Wayland read them from this terminal (--keys, see teleop/term_keys.py)
+        self.key_backend = rp.pick_key_backend(a.keys)
+        FastLoop.key_backend = self.key_backend
+        print(f"keys: {self.key_backend}" + (" (S / G / H are read from THIS terminal; keep it focused)"
+                                              if self.key_backend == "terminal" else ""))
         self.robot.connect()
         self.loop = FastLoop(self.robot, rate=200.0, mit=MitFF(self.robot, params))
         if not self.loop.gravity_check():
@@ -169,8 +179,8 @@ class Runner:
             self.state, self.skill = "idle", None
 
     def _run_policy(self, prompt: str, duration: float) -> str:
-        torch, rp, a = self.torch, self.rp, self.args
-        self.policy.reset()
+        rp, a = self.rp, self.args
+        self.pol.reset()
         period, n, lat = 1.0 / a.fps, 0, []
         hist = []  # (time, arm joints) for the motion measure
         t_end, next_tick, was_active = time.perf_counter() + duration, time.perf_counter(), True
@@ -181,7 +191,7 @@ class Runner:
                 next_tick = time.perf_counter()
                 continue
             if not was_active:
-                self.policy.reset()
+                self.pol.reset()
                 was_active = True
             obs = self.robot.get_observation()
             now = time.time()
@@ -190,14 +200,9 @@ class Runner:
                 hist.pop(0)
             q = np.array([h[1] for h in hist])
             self.motion = float(np.max(q.max(0) - q.min(0)))
-            for name in self.camera_names:
-                if obs[name].shape[:2] != (self.h, self.w):
-                    obs[name] = cv2.resize(obs[name], (self.w, self.h), interpolation=cv2.INTER_AREA)
+            obs = rp.resize_to_policy(obs, self.sizes)
             t_inf = time.perf_counter()
-            with torch.inference_mode():
-                frame = rp.build_inference_frame(obs, torch.device(self.device), self.ds_features, prompt,
-                                                 getattr(self.robot, "robot_type", self.robot.name))
-                act = rp.make_robot_action(self.post(self.policy.select_action(self.pre(frame))), self.ds_features)
+            act = self.pol.select_action(obs, prompt)
             lat.append(time.perf_counter() - t_inf)
             goal = np.array([act[f"{n}.pos"] for n in rp.ALL_NAMES], dtype=float)
             with self.driver.lock:
@@ -223,16 +228,20 @@ class Runner:
     def shutdown(self):
         if self.fake:
             return
-        park = self.args.park == "yes"
+        if self.key_backend == "terminal":
+            from teleop.term_keys import TerminalKeys
+            TerminalKeys.get().stop()  # give the terminal back to input()
+        # No move to the folded rest pose (its path can hit things behind the arm): release torque in place.
+        release = self.args.park == "yes"
         if self.args.park == "ask":
             try:
-                input("\nThe arm is being held. Clear the path to the folded rest pose, then press Enter to lower it "
-                      "and release torque (Ctrl-C: exit now, the arm will go limp)... ")
-                park = True
+                input("\nThe arm is being held. Put a hand under it, then press Enter to release torque and exit "
+                      "(the arm will drop where it is; Ctrl-C: exit without releasing)... ")
+                release = True
             except (KeyboardInterrupt, EOFError):
-                print("\nexiting without parking")
-        if park:
-            self.loop.park_and_release()
+                print("\nexiting without releasing torque: support the arm, then switch off the power")
+        if release:
+            self.loop.release_in_place(warn_s=3.0)
         self.robot.disconnect()
 
 
@@ -291,9 +300,7 @@ def main():
     import rollout_policy as rp
     args = rp.parse_args()
     args.fake = fake
-    cam_file = json.loads(Path(args.cameras_file).read_text())
-    args.cam_width = args.cam_width or cam_file.get("save_width", cam_file["width"])
-    args.cam_height = args.cam_height or cam_file.get("save_height", cam_file["height"])
+    # (--cam-width/--cam-height stay unset unless given: the policy's own training size is used, see make_policy)
     if not fake and not args.port:
         raise SystemExit("--port is required (or use --fake)")
 

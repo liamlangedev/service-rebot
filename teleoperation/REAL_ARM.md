@@ -212,6 +212,21 @@ python orchestrator.py            # then type: "I need a towel" / "clean up the 
 - Test without the robot: `python robot_server.py --fake --http-port 8000`, then run the orchestrator.
 - `--model` selects the Gemini model (default `gemini-3.8-flash`; use whichever current model has image input and tool calling).
 
+### Web UI on the Linux laptop with the HF Space and Claude
+
+```bash
+# terminal 1: arm + cameras here, inference on the Space (--policy: one of the Space's models; default XVLA)
+python robot_server.py --port /dev/ttyACM0 --cameras-file config/cameras_linux.json \
+    --remote-url https://niru-5-rebot-policy-server.hf.space --policy RoboCrafty/smolvla_rebot_merged_V2
+
+# terminal 2: chat UI with Claude; open http://localhost:8080 in Chrome
+python web_ui.py --backend claude
+```
+
+The API key is read from `.env` in the repo root (git-ignored; `ANTHROPIC_API_KEY=...`, `ANTHROPIC_TOKEN=...` also
+accepted). `robot_server.py` takes the same `--remote-url` / `--policy` / `--keys` options as `rollout_policy.py`, and at
+Ctrl-C releases torque in place after a 3 s warning instead of driving to the folded pose.
+
 ## Push to the Hub
 
 ```bash
