@@ -3,3 +3,4 @@ __pycache__/
 assets/
 third_party/
 *.egg-info/
+review/

@@ -12,15 +12,16 @@ so the arm behaves like it did under teleoperation. No Leap is needed.
   python rollout_policy.py --port /dev/tty.usbmodem00000000050C1 --policy niru-5/act_rebot_sort_v1 \
       --task "pickup the keys and put it in the designated bin" --duration 30
 
-  # XVLA (merged V2 dataset, 640x360 images): captured at 1280x720 and downscaled like record_episodes.py
+  # XVLA (merged V2 dataset, 640x360 images)
   python rollout_policy.py --port /dev/ttyACM0 --policy niru-5/xvla_rebot_merged_V2 \
       --task "pick up the bottle and put it in the designated bin" --duration 60
 
   # same, but inference on a GPU server (remote_inference/, e.g. a Hugging Face Space); no model on this machine
-  python rollout_policy.py --port /dev/ttyACM0 --remote-url https://<user>-rebot-policy-server.hf.space \
+  python rollout_policy.py --port /dev/ttyACM0 --remote-url https://niru-5-rebot-policy-server.hf.space \
       --task "pick up the bottle and put it in the designated bin" --duration 60
 
-Camera frames are resized to the image size the policy was trained on (read from the checkpoint / server).
+Cameras capture at the cameras.json mode (16:9) and frames are downscaled to the image size the policy was
+trained on (read from the checkpoint / server), like record_episodes.py.
 
 Keys: Right = start the run / stop it early, Esc = quit, S = stop in place, G = resume, H = go to ready.
 Each run starts from the ready pose and returns to it afterwards.
@@ -71,6 +72,10 @@ def parse_args():
     p.add_argument("--task", default="pickup the keys and put it in the designated bin",
                    help="language prompt; used by SmolVLA/VLAs, ignored by ACT. Use the exact training wording")
     p.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps or cpu")
+    p.add_argument("--dtype", choices=["float32", "bfloat16"], default=None,
+                   help="override the policy dtype (pi0/pi0.5: bfloat16 is faster on MPS/CUDA)")
+    p.add_argument("--num-inference-steps", type=int, default=None,
+                   help="flow-matching denoising steps (pi0/pi0.5/XVLA default 10); fewer = faster, slightly less precise")
     p.add_argument("--fps", type=int, default=30)
     p.add_argument("--duration", type=float, default=30.0, help="seconds per run")
     p.add_argument("--runs", type=int, default=0, help="stop after this many runs (0 = until Esc)")
@@ -82,9 +87,11 @@ def parse_args():
     p.add_argument("--max-gripper-step-deg", type=float, default=40.0)
     p.add_argument("--cameras-file", default=str(CAMERAS_FILE))
     p.add_argument("--cam-width", type=int, default=None,
-                   help="capture width (default: from the cameras file, 1280). Frames are then resized to the policy's "
-                        "training size. For the v1 (640x480, 4:3) policies pass --cam-width 640 --cam-height 480")
-    p.add_argument("--cam-height", type=int, default=None, help="capture height (default: from the cameras file, 720)")
+                   help="image width fed to the policy; must match training (default: the policy's training size)")
+    p.add_argument("--cam-height", type=int, default=None,
+                   help="image height fed to the policy (default: the policy's training size)")
+    p.add_argument("--capture-width", type=int, default=None, help="camera capture width (default: width of cameras.json)")
+    p.add_argument("--capture-height", type=int, default=None, help="camera capture height (default: height of cameras.json)")
     p.add_argument("--gripper-torque-ratio", type=float, default=0.03)
     p.add_argument("--park", choices=["ask", "yes", "no"], default="ask")
     p.add_argument("--yes", action="store_true", help="skip the Enter prompt before the first ready move")
@@ -123,7 +130,16 @@ def load_policy(args, device: str):
         cfg.pretrained_path = str(Path(local) / args.subfolder)
         cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
         cfg.pretrained_path, cfg.device = Path(local) / args.subfolder, device
-    policy = get_policy_class(cfg.type).from_pretrained(cfg.pretrained_path, config=cfg)
+    cls = get_policy_class(cfg.type)
+    if args.dtype and hasattr(cfg, "dtype"):
+        cfg.dtype = getattr(torch, args.dtype)
+    for attr in ("num_inference_steps", "num_denoising_steps"):  # pi0/SmolVLA name, XVLA name
+        if args.num_inference_steps and hasattr(cfg, attr):
+            setattr(cfg, attr, args.num_inference_steps)
+    # The policy's __init__ randomly initialises billions of weights on the CPU (~100 s for pi0/pi0.5) and
+    # from_pretrained then overwrites them; building directly on the target device takes seconds.
+    with torch.device(device):
+        policy = cls.from_pretrained(cfg.pretrained_path, config=cfg)
     policy.to(device)
     policy.eval()
     if args.n_action_steps:
@@ -152,7 +168,7 @@ def policy_image_sizes(cfg) -> dict:
 
 
 def resize_to_policy(obs: dict, sizes: dict) -> dict:
-    """Downscale camera frames to the training size, the same way record_episodes.py does (INTER_AREA)."""
+    """Downscale camera frames to the policy's input size, the same way record_episodes.py does (INTER_AREA)."""
     for name, (h, w) in sizes.items():
         img = obs.get(name)
         if img is not None and img.shape[:2] != (h, w):
@@ -183,14 +199,19 @@ class LocalPolicy:
 
 
 def make_policy(args, device: str):
+    """Returns (policy, {camera: (h, w)} fed to it). --cam-width/--cam-height override the training size."""
     if args.remote_url:
         from teleop.remote_policy import RemotePolicy
         pol = RemotePolicy(args.remote_url, n_action_steps=args.n_action_steps, timeout=args.remote_timeout)
         i = pol.info
-        print(f"remote policy {i['type']} ({i['policy']}) on {i['device']} at {args.remote_url}: "
-              f"chunk {pol.chunk_size}, n_action_steps {pol.n_action_steps}")
-        return pol
-    return LocalPolicy(args, device)
+        print(f"remote policy {i['type']} ({i['policy']}) on {i.get('gpu') or i['device']} {i.get('dtype', '')} "
+              f"at {args.remote_url}: chunk {pol.chunk_size}, n_action_steps {pol.n_action_steps}")
+    else:
+        pol = LocalPolicy(args, device)
+    sizes = dict(pol.image_sizes)
+    if args.cam_width and args.cam_height:
+        sizes = {n: (args.cam_height, args.cam_width) for n in sizes}
+    return pol, sizes
 
 
 class PolicyDriver:
@@ -231,30 +252,29 @@ class Keys:
             self.quit.set()
 
 
-def dry_run(args, device):
-    pol = make_policy(args, device)
-    sizes = pol.image_sizes
+def dry_run(args, device, cap_w, cap_h):
+    pol, sizes = make_policy(args, device)
     cams = list(sizes) or ["front_wide", "gripper", "high_oblique"]
-    print("expects cameras [HxW]:", sizes)
+    print("policy input cameras [HxW]:", sizes)
     rng = np.random.default_rng(0)
     ready = np.degrees(READY_QPOS)
     obs = {f"{n}.pos": float(v) for n, v in zip(JOINT_NAMES, ready)}
     obs["gripper.pos"] = -200.0
-    cap_h, cap_w = args.cam_height or 720, args.cam_width or 1280
+    img = None
     if args.dry_run_image:
         img = cv2.cvtColor(cv2.imread(args.dry_run_image), cv2.COLOR_BGR2RGB)
         cap_h, cap_w = img.shape[:2]
     for name in cams:  # fake frames at capture size, then resized like on the robot
-        obs[name] = img.copy() if args.dry_run_image else rng.integers(0, 255, (cap_h, cap_w, 3), dtype=np.uint8)
+        obs[name] = img.copy() if img is not None else rng.integers(0, 255, (cap_h, cap_w, 3), dtype=np.uint8)
     obs = resize_to_policy(obs, sizes)
     print("images:", {n: obs[n].shape for n in cams}, f"(captured {cap_w}x{cap_h})")
     for i in range(3):
         pol.reset()
         t = time.perf_counter()
         act = pol.select_action(dict(obs), args.task)
-        extra = getattr(pol, "last_ms", None)
-        extra = f" (round trip {extra['rtt']:.0f} ms, server inference {extra['infer']:.0f} ms)" if extra else ""
-        print(f"call {i}: {1000 * (time.perf_counter() - t):.0f} ms{extra}  first action [deg]:",
+        ms = getattr(pol, "last_ms", None)
+        ms = f" (round trip {ms['rtt']:.0f} ms, server inference {ms['infer']:.0f} ms)" if ms else ""
+        print(f"call {i}: {1000 * (time.perf_counter() - t):.0f} ms{ms}  first action [deg]:",
               {k[:-4]: round(v, 1) for k, v in act.items()})
     print("ready pose [deg]:", {n: round(float(v), 1) for n, v in zip(JOINT_NAMES, ready)})
     print("OK: the policy loads and produces 7-dim joint targets. (Fake images, so the values are not meaningful.)")
@@ -262,9 +282,12 @@ def dry_run(args, device):
 
 def main():
     args = parse_args()
+    cam_file = json.loads(Path(args.cameras_file).read_text())
+    # Same path as record_episodes.py: capture at the 16:9 mode, then downscale to the saved size
+    cap_w, cap_h = args.capture_width or cam_file["width"], args.capture_height or cam_file["height"]
     device = pick_device(args.device)
     if args.dry_run:
-        return dry_run(args, device)
+        return dry_run(args, device, cap_w, cap_h)
     if not args.port:
         raise SystemExit("--port is required (or use --dry-run)")
     limits = gripper_limits.load()
@@ -273,19 +296,16 @@ def main():
     g_lo, g_hi = gripper_limits.bounds(limits)
     params = MitParams(**{f.name: getattr(args, f"mit_{f.name}") for f in fields(MitParams)})
 
-    pol = make_policy(args, device)
-
-    cam_file = json.loads(Path(args.cameras_file).read_text())
-    cam_w, cam_h = args.cam_width or cam_file.get("width", 1280), args.cam_height or cam_file.get("height", 720)
-    sizes = pol.image_sizes
+    pol, sizes = make_policy(args, device)
     missing = set(sizes) - set(cam_file["cameras"])
     if missing:
         raise SystemExit(f"policy expects cameras {sorted(sizes)}, {sorted(missing)} missing from {args.cameras_file}")
-    cameras = {n: OpenCVCameraConfig(index_or_path=i, width=cam_w, height=cam_h, fps=args.fps,
+
+    cameras = {n: OpenCVCameraConfig(index_or_path=i, width=cap_w, height=cap_h, fps=args.fps,
                                      warmup_s=3, fourcc=cam_file.get("fourcc"))
                for n, i in cam_file["cameras"].items()}
-    print("cameras:", {n: c.index_or_path for n, c in cameras.items()}, f"capture {cam_w}x{cam_h}@{args.fps} -> policy",
-          {n: f"{w}x{h}" for n, (h, w) in sizes.items()})
+    print("cameras:", {n: c.index_or_path for n, c in cameras.items()},
+          f"capture {cap_w}x{cap_h}@{args.fps} -> policy", {n: f"{w}x{h}" for n, (h, w) in sizes.items()})
     rcfg = RebotB601FollowerRobotConfig(port=args.port, cameras=cameras, disable_torque_on_disconnect=False,
                                         gripper_torque_ratio=args.gripper_torque_ratio)
     rcfg.joint_limits["gripper"] = (g_lo, g_hi)

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>reBot assistant</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#070b14; --panel:#0e1626; --line:#1b2a44; --cy:#32e6ff; --gr:#3dff9a; --am:#ffb830; --pu:#a77bff; --rd:#ff4d5e; --tx:#d9e6ff; --mut:#6f86ad; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:radial-gradient(1200px 700px at 50% -10%, #0f2140 0%, var(--bg) 60%); color:var(--tx);
+         font:15px/1.4 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; height:100vh; display:grid;
+         grid-template-rows:auto 1fr auto; gap:12px; padding:12px; }
+  header { display:flex; align-items:center; gap:14px; }
+  header h1 { font-size:18px; letter-spacing:.18em; margin:0; font-weight:600; text-transform:uppercase; }
+  header h1 span { color:var(--cy); }
+  .pill { padding:4px 12px; border-radius:99px; border:1px solid var(--line); background:var(--panel); font-size:13px; color:var(--mut); }
+  .pill b { color:var(--tx); font-weight:600; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--mut); margin-right:7px; }
+  main { display:grid; grid-template-columns:320px 1fr 360px; gap:12px; min-height:0; }
+  .card { background:linear-gradient(180deg,#0e1830,#0b1322); border:1px solid var(--line); border-radius:16px; padding:12px; min-height:0; }
+  .face-card { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:8px; }
+  #face { width:100%; max-width:290px; }
+  #stateText { font-size:12px; letter-spacing:.25em; text-transform:uppercase; color:var(--mut); }
+  #subtitle { min-height:3.4em; text-align:center; font-size:15px; color:var(--tx); padding:0 6px; }
+  .skills { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:auto; }
+  .chip { padding:8px 14px; border-radius:99px; border:1px solid var(--line); background:#101c33; color:var(--tx); cursor:pointer; font-size:14px; }
+  .chip:hover { border-color:var(--cy); box-shadow:0 0 12px #32e6ff44; }
+  .cams { display:grid; grid-template-rows:2fr 1fr; gap:12px; min-height:0; }
+  .camrow { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-height:0; }
+  .cam { position:relative; border-radius:12px; overflow:hidden; background:#000; border:1px solid var(--line); min-height:0; }
+  .cam img { width:100%; height:100%; object-fit:cover; display:block; }
+  .cam label { position:absolute; left:10px; top:8px; font-size:11px; letter-spacing:.2em; text-transform:uppercase; padding:3px 8px;
+               border-radius:6px; background:#000a; color:var(--cy); }
+  .cam.live::after { content:""; position:absolute; inset:0; border:2px solid var(--am); border-radius:12px; box-shadow:inset 0 0 30px #ffb83055; pointer-events:none; }
+  .chat { display:flex; flex-direction:column; min-height:0; }
+  #log { flex:1; overflow:auto; display:flex; flex-direction:column; gap:8px; padding-right:4px; }
+  .msg { max-width:92%; padding:8px 12px; border-radius:14px; font-size:14px; white-space:pre-wrap; }
+  .msg.user { align-self:flex-end; background:#12304f; border:1px solid #1e4a77; }
+  .msg.reply { align-self:flex-start; background:#142040; border:1px solid var(--line); }
+  .msg.error { align-self:flex-start; background:#3a1220; border:1px solid #7a2438; color:#ffb3bd; }
+  .tool { align-self:flex-start; font-size:12px; font-family:ui-monospace,Menlo,monospace; color:var(--am); background:#2a2008; border:1px solid #5a4410; border-radius:8px; padding:3px 9px; }
+  .tool.robot { color:var(--gr); background:#0b2a1a; border-color:#14552f; }
+  .tool.dim { color:var(--mut); background:transparent; border-color:var(--line); }
+  footer { display:flex; gap:10px; align-items:center; }
+  #input { flex:1; padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:var(--panel); color:var(--tx); font-size:16px; outline:none; }
+  #input:focus { border-color:var(--cy); }
+  button { cursor:pointer; border:1px solid var(--line); background:var(--panel); color:var(--tx); border-radius:14px; padding:13px 18px; font-size:15px; }
+  button:hover { border-color:var(--cy); }
+  #mic.on { background:#0b2a1a; border-color:var(--gr); box-shadow:0 0 16px #3dff9a66; }
+  #done { display:none; border-color:var(--gr); color:var(--gr); }
+  #stop { background:#3a0d16; border-color:var(--rd); color:#ffd1d6; font-weight:700; letter-spacing:.12em; padding:13px 28px; }
+  #stop:hover { box-shadow:0 0 18px #ff4d5e88; }
+  label.tog { font-size:13px; color:var(--mut); display:flex; align-items:center; gap:6px; }
+  @media (max-width:1100px){ main{grid-template-columns:1fr;} body{height:auto;} .cams{grid-template-rows:auto;} .cam{aspect-ratio:16/9;} }
+</style>
+</head>
+<body>
+<header>
+  <h1>reBot <span>assistant</span></h1>
+  <div class="pill" id="pillState"><span class="dot" id="dot"></span><b id="stateLabel">connecting</b></div>
+  <div class="pill" id="pillSkill" style="display:none">task <b id="skillLabel"></b> · <b id="elapsed">0</b>s</div>
+  <div class="pill" id="pillBrain"></div>
+</header>
+
+<main>
+  <section class="card face-card">
+    <svg id="face" viewBox="0 0 300 300">
+      <defs>
+        <radialGradient id="g" cx="50%" cy="50%" r="60%"><stop offset="0" stop-color="#16294d"/><stop offset="1" stop-color="#0a1222"/></radialGradient>
+        <filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <circle id="ring" cx="150" cy="150" r="140" fill="url(#g)" stroke="#32e6ff" stroke-width="3" filter="url(#glow)"/>
+      <circle id="ring2" cx="150" cy="150" r="124" fill="none" stroke="#32e6ff" stroke-opacity=".25" stroke-dasharray="4 10"/>
+      <g id="eyes" filter="url(#glow)">
+        <rect id="eL" x="86" y="108" width="46" height="56" rx="20" fill="#32e6ff"/>
+        <rect id="eR" x="168" y="108" width="46" height="56" rx="20" fill="#32e6ff"/>
+      </g>
+      <path id="mouth" d="M100 220 Q150 220 200 220" fill="none" stroke="#32e6ff" stroke-width="7" stroke-linecap="round" filter="url(#glow)"/>
+    </svg>
+    <div id="stateText">idle</div>
+    <div id="subtitle"></div>
+    <div class="skills" id="skills"></div>
+  </section>
+
+  <section class="cams">
+    <div class="cam" id="cam_front_wide"><label>front</label><img src="/api/cam/front_wide"></div>
+    <div class="camrow">
+      <div class="cam" id="cam_high_oblique"><label>high</label><img src="/api/cam/high_oblique"></div>
+      <div class="cam" id="cam_gripper"><label>gripper</label><img src="/api/cam/gripper"></div>
+    </div>
+  </section>
+
+  <section class="card chat">
+    <div id="log"></div>
+  </section>
+</main>
+
+<footer>
+  <input id="input" placeholder="Ask for something: “I need a towel”, “clean up”…" autocomplete="off">
+  <button id="mic" title="Speak">🎤</button>
+  <button id="send">Send</button>
+  <button id="done" title="Task is finished: put the arm back and let the assistant check">Task done ✓</button>
+  <button id="stop">STOP</button>
+  <label class="tog"><input type="checkbox" id="voice" checked> voice</label>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const COL = { idle:'#32e6ff', listening:'#3dff9a', thinking:'#a77bff', working:'#ffb830', speaking:'#32e6ff', offline:'#ff4d5e' };
+let state = 'idle', speaking = false, robotState = 'offline', t0 = performance.now();
+
+/* ---------- face ---------- */
+let blink = 0, nextBlink = 2, gx = 0, gy = 0, tgx = 0, tgy = 0, nextGaze = 1;
+function face(now) {
+  const t = (now - t0) / 1000;
+  const st = speaking ? 'speaking' : state;
+  const c = COL[st] || COL.idle;
+  for (const id of ['ring','eL','eR','mouth']) { const e = $(id); if (e.tagName==='rect') e.setAttribute('fill', c); else e.setAttribute('stroke', c); }
+  $('ring2').setAttribute('stroke', c);
+  $('ring').setAttribute('stroke-width', st==='thinking' ? 3 + 2*Math.sin(t*6) : 3);
+  $('ring2').setAttribute('transform', `rotate(${(st==='working'||st==='thinking') ? t*60 : t*8} 150 150)`);
+  // gaze
+  if (t > nextGaze) {
+    nextGaze = t + 1 + Math.random()*2.5;
+    if (st==='thinking') { tgx = -10; tgy = -12; }
+    else if (st==='working') { tgx = Math.sin(t*0.7)*16; tgy = 6; }
+    else if (st==='listening') { tgx = 0; tgy = 0; }
+    else { tgx = (Math.random()-.5)*20; tgy = (Math.random()-.5)*10; }
+  }
+  gx += (tgx-gx)*0.08; gy += (tgy-gy)*0.08;
+  // blink
+  if (t > nextBlink) { blink = 1; nextBlink = t + 2 + Math.random()*3; }
+  blink = Math.max(0, blink - 0.12);
+  const open = st==='working' ? 0.55 : (st==='listening' ? 1.12 : 1);
+  const h = 56 * open * (1 - 0.92*Math.sin(blink*Math.PI/1)**2 * (blink>0?1:0));
+  for (const [id, x] of [['eL', 86], ['eR', 168]]) {
+    const e = $(id); e.setAttribute('x', x+gx); e.setAttribute('y', 108+gy + (56-h)/2); e.setAttribute('height', Math.max(4, h));
+  }
+  // mouth
+  let m = 0;
+  if (speaking) m = 14 + 14*Math.abs(Math.sin(t*11)) * (0.6+0.4*Math.sin(t*3.1));
+  else if (st==='thinking') m = 0;
+  else if (st==='listening') m = 6;
+  else m = 8 + 3*Math.sin(t*1.5);
+  const smile = (st==='idle' || speaking) ? 1 : 0;
+  const y0 = 218 - (smile ? 0 : 0);
+  const ctrl = y0 + (speaking ? m*1.2 : m*(smile?1:0.2));
+  $('mouth').setAttribute('d', st==='thinking' ? `M115 222 L185 222` : `M100 ${y0} Q150 ${ctrl} 200 ${y0}`);
+  requestAnimationFrame(face);
+}
+requestAnimationFrame(face);
+
+function setState(s) { state = s; $('stateText').textContent = speaking ? 'speaking' : s; }
+
+/* ---------- chat / events ---------- */
+function add(cls, text) {
+  const d = document.createElement('div'); d.className = cls; d.textContent = text;
+  $('log').appendChild(d); $('log').scrollTop = 1e9; return d;
+}
+function toolLine(raw) {
+  // "[claude] fetch({'item': 'towel'})"  /  "[robot] running 'towel'..."  /  "[gemini] thinking..."
+  const m = raw.match(/^\[(\w+)\]\s*(.*)$/); if (!m) return;
+  const who = m[1], rest = m[2];
+  if (/thinking|answered/.test(rest)) { return; }
+  if (who === 'robot') add('tool robot', '🦾 ' + rest);
+  else if (/^look/.test(rest)) add('tool', '👁 looking: ' + (rest.match(/\(\W*(\w+)/)||[])[1]);
+  else if (/^fetch/.test(rest)) add('tool', '⚙ fetch ' + (rest.match(/item\W+(\w+)/)||[])[1]);
+  else if (/^stop/.test(rest)) add('tool', '■ stop');
+  else if (who === 'judge') add('tool dim', '🔎 ' + rest);
+  else if (who === 'operator') add('tool robot', '✔ ' + rest);
+  else add('tool dim', rest);
+}
+function clean(t) { return t.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').replace(/\s+/g, ' ').trim(); }
+
+const es = new EventSource('/api/events');
+es.onmessage = e => {
+  const ev = JSON.parse(e.data);
+  if (ev.kind === 'user') add('msg user', ev.text);
+  else if (ev.kind === 'reply') { add('msg reply', ev.text); $('subtitle').textContent = clean(ev.text); speak(ev.text); }
+  else if (ev.kind === 'error') { add('msg error', ev.text); setState('idle'); }
+  else if (ev.kind === 'state') setState(ev.text);
+  else if (ev.kind === 'log') toolLine(ev.text);
+};
+
+/* ---------- speech ---------- */
+function speak(text) {
+  if (!$('voice').checked || !('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(clean(text));
+  const vs = speechSynthesis.getVoices(); const v = vs.find(v => /en[-_](US|GB)/.test(v.lang) && /Samantha|Daniel|Google|Alex|Moira/.test(v.name)) || vs.find(v => v.lang.startsWith('en'));
+  if (v) u.voice = v; u.rate = 1.03; u.pitch = 1.0;
+  u.onstart = () => { speaking = true; $('stateText').textContent = 'speaking'; };
+  u.onend = u.onerror = () => { speaking = false; $('stateText').textContent = state; };
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition; let rec = null, listening = false;
+if (SR) {
+  rec = new SR(); rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false;
+  rec.onresult = e => { const r = e.results[e.results.length-1]; $('input').value = r[0].transcript; if (r.isFinal) { send(); } };
+  rec.onend = () => { listening = false; $('mic').classList.remove('on'); if (state === 'listening') setState('idle'); };
+  $('mic').onclick = () => { if (listening) { rec.stop(); return; } speechSynthesis.cancel(); speaking = false; try { rec.start(); listening = true; $('mic').classList.add('on'); setState('listening'); } catch(_){} };
+} else { $('mic').style.display = 'none'; }
+
+/* ---------- actions ---------- */
+async function send() {
+  const text = $('input').value.trim(); if (!text) return; $('input').value = '';
+  $('subtitle').textContent = '';
+  const r = await fetch('/api/say', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({text}) });
+  if (r.status === 409) add('msg error', 'Still busy with the previous request.');
+}
+$('send').onclick = send; $('input').onkeydown = e => { if (e.key === 'Enter') send(); };
+$('stop').onclick = () => { speechSynthesis.cancel(); fetch('/api/stop', {method:'POST'}); };
+$('done').onclick = () => fetch('/api/done', {method:'POST'});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('stop').click(); });
+
+fetch('/api/info').then(r => r.json()).then(i => {
+  $('pillBrain').textContent = i.backend + ' · ' + i.model;
+  for (const k of Object.keys(i.skills)) {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = k;
+    b.onclick = () => { $('input').value = 'I need the ' + k; send(); }; $('skills').appendChild(b);
+  }
+});
+
+/* ---------- robot status ---------- */
+async function poll() {
+  try {
+    const s = await (await fetch('/api/status')).json(); robotState = s.state;
+    const dot = $('dot'), lab = $('stateLabel');
+    lab.textContent = s.state === 'offline' ? 'robot offline' : s.state;
+    dot.style.background = s.state === 'running' ? COL.working : (s.state === 'offline' ? COL.offline : COL.listening);
+    const run = s.state === 'running' || s.state === 'stopping';
+    $('pillSkill').style.display = run ? '' : 'none'; $('done').style.display = s.state === 'running' ? '' : 'none';
+    if (run) { $('skillLabel').textContent = s.skill; $('elapsed').textContent = Math.round(s.elapsed); }
+    for (const id of ['front_wide','high_oblique','gripper']) $('cam_' + id).classList.toggle('live', run);
+    if (run) setState('working'); else if (state === 'working') setState('idle');
+    if (s.state === 'offline') setState('offline'); else if (state === 'offline') setState('idle');
+  } catch (_) {}
+  setTimeout(poll, 1000);
+}
+poll(); speechSynthesis && speechSynthesis.getVoices();
+</script>
+</body>
+</html>
