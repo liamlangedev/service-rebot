@@ -12,6 +12,16 @@ so the arm behaves like it did under teleoperation. No Leap is needed.
   python rollout_policy.py --port /dev/tty.usbmodem00000000050C1 --policy niru-5/act_rebot_sort_v1 \
       --task "pickup the keys and put it in the designated bin" --duration 30
 
+  # XVLA (merged V2 dataset, 640x360 images): captured at 1280x720 and downscaled like record_episodes.py
+  python rollout_policy.py --port /dev/ttyACM0 --policy niru-5/xvla_rebot_merged_V2 \
+      --task "pick up the bottle and put it in the designated bin" --duration 60
+
+  # same, but inference on a GPU server (remote_inference/, e.g. a Hugging Face Space); no model on this machine
+  python rollout_policy.py --port /dev/ttyACM0 --remote-url https://<user>-rebot-policy-server.hf.space \
+      --task "pick up the bottle and put it in the designated bin" --duration 60
+
+Camera frames are resized to the image size the policy was trained on (read from the checkpoint / server).
+
 Keys: Right = start the run / stop it early, Esc = quit, S = stop in place, G = resume, H = go to ready.
 Each run starts from the ready pose and returns to it afterwards.
 """
@@ -22,6 +32,7 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from pynput import keyboard
@@ -48,10 +59,14 @@ ALL_NAMES = [*JOINT_NAMES, "gripper"]
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--policy", required=True,
+    p.add_argument("--policy", default=None,
                    help="Hub repo or local folder, e.g. niru-5/act_rebot_sort_v1. For an intermediate checkpoint use "
                         "--subfolder checkpoints/010500/pretrained_model")
     p.add_argument("--subfolder", default=None)
+    p.add_argument("--remote-url", default=None,
+                   help="run inference on a remote server (remote_inference/app.py, e.g. https://<user>-<space>.hf.space) "
+                        "instead of loading --policy here. Private Spaces use your HF token (hf auth login / HF_TOKEN)")
+    p.add_argument("--remote-timeout", type=float, default=30.0)
     p.add_argument("--port", default=None, help="arm serial port (not needed with --dry-run)")
     p.add_argument("--task", default="pickup the keys and put it in the designated bin",
                    help="language prompt; used by SmolVLA/VLAs, ignored by ACT. Use the exact training wording")
@@ -66,16 +81,23 @@ def parse_args():
                    help="largest change of any joint target per policy step (deg); 4 deg x 30 Hz = 120 deg/s")
     p.add_argument("--max-gripper-step-deg", type=float, default=40.0)
     p.add_argument("--cameras-file", default=str(CAMERAS_FILE))
-    p.add_argument("--cam-width", type=int, default=640, help="must match the training images (the v1 dataset is 640x480)")
-    p.add_argument("--cam-height", type=int, default=480)
+    p.add_argument("--cam-width", type=int, default=None,
+                   help="capture width (default: from the cameras file, 1280). Frames are then resized to the policy's "
+                        "training size. For the v1 (640x480, 4:3) policies pass --cam-width 640 --cam-height 480")
+    p.add_argument("--cam-height", type=int, default=None, help="capture height (default: from the cameras file, 720)")
     p.add_argument("--gripper-torque-ratio", type=float, default=0.03)
     p.add_argument("--park", choices=["ask", "yes", "no"], default="ask")
     p.add_argument("--yes", action="store_true", help="skip the Enter prompt before the first ready move")
     p.add_argument("--dry-run", action="store_true", help="load the policy and run it on a fake observation; no robot")
+    p.add_argument("--dry-run-image", default=None,
+                   help="with --dry-run: use this image (any size) for every camera instead of random noise")
     for f in fields(MitParams):
         d = RECORDING_MIT.get(f.name, getattr(MitParams(), f.name))
         p.add_argument(f"--mit.{f.name}", dest=f"mit_{f.name}", type=type(d), default=d)
-    return p.parse_args()
+    args = p.parse_args()
+    if not args.policy and not args.remote_url:
+        p.error("--policy or --remote-url is required")
+    return args
 
 
 def pick_device(name: str) -> str:
@@ -119,6 +141,58 @@ def feature_names(cfg):
     return sorted(k for k, v in cfg.input_features.items() if "image" in k)
 
 
+def policy_image_sizes(cfg) -> dict:
+    """camera name -> (height, width) the policy was trained on, from input_features shape (C, H, W)."""
+    out = {}
+    for k, v in cfg.input_features.items():
+        if k.startswith("observation.images."):
+            _, h, w = tuple(v.shape)
+            out[k.removeprefix("observation.images.")] = (int(h), int(w))
+    return out
+
+
+def resize_to_policy(obs: dict, sizes: dict) -> dict:
+    """Downscale camera frames to the training size, the same way record_episodes.py does (INTER_AREA)."""
+    for name, (h, w) in sizes.items():
+        img = obs.get(name)
+        if img is not None and img.shape[:2] != (h, w):
+            obs[name] = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    return obs
+
+
+class LocalPolicy:
+    """Policy loaded on this machine, behind the same interface as teleop.remote_policy.RemotePolicy."""
+
+    def __init__(self, args, device: str):
+        self.policy, self.pre, self.post, self.cfg = load_policy(args, device)
+        self.device = torch.device(device)
+        self.image_sizes = policy_image_sizes(self.cfg)
+        act = {f"{n}.pos": float for n in ALL_NAMES}
+        obs = {**act, **{n: (h, w, 3) for n, (h, w) in self.image_sizes.items()}}
+        self.ds_features = {**hw_to_dataset_features(act, "action"), **hw_to_dataset_features(obs, "observation")}
+        print(f"policy {self.cfg.type} on {device}: chunk {self.cfg.chunk_size}, "
+              f"n_action_steps {self.policy.config.n_action_steps}")
+
+    def reset(self):
+        self.policy.reset()
+
+    def select_action(self, obs: dict, task: str) -> dict:
+        with torch.inference_mode():
+            frame = build_inference_frame(obs, self.device, self.ds_features, task, "rebot_b601_follower")
+            return make_robot_action(self.post(self.policy.select_action(self.pre(frame))), self.ds_features)
+
+
+def make_policy(args, device: str):
+    if args.remote_url:
+        from teleop.remote_policy import RemotePolicy
+        pol = RemotePolicy(args.remote_url, n_action_steps=args.n_action_steps, timeout=args.remote_timeout)
+        i = pol.info
+        print(f"remote policy {i['type']} ({i['policy']}) on {i['device']} at {args.remote_url}: "
+              f"chunk {pol.chunk_size}, n_action_steps {pol.n_action_steps}")
+        return pol
+    return LocalPolicy(args, device)
+
+
 class PolicyDriver:
     """Step function of the 200 Hz thread: linearly interpolates between successive policy targets."""
 
@@ -158,33 +232,30 @@ class Keys:
 
 
 def dry_run(args, device):
-    policy, pre, post, cfg = load_policy(args, device)
-    print(f"policy {cfg.type}: chunk {cfg.chunk_size}, n_action_steps {policy.config.n_action_steps}, device {device}")
-    print("expects:", {k: tuple(v.shape) for k, v in cfg.input_features.items()})
-    h, w = args.cam_height, args.cam_width
+    pol = make_policy(args, device)
+    sizes = pol.image_sizes
+    cams = list(sizes) or ["front_wide", "gripper", "high_oblique"]
+    print("expects cameras [HxW]:", sizes)
     rng = np.random.default_rng(0)
     ready = np.degrees(READY_QPOS)
     obs = {f"{n}.pos": float(v) for n, v in zip(JOINT_NAMES, ready)}
     obs["gripper.pos"] = -200.0
-    for name in ("front_wide", "gripper", "high_oblique"):
-        obs[name] = rng.integers(0, 255, (h, w, 3), dtype=np.uint8)
-
-    class _Fake:  # only the feature declarations are needed here
-        observation_features = {**{f"{n}.pos": float for n in ALL_NAMES},
-                                **{n: (h, w, 3) for n in ("front_wide", "gripper", "high_oblique")}}
-        action_features = {f"{n}.pos": float for n in ALL_NAMES}
-        robot_type = "rebot_b601_follower"
-
-    ds_features = {**hw_to_dataset_features(_Fake.action_features, "action"),
-                   **hw_to_dataset_features(_Fake.observation_features, "observation")}
+    cap_h, cap_w = args.cam_height or 720, args.cam_width or 1280
+    if args.dry_run_image:
+        img = cv2.cvtColor(cv2.imread(args.dry_run_image), cv2.COLOR_BGR2RGB)
+        cap_h, cap_w = img.shape[:2]
+    for name in cams:  # fake frames at capture size, then resized like on the robot
+        obs[name] = img.copy() if args.dry_run_image else rng.integers(0, 255, (cap_h, cap_w, 3), dtype=np.uint8)
+    obs = resize_to_policy(obs, sizes)
+    print("images:", {n: obs[n].shape for n in cams}, f"(captured {cap_w}x{cap_h})")
     for i in range(3):
+        pol.reset()
         t = time.perf_counter()
-        with torch.inference_mode():
-            frame = build_inference_frame(dict(obs), torch.device(device), ds_features, args.task, _Fake.robot_type)
-            act = make_robot_action(post(policy.select_action(pre(frame))), ds_features)
-        print(f"call {i}: {1000 * (time.perf_counter() - t):.0f} ms  first action [deg]:",
+        act = pol.select_action(dict(obs), args.task)
+        extra = getattr(pol, "last_ms", None)
+        extra = f" (round trip {extra['rtt']:.0f} ms, server inference {extra['infer']:.0f} ms)" if extra else ""
+        print(f"call {i}: {1000 * (time.perf_counter() - t):.0f} ms{extra}  first action [deg]:",
               {k[:-4]: round(v, 1) for k, v in act.items()})
-        policy.reset()
     print("ready pose [deg]:", {n: round(float(v), 1) for n, v in zip(JOINT_NAMES, ready)})
     print("OK: the policy loads and produces 7-dim joint targets. (Fake images, so the values are not meaningful.)")
 
@@ -202,14 +273,19 @@ def main():
     g_lo, g_hi = gripper_limits.bounds(limits)
     params = MitParams(**{f.name: getattr(args, f"mit_{f.name}") for f in fields(MitParams)})
 
-    policy, pre, post, cfg = load_policy(args, device)
-    print(f"policy {cfg.type} on {device}: chunk {cfg.chunk_size}, n_action_steps {policy.config.n_action_steps}")
+    pol = make_policy(args, device)
 
     cam_file = json.loads(Path(args.cameras_file).read_text())
-    cameras = {n: OpenCVCameraConfig(index_or_path=i, width=args.cam_width, height=args.cam_height, fps=args.fps,
+    cam_w, cam_h = args.cam_width or cam_file.get("width", 1280), args.cam_height or cam_file.get("height", 720)
+    sizes = pol.image_sizes
+    missing = set(sizes) - set(cam_file["cameras"])
+    if missing:
+        raise SystemExit(f"policy expects cameras {sorted(sizes)}, {sorted(missing)} missing from {args.cameras_file}")
+    cameras = {n: OpenCVCameraConfig(index_or_path=i, width=cam_w, height=cam_h, fps=args.fps,
                                      warmup_s=3, fourcc=cam_file.get("fourcc"))
                for n, i in cam_file["cameras"].items()}
-    print("cameras:", {n: c.index_or_path for n, c in cameras.items()}, f"{args.cam_width}x{args.cam_height}@{args.fps}")
+    print("cameras:", {n: c.index_or_path for n, c in cameras.items()}, f"capture {cam_w}x{cam_h}@{args.fps} -> policy",
+          {n: f"{w}x{h}" for n, (h, w) in sizes.items()})
     rcfg = RebotB601FollowerRobotConfig(port=args.port, cameras=cameras, disable_torque_on_disconnect=False,
                                         gripper_torque_ratio=args.gripper_torque_ratio)
     rcfg.joint_limits["gripper"] = (g_lo, g_hi)
@@ -218,8 +294,6 @@ def main():
     for cam in robot.cameras.values():
         cam.connect = _retrying(cam.connect, cam)
 
-    ds_features = {**hw_to_dataset_features(robot.action_features, "action"),
-                   **hw_to_dataset_features(robot.observation_features, "observation")}
     # Same joint limits the IK used while recording, with a margin
     lim = MOTOR_PROFILES[MotorFamily.DM].joint_limits
     lo = np.array([lim[n][0] + 3 for n in JOINT_NAMES] + [g_lo])
@@ -248,7 +322,7 @@ def main():
             if keys.quit.is_set():
                 break
             keys.go.clear()
-            policy.reset()
+            pol.reset()
             print(f"  running for {args.duration:.0f} s.  -> stop early | S stop in place | Esc quit")
             t_end, next_tick, n, lat = time.perf_counter() + args.duration, time.perf_counter(), 0, []
             was_active = True
@@ -259,13 +333,11 @@ def main():
                     next_tick = time.perf_counter()
                     continue
                 if not was_active:
-                    policy.reset()  # drop the old action queue; the driver was re-synced by the loop
+                    pol.reset()  # drop the old action queue; the driver was re-synced by the loop
                     was_active = True
                 t_inf = time.perf_counter()
-                obs = robot.get_observation()
-                with torch.inference_mode():
-                    frame = build_inference_frame(obs, torch.device(device), ds_features, args.task, getattr(robot, "robot_type", robot.name))
-                    act = make_robot_action(post(policy.select_action(pre(frame))), ds_features)
+                obs = resize_to_policy(robot.get_observation(), sizes)
+                act = pol.select_action(obs, args.task)
                 lat.append(time.perf_counter() - t_inf)
                 goal = np.array([act[f"{n}.pos"] for n in ALL_NAMES], dtype=float)
                 with driver.lock:
