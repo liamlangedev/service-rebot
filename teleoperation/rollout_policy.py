@@ -50,6 +50,7 @@ from teleop.fast_loop import FastLoop
 from teleop.mit_ff import MitFF, MitParams
 from teleop.ready_move import move_to_ready
 from teleop.rebot_real import JOINT_NAMES, READY_QPOS, q_to_action
+from remote_inference.policy_cameras import robot_camera_sizes
 from teleop.term_keys import TerminalKeys
 from teleop.term_keys import pick_backend as pick_key_backend
 
@@ -62,7 +63,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--policy", default=None,
                    help="Hub repo or local folder, e.g. niru-5/act_rebot_sort_v1. For an intermediate checkpoint use "
-                        "--subfolder checkpoints/010500/pretrained_model")
+                        "--subfolder checkpoints/010500/pretrained_model. With --remote-url: which of the server's "
+                        "policies to use (e.g. RoboCrafty/smolvla_rebot_merged_V2); omitted = the server's default")
     p.add_argument("--subfolder", default=None)
     p.add_argument("--remote-url", default=None,
                    help="run inference on a remote server (remote_inference/app.py, e.g. https://<user>-<space>.hf.space) "
@@ -93,7 +95,9 @@ def parse_args():
     p.add_argument("--capture-width", type=int, default=None, help="camera capture width (default: width of cameras.json)")
     p.add_argument("--capture-height", type=int, default=None, help="camera capture height (default: height of cameras.json)")
     p.add_argument("--gripper-torque-ratio", type=float, default=0.03)
-    p.add_argument("--park", choices=["ask", "yes", "no"], default="ask")
+    p.add_argument("--park", choices=["ask", "yes", "no"], default="ask",
+                   help="at exit: ask = Enter releases torque in place after a 3 s warning (no move to the rest pose), "
+                        "yes = do that without asking, no = keep holding and exit")
     p.add_argument("--yes", action="store_true", help="skip the Enter prompt before the first ready move")
     p.add_argument("--dry-run", action="store_true", help="load the policy and run it on a fake observation; no robot")
     p.add_argument("--keys", choices=["auto", "pynput", "terminal"], default="auto",
@@ -160,16 +164,6 @@ def feature_names(cfg):
     return sorted(k for k, v in cfg.input_features.items() if "image" in k)
 
 
-def policy_image_sizes(cfg) -> dict:
-    """camera name -> (height, width) the policy was trained on, from input_features shape (C, H, W)."""
-    out = {}
-    for k, v in cfg.input_features.items():
-        if k.startswith("observation.images."):
-            _, h, w = tuple(v.shape)
-            out[k.removeprefix("observation.images.")] = (int(h), int(w))
-    return out
-
-
 def resize_to_policy(obs: dict, sizes: dict) -> dict:
     """Downscale camera frames to the policy's input size, the same way record_episodes.py does (INTER_AREA)."""
     for name, (h, w) in sizes.items():
@@ -185,7 +179,8 @@ class LocalPolicy:
     def __init__(self, args, device: str):
         self.policy, self.pre, self.post, self.cfg = load_policy(args, device)
         self.device = torch.device(device)
-        self.image_sizes = policy_image_sizes(self.cfg)
+        # robot camera names and training sizes (undoes camera renaming such as front_wide -> camera1)
+        self.image_sizes = robot_camera_sizes(self.cfg, args.policy, args.subfolder)
         act = {f"{n}.pos": float for n in ALL_NAMES}
         obs = {**act, **{n: (h, w, 3) for n, (h, w) in self.image_sizes.items()}}
         self.ds_features = {**hw_to_dataset_features(act, "action"), **hw_to_dataset_features(obs, "observation")}
@@ -205,7 +200,9 @@ def make_policy(args, device: str):
     """Returns (policy, {camera: (h, w)} fed to it). --cam-width/--cam-height override the training size."""
     if args.remote_url:
         from teleop.remote_policy import RemotePolicy
-        pol = RemotePolicy(args.remote_url, n_action_steps=args.n_action_steps, timeout=args.remote_timeout)
+        name = f"{args.policy}:{args.subfolder}" if args.policy and args.subfolder else args.policy
+        pol = RemotePolicy(args.remote_url, policy=name, n_action_steps=args.n_action_steps,
+                           timeout=args.remote_timeout)
         i = pol.info
         print(f"remote policy {i['type']} ({i['policy']}) on {i.get('gpu') or i['device']} {i.get('dtype', '')} "
               f"at {args.remote_url}: chunk {pol.chunk_size}, n_action_steps {pol.n_action_steps}")
@@ -406,16 +403,17 @@ def main():
     finally:
         if key_backend == "terminal":
             TerminalKeys.get().stop()  # give the terminal back to input()
-        park = args.park == "yes"
+        # No move to the folded rest pose (its path can hit things behind the arm): release torque in place.
+        release = args.park == "yes"
         if args.park == "ask":
             try:
-                input("\nThe arm is being held. Clear the path to the folded rest pose, then press Enter to lower it "
-                      "and release torque (Ctrl-C: exit now, the arm will go limp)... ")
-                park = True
+                input("\nThe arm is being held. Put a hand under it, then press Enter to release torque and exit "
+                      "(the arm will drop where it is; Ctrl-C: exit without releasing)... ")
+                release = True
             except (KeyboardInterrupt, EOFError):
-                print("\nexiting without parking")
-        if park:
-            loop.park_and_release()
+                print("\nexiting without releasing torque: support the arm, then switch off the power")
+        if release:
+            loop.release_in_place(warn_s=3.0)
         robot.disconnect()
 
 

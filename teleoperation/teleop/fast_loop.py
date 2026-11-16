@@ -116,6 +116,24 @@ class FastLoop:
         self._path_i, self._after, self._path_gripper = 0, after, gripper_deg
         self._mode = "returning"
 
+    def release_in_place(self, warn_s: float = 3.0) -> None:
+        """Release torque where the arm is, with no motion. The arm keeps being held (gravity feed-forward) during a
+        warn_s countdown so the operator can put a hand under it; after that it goes limp."""
+        if self._thread is None or not self._thread.is_alive():
+            return
+        print("\n[fast_loop] KEEP A HAND UNDER THE ARM: torque is released where it is, the arm will drop.")
+        for i in range(int(round(warn_s)), 0, -1):
+            print(f"[fast_loop] releasing torque in {i} ...", flush=True)
+            time.sleep(1.0)
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        try:
+            self.robot.bus.disable_all()
+            self._released = True
+            print("[fast_loop] torque released.")
+        except Exception as e:
+            print(f"[fast_loop] could not release torque: {e!r}")
+
     def park_and_release(self, speed: float = 0.4, rest_qpos=None) -> None:
         """Lower the arm slowly to the folded rest pose (all joints 0), then release torque.
 

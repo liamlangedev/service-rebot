@@ -1,4 +1,4 @@
-lerobot[xvla]==0.7.0
+lerobot[xvla,smolvla]==0.7.0
 fastapi
 uvicorn[standard]
 opencv-python-headless

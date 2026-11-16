@@ -26,17 +26,31 @@ def _hf_token():
         return None
 
 
+def _raise(r):
+    """raise_for_status, with the server's error message (e.g. which policies are available)."""
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail")
+        except Exception:
+            detail = r.text[:300]
+        raise SystemExit(f"remote policy server: HTTP {r.status_code} on {r.url}: {detail}")
+
+
 class RemotePolicy:
-    def __init__(self, url: str, n_action_steps: int | None = None, jpeg_quality: int = 90, timeout: float = 30.0):
+    def __init__(self, url: str, policy: str | None = None, n_action_steps: int | None = None,
+                 jpeg_quality: int = 90, timeout: float = 30.0):
+        """policy: repo id served by the server (GET /policies); None = the server's default."""
         self.url = url.rstrip("/")
         self.session = requests.Session()
         tok = _hf_token()
         if tok:  # private Spaces accept the HF token as a bearer token
             self.session.headers["Authorization"] = f"Bearer {tok}"
         self.timeout, self.jpeg_quality = timeout, jpeg_quality
-        r = self.session.get(f"{self.url}/info", timeout=max(timeout, 60.0))
-        r.raise_for_status()
+        r = self.session.get(f"{self.url}/info", params={"policy": policy} if policy else None,
+                             timeout=max(timeout, 60.0))
+        _raise(r)
         self.info = r.json()
+        self.policy = self.info["policy"]
         self.image_sizes = {n: (int(h), int(w)) for n, (h, w) in self.info["image_sizes"].items()}
         self.chunk_size = int(self.info["chunk_size"])
         if n_action_steps and n_action_steps > self.chunk_size:
@@ -59,10 +73,10 @@ class RemotePolicy:
         import time
         payload = {"state": {f"{j}.pos": float(obs[f"{j}.pos"]) for j in JOINTS},
                    "images": {n: self._encode(obs[n]) for n in self.image_sizes},
-                   "task": task, "n_action_steps": self.n_action_steps}
+                   "task": task, "n_action_steps": self.n_action_steps, "policy": self.policy}
         t0 = time.perf_counter()
         r = self.session.post(f"{self.url}/act", json=payload, timeout=self.timeout)
-        r.raise_for_status()
+        _raise(r)
         out = r.json()
         self.last_ms = {"rtt": 1000 * (time.perf_counter() - t0), "infer": float(out.get("infer_ms", 0.0))}
         names = out["names"]

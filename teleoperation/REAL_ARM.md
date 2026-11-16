@@ -165,6 +165,13 @@ python rollout_policy.py --port /dev/ttyACM0 --remote-url https://niru-5-rebot-p
     --task "pick up the bottle and put it in the designated bin" --duration 60 --max-step-deg 2
 ```
 
+Pick the model with `--policy` (the Space serves both; default XVLA):
+`--policy RoboCrafty/smolvla_rebot_merged_V2` or `--policy niru-5/xvla_rebot_merged_V2`. `GET /policies` on the Space lists them.
+
+**Exit:** after Esc, `rollout_policy.py` no longer drives the arm to the folded rest pose (that path hit the cardboard
+behind it). Enter at the prompt warns you to keep a hand under the arm, counts down 3 s while still holding it, then
+releases torque where it is and exits. `--park no` keeps holding and exits; `--park yes` releases without asking.
+
 **Wayland (Ubuntu's default session):** pynput sees no keys there. `--keys auto` (default) then reads
 -> / Esc / S / G / H from the terminal running the script instead, so keep that terminal focused. Force it with
 `--keys terminal`, or `--keys pynput` on X11. Test the keys first without the arm: `python -m teleop.term_keys`.
