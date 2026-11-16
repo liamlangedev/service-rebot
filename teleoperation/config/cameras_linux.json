@@ -1,0 +1,13 @@
+{
+  "_comment": "Linux laptop (Ubuntu): name -> /dev/video index. Checked 2026-11-16 by grabbing one frame from each: video2 = KD-USB (low front view), video4 = USB2.0_CAM1 (between the gripper fingers), video6 = C920 (high oblique). video0 is the laptop webcam. Indices can change after replugging.",
+  "width": 1280,
+  "height": 720,
+  "save_width": 640,
+  "save_height": 360,
+  "fps": 30,
+  "cameras": {
+    "front_wide": 2,
+    "gripper": 4,
+    "high_oblique": 6
+  }
+}
