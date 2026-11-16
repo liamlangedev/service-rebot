@@ -22,6 +22,7 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from pynput import keyboard
@@ -56,6 +57,10 @@ def parse_args():
     p.add_argument("--task", default="pickup the keys and put it in the designated bin",
                    help="language prompt; used by SmolVLA/VLAs, ignored by ACT. Use the exact training wording")
     p.add_argument("--device", default="auto", help="auto (cuda > mps > cpu), cuda, mps or cpu")
+    p.add_argument("--dtype", choices=["float32", "bfloat16"], default=None,
+                   help="override the policy dtype (pi0/pi0.5: bfloat16 is faster on MPS/CUDA)")
+    p.add_argument("--num-inference-steps", type=int, default=None,
+                   help="flow-matching denoising steps (pi0/pi0.5 default 10); fewer = faster, slightly less precise")
     p.add_argument("--fps", type=int, default=30)
     p.add_argument("--duration", type=float, default=30.0, help="seconds per run")
     p.add_argument("--runs", type=int, default=0, help="stop after this many runs (0 = until Esc)")
@@ -66,8 +71,12 @@ def parse_args():
                    help="largest change of any joint target per policy step (deg); 4 deg x 30 Hz = 120 deg/s")
     p.add_argument("--max-gripper-step-deg", type=float, default=40.0)
     p.add_argument("--cameras-file", default=str(CAMERAS_FILE))
-    p.add_argument("--cam-width", type=int, default=640, help="must match the training images (the v1 dataset is 640x480)")
-    p.add_argument("--cam-height", type=int, default=480)
+    p.add_argument("--cam-width", type=int, default=None,
+                   help="image width fed to the policy; must match training (default: save_width of cameras.json)")
+    p.add_argument("--cam-height", type=int, default=None,
+                   help="image height fed to the policy (default: save_height of cameras.json)")
+    p.add_argument("--capture-width", type=int, default=None, help="camera capture width (default: width of cameras.json)")
+    p.add_argument("--capture-height", type=int, default=None, help="camera capture height (default: height of cameras.json)")
     p.add_argument("--gripper-torque-ratio", type=float, default=0.03)
     p.add_argument("--park", choices=["ask", "yes", "no"], default="ask")
     p.add_argument("--yes", action="store_true", help="skip the Enter prompt before the first ready move")
@@ -101,7 +110,15 @@ def load_policy(args, device: str):
         cfg.pretrained_path = str(Path(local) / args.subfolder)
         cfg = PreTrainedConfig.from_pretrained(cfg.pretrained_path)
         cfg.pretrained_path, cfg.device = Path(local) / args.subfolder, device
-    policy = get_policy_class(cfg.type).from_pretrained(cfg.pretrained_path, config=cfg)
+    cls = get_policy_class(cfg.type)
+    if args.dtype and hasattr(cfg, "dtype"):
+        cfg.dtype = getattr(torch, args.dtype)
+    if args.num_inference_steps and hasattr(cfg, "num_inference_steps"):
+        cfg.num_inference_steps = args.num_inference_steps
+    # The policy's __init__ randomly initialises billions of weights on the CPU (~100 s for pi0/pi0.5) and
+    # from_pretrained then overwrites them; building directly on the target device takes seconds.
+    with torch.device(device):
+        policy = cls.from_pretrained(cfg.pretrained_path, config=cfg)
     policy.to(device)
     policy.eval()
     if args.n_action_steps:
@@ -191,6 +208,11 @@ def dry_run(args, device):
 
 def main():
     args = parse_args()
+    cam_file = json.loads(Path(args.cameras_file).read_text())
+    # Same path as record_episodes.py: capture at the 16:9 mode, then downscale to the saved size
+    cap_w, cap_h = args.capture_width or cam_file["width"], args.capture_height or cam_file["height"]
+    args.cam_width = args.cam_width or cam_file.get("save_width", cap_w)
+    args.cam_height = args.cam_height or cam_file.get("save_height", cap_h)
     device = pick_device(args.device)
     if args.dry_run:
         return dry_run(args, device)
@@ -205,11 +227,11 @@ def main():
     policy, pre, post, cfg = load_policy(args, device)
     print(f"policy {cfg.type} on {device}: chunk {cfg.chunk_size}, n_action_steps {policy.config.n_action_steps}")
 
-    cam_file = json.loads(Path(args.cameras_file).read_text())
-    cameras = {n: OpenCVCameraConfig(index_or_path=i, width=args.cam_width, height=args.cam_height, fps=args.fps,
+    cameras = {n: OpenCVCameraConfig(index_or_path=i, width=cap_w, height=cap_h, fps=args.fps,
                                      warmup_s=3, fourcc=cam_file.get("fourcc"))
                for n, i in cam_file["cameras"].items()}
-    print("cameras:", {n: c.index_or_path for n, c in cameras.items()}, f"{args.cam_width}x{args.cam_height}@{args.fps}")
+    print("cameras:", {n: c.index_or_path for n, c in cameras.items()},
+          f"capture {cap_w}x{cap_h}@{args.fps} -> policy {args.cam_width}x{args.cam_height}")
     rcfg = RebotB601FollowerRobotConfig(port=args.port, cameras=cameras, disable_torque_on_disconnect=False,
                                         gripper_torque_ratio=args.gripper_torque_ratio)
     rcfg.joint_limits["gripper"] = (g_lo, g_hi)
@@ -263,6 +285,9 @@ def main():
                     was_active = True
                 t_inf = time.perf_counter()
                 obs = robot.get_observation()
+                for name in cameras:
+                    if obs[name].shape[:2] != (args.cam_height, args.cam_width):
+                        obs[name] = cv2.resize(obs[name], (args.cam_width, args.cam_height), interpolation=cv2.INTER_AREA)
                 with torch.inference_mode():
                     frame = build_inference_frame(obs, torch.device(device), ds_features, args.task, getattr(robot, "robot_type", robot.name))
                     act = make_robot_action(post(policy.select_action(pre(frame))), ds_features)
