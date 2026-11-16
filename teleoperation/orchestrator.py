@@ -154,7 +154,8 @@ class Robot:
 
         # 1. is there anything to pick up? Do not move the arm if not.
         if self.judge and before:
-            pre = self.judge("pre", item, [before], pickup=hint, bin=bin_desc, looks_like=looks)
+            pre = self.judge("pre", item, [before], pickup=hint, bin=bin_desc, looks_like=looks,
+                             not_this=self.skill_cfg.get(item, {}).get("not_this", ""))
             log(f"  [judge] before: present={pre.get('present')} sees '{pre.get('what_i_see', '')}' - {pre.get('reason', '')}")
             if pre.get("present") is False:
                 self.issue("no_item", "warning", f"Out of {item}: none at the pick-up area", item=item,
@@ -431,13 +432,18 @@ def handle_demo(client, model, robot: Robot, contents, tools) -> str:
 
 
 def judge_prompt(kind: str, item: str, pickup: str = "", bin: str = "the bin", elapsed: float = 0.0,
-                 motion: float | None = None, looks_like: str = "", **_) -> str:
+                 motion: float | None = None, looks_like: str = "", not_this: str = "", **_) -> str:
     if kind == "pre":
+        # looks_like / not_this come from config/skills.json per item, so one item's look-alike (the rolled towel
+        # for the bottle check) is not excluded when checking for that item itself.
         return (f"This is the front_wide camera of a robot workspace. {pickup} The bin is {bin}.\n"
                 f"Is there a {item} on the table at the pick-up area (not already in the bin, not in the gripper)?\n"
-                + (f"A {item} looks like this: {looks_like}. " if looks_like else "")
-                + f"Only answer true if you can clearly see an object that is a {item}. Other objects (a rolled-up cloth, "
-                  f"cables, boxes, the robot itself) do not count. If you are not sure, answer false.\n"
+                + (f"On this table the {item} looks like this: {looks_like}. Trust this description over what the "
+                   f"object would usually look like.\n" if looks_like else "")
+                + (f"These are NOT the {item}: {not_this}.\n" if not_this else "")
+                + f"Answer true if an object on the table at the pick-up area reasonably matches the description of the "
+                  f"{item}. Cables, boxes, the bin, things inside the bin and the robot itself never count. Answer false "
+                  f"only if nothing on the table could be the {item}.\n"
                 'Answer ONLY with JSON: {"present": true or false, "what_i_see": "the object you think it is", "reason": "short"}')
     return (f"A robot arm is doing this task: pick up the {item} from the pick-up area and put it in the bin. {pickup} The bin is {bin}.\n"
             f"Image 1 was taken before the robot started. Image 2 is {elapsed:.0f} seconds later. "

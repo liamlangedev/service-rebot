@@ -15,7 +15,8 @@
       "offer": "a bottle of sparkling water",
       "good_for": "thirst, after the sauna or the thermal baths, a guest who feels hot or asks for a drink or water",
       "pickup": "bottles start on the table in the pick-up area (left and middle of the table), not in the bin",
-      "looks_like": "a green glass sparkling-water bottle with a white label, standing or lying"
+      "looks_like": "a green glass sparkling-water bottle with a white label, standing or lying",
+      "not_this": "the rolled-up towel (a soft teal/green and white roll lying on its side), plastic sports-drink bottles with a blue drink"
     },
     "towel": {
       "prompt": "pick up the towel and put it in the designated bin",
@@ -23,7 +24,8 @@
       "offer": "a fresh towel",
       "good_for": "the sauna, the thermal pools, a shower, drying off, a guest who is wet or cold",
       "pickup": "the towel starts on the table in the pick-up area (left and middle of the table), not in the bin",
-      "looks_like": "a white cloth towel, usually rolled up; rolled up it can look like a white bottle, but it is soft cloth, not a bottle"
+      "looks_like": "a small towel rolled up tightly into a cylinder about 25-30 cm long, lying on its side on the table; teal/green with white ends or white bands. Rolled up like this it can look like a large toothbrush, a tube or a bottle lying down - a teal/green-and-white roll lying on the table IS the towel",
+      "not_this": "glass or plastic bottles (they have a cap and a label)"
     }
   }
 }
