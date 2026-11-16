@@ -25,6 +25,11 @@ class RunnerConfig:
     task: str = "grasp the keys and lift them"
     max_offset_deg: float = 45.0     # arm joints may not leave the anchor by more than this
     revision: str | None = None
+    #: policy camera short names to feed; the others are left out of the batch. SmolVLA
+    #: skips missing image keys, and a SmolVLA fine-tuned on one camera keeps
+    #: smolvla_base's three camera slots in its config. None = feed every configured
+    #: camera (required for ACT).
+    use_cameras: tuple[str, ...] | None = None
 
 
 def fit_image(rgb: np.ndarray, height: int, width: int) -> np.ndarray:
@@ -67,7 +72,11 @@ class PolicyRunner:
             preprocessor_overrides={"device_processor": {"device": cfg.device}})
         #: policy image key -> (H, W)
         self.cameras = {k: (int(f.shape[1]), int(f.shape[2]))
-                        for k, f in pcfg.image_features.items()}
+                        for k, f in pcfg.image_features.items()
+                        if cfg.use_cameras is None or k.rsplit(".", 1)[-1] in cfg.use_cameras}
+        if not self.cameras:
+            raise ValueError(f"none of use_cameras={cfg.use_cameras} is a policy camera "
+                             f"({list(pcfg.image_features)})")
         self.chunk_size = int(getattr(pcfg, "chunk_size", getattr(pcfg, "n_action_steps", 1)))
         self.n_steps = max(1, min(cfg.n_steps, self.chunk_size))
         self.anchor: np.ndarray | None = None

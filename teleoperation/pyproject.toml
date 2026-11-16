@@ -15,8 +15,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Records teleop sessions as LeRobot datasets (pulls in torch).
-lerobot = ["lerobot[dataset,rebot]>=0.7.0", "torch", "torchvision"]
+# Records teleop sessions as LeRobot datasets (pulls in torch); smolvla lets rollout/ run
+# SmolVLA policies (transformers).
+lerobot = ["lerobot[dataset,rebot,smolvla]>=0.7.0", "torch", "torchvision"]
 
 [tool.uv]
 package = false

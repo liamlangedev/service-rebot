@@ -89,6 +89,59 @@ stop is unexplained; rerun it if the abs strategy looks promising.
 
 SmolVLA on the same datasets was considered and skipped for now.
 
+On the real arm (`rollout/`, 2026-11-15), **all results so far are invalid for the
+gripper.** `teleoperation/config/gripper_limits.json` (161 open / 507 closed) no longer
+matched the arm (re-measured: -370 / 0), so every gripper command landed beyond "closed".
+The driver clamped it, and the gripper never moved: its reading stayed at 6 deg in all
+14 runs, keys and towel.
+
+The "gripped and lifted" stops (keys grasp-abs 2/2, keys grasp-rel 1/4, towel
+SmolVLA grasp-rel 1/1) only mean the policy commanded a close and the arm then rose 5 cm:
+the frozen gripper reading looked like a settled jaw. The policies themselves did command
+open at the start and close at the grasp. Rerun all of these with the fixed calibration.
+
+## Towel grasp runs: ACT and SmolVLA (2026-11-15)
+
+Same pipeline on [RoboCrafty/rebot_sort_towel2](https://huggingface.co/datasets/RoboCrafty/rebot_sort_towel2)
+(32 episodes, 640x360 cameras, same joint and gripper conventions as rebot_sort_v1). All 32
+grasps pass the filters. Like the keys, the towel grasps are all in one spot (TCP x
+0.40-0.47 m, y -0.29 to -0.19 m, xy std 2.3 cm), so "random locations" is what the relative
+variant is for. Task text: "pick up the towel" (the SmolVLA prompt). Built on HF Jobs
+(`6af9bf4c29dd05ff0368ca52`, cpu-upgrade); the datasets are **public**.
+
+| | abs (specific location) | rel (random locations) |
+|---|---|---|
+| Dataset | [`niru-5/rebot_grasp_towel_abs`](https://huggingface.co/datasets/niru-5/rebot_grasp_towel_abs): 32 clips, 3,507 frames, 3 cameras, `eval_split=0.078125` | [`niru-5/rebot_grasp_towel_rel`](https://huggingface.co/datasets/niru-5/rebot_grasp_towel_rel): 128 clips, 11,148 frames, gripper camera, `eval_split=0.08984375` |
+| Held out | source episodes 29-31 | same |
+| ACT | `6af9c3e929dd05ff0368cffc` -> `niru-5/act_rebot_grasp_towel_abs` | `6af9c3d329dd05ff0368cfcd` -> `niru-5/act_rebot_grasp_towel_rel` |
+| SmolVLA | `6af9c3f429dd05ff0368d00e` -> `niru-5/smolvla_rebot_grasp_towel_abs_2026-11-15_14-38-42` | `6af9c3de23985fb9cd836e48` -> `niru-5/smolvla_rebot_grasp_towel_rel_2026-11-15_14-38-20` |
+
+ACT settings as for the keys (`training_gripper/train.sh`). SmolVLA
+(`training_gripper/train_smolvla.sh`): fine-tunes `smolvla_base`, cameras renamed to
+camera1/2/3 (gripper -> camera2), batch 64 x 5k steps, cosine warmup 300 / decay 5k, eval
+every 500 steps, 8 workers, rtx-pro-6000. Model repos are private.
+
+All four completed 5k steps (models private, checkpoints every 1k). Eval loss on the 3
+held-out grasps:
+
+| step | ACT rel | ACT abs | SmolVLA rel | SmolVLA abs |
+|---|---|---|---|---|
+| 500 | 0.303 | 0.305 | 0.456 | 0.441 |
+| 1000 | 0.260 | 0.306 | **0.469** | **0.575** |
+| 2000 | 0.253 | 0.275 | 0.588 | 0.620 |
+| 3000 | 0.250 | 0.269 | 0.703 | 0.674 |
+| 4000 | 0.242 | **0.267** | 0.759 | 0.853 |
+| 5000 | **0.239** | 0.270 | 0.723 | 0.920 |
+
+- **ACT** keeps improving (rel) or flattens (abs) on held-out grasps: use the final models.
+- **SmolVLA overfits**: eval loss rises from step 500 while train loss falls (rel final
+  train loss 0.044). About 30 short clips from one towel position are not enough for a
+  450M fine-tune at 5k steps. Use checkpoint `001000`, the earliest saved. For a rerun:
+  fewer steps (~1k), save every 250, or freeze more of the model.
+- SmolVLA's flow-matching eval loss and ACT's L1+KL loss are not comparable with each
+  other.
+- `rollout/run.sh towel-*` loads: ACT final, SmolVLA `checkpoints/001000`.
+
 ## Aborted runs
 
 | # | Policy | Flavor | Settings | HF job | Outcome |

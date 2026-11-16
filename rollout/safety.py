@@ -66,13 +66,20 @@ class SafetyFilter:
     def set_anchor(self, state: np.ndarray) -> None:
         self.anchor = np.asarray(state, dtype=np.float64).copy()
 
-    def check_pose(self, q_deg: np.ndarray) -> str | None:
-        """Why this arm pose is outside the workspace, or None."""
+    def check_pose(self, q_deg: np.ndarray, from_q: np.ndarray | None = None) -> str | None:
+        """Why this arm pose is outside the workspace, or None.
+
+        Below the floor, a pose is only refused if it is also lower than `from_q` (the
+        previous command): an arm that starts low, e.g. left there by hand, may still move
+        up and out, but never further down.
+        """
         if self.fk is None:
             return None
         x, y, z = self.fk(q_deg[:6])
         if z < self.limits.min_tcp_z:
-            return f"TCP z {z:.3f} m below floor {self.limits.min_tcp_z:.3f} m"
+            z_from = self.fk(from_q[:6])[2] if from_q is not None else None
+            if z_from is None or z < z_from - 0.001:
+                return f"TCP z {z:.3f} m below floor {self.limits.min_tcp_z:.3f} m"
         reach = float(np.hypot(x, y))
         if reach > self.limits.max_reach_m:
             return f"TCP reach {reach:.2f} m beyond {self.limits.max_reach_m:.2f} m"
@@ -103,7 +110,7 @@ class SafetyFilter:
         arm = new
 
         cmd[:6] = arm
-        why = self.check_pose(arm)
+        why = self.check_pose(arm, from_q=prev)
         if why is not None:
             return Verdict(command=prev.copy(), clipped=clipped + ["workspace"], stop=why)
         return Verdict(command=cmd, clipped=clipped)
@@ -132,7 +139,8 @@ class GripperUnits:
     """Robot gripper degrees (this arm's calibration) <-> dataset gripper degrees.
 
     The dataset arm read -365 open / -5 closed; this arm reads (from
-    teleoperation/config/gripper_limits.json) 161 open / 507 closed. Both go through the
+    teleoperation/config/gripper_limits.json, re-measured 2026-11-15) -370 open / 0 closed;
+    until then the file said 161 / 507, which no longer matched the arm. Both go through the
     opening fraction (1 = open, 0 = closed).
     """
 
