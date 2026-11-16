@@ -11,7 +11,8 @@ Run everything from this folder with the repo's root venv (`steel_team/.venv`: l
 | `record_episodes.py` | **Main recorder.** Right = start/save, Left = discard, Esc = finish. `--resume` appends |
 | `record_rebot.py` | Same idea through stock `lerobot-record` (fewer features; prefer `record_episodes.py`) |
 | `go_ready.py` | Move the arm to the ready pose (gripper pointing down), then hold |
-| `rollout_policy.py` | **Run a trained policy** (ACT, SmolVLA, ...) on the arm through the 200 Hz MIT loop |
+| `rollout_policy.py` | **Run a trained policy** (ACT, SmolVLA, XVLA, ...) on the arm through the 200 Hz MIT loop; `--remote-url` = inference on a GPU server |
+| `remote_inference/` | GPU inference server (HF Space `niru-5/rebot-policy-server`), client in `teleop/remote_policy.py` |
 | `push_dataset.py` | Upload a local dataset to the Hugging Face Hub |
 | `sim_teleop.py` | Same Leap/IK pipeline in MuJoCo (`--input leap`); use it to check hand axes safely |
 | `tools/measure_gripper.py` | Measure the gripper's real open/closed angles → `config/gripper_limits.json` |
@@ -115,7 +116,9 @@ python rollout_policy.py --policy niru-5/act_rebot_sort_v1 --dry-run
 python rollout_policy.py --policy niru-5/smolvla_rebot_sort_v1_2026-11-15_02-15-27 --dry-run
 ```
 
-Then on the arm (the cameras must be captured at **640x480**, the size of the v1 training data; this is the default here):
+Cameras capture at the `cameras.json` mode (1280x720) and frames are downscaled to the size the policy was trained on, read
+from the checkpoint. The v1 policies were trained on 4:3 640x480 frames, so for them capture in that mode too:
+add `--capture-width 640 --capture-height 480` to the commands below.
 
 ```bash
 # ACT: language is ignored
@@ -142,6 +145,30 @@ and returns to it. Other checkpoints of a repo: `--subfolder checkpoints/010500/
 First runs: put the keys and bin in the training layout, keep a hand on the power switch, start with `--max-step-deg 2`.
 The policy can only do what the 640x480-camera, `front_wide` / `gripper` / `high_oblique` data showed it; a different camera
 position or crop will degrade it. A dataset recorded with `record_episodes.py` now (16:9, 640x360) does not match these policies.
+
+### XVLA (merged V2) with inference on a GPU Space
+
+`niru-5/xvla_rebot_merged_V2` (XVLA, 0.9B, 640x360 frames from the 16:9 cameras, chunk 30) is too slow on a laptop CPU
+(~32 s per chunk). It is served from the private Space `niru-5/rebot-policy-server` (T4, sleeps after 1 h idle; the
+first request after sleep waits a few minutes). Server code: `remote_inference/` (FastAPI, Docker). The robot computer only
+sends the joint state and three JPEG frames per chunk and plays the 30 returned targets through the same 200 Hz loop.
+Needs `hf auth login` on the robot computer (the Space is private).
+
+```bash
+# check the server, no robot
+python rollout_policy.py --remote-url https://niru-5-rebot-policy-server.hf.space --dry-run \
+    --task "pick up the bottle and put it in the designated bin"
+
+# on the arm; trained tasks: "pick up the bottle and put it in the designated bin",
+#                            "pick up the towel and put it in the designated bin"
+python rollout_policy.py --port /dev/ttyACM0 --remote-url https://niru-5-rebot-policy-server.hf.space \
+    --task "pick up the bottle and put it in the designated bin" --duration 60 --max-step-deg 2
+```
+
+Measured on the T4: ~0.8 s server inference, ~1.4 s round trip per chunk. The arm holds its last target while the next chunk
+is requested, so there is a short pause every 30 steps (1 s). Running locally on a CUDA machine instead:
+`--policy niru-5/xvla_rebot_merged_V2`. Serve a different checkpoint: set `POLICY_REPO` (and `POLICY_SUBFOLDER`) in the Space
+variables; redeploy the code with `hf upload niru-5/rebot-policy-server remote_inference . --repo-type space`.
 
 ## Orchestrator: Gemini calls the policy by voice or text
 
