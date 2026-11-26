@@ -73,16 +73,6 @@ Trained on [RoboCrafty/rebot_sort_v1](https://huggingface.co/datasets/RoboCrafty
 Results and suggested checkpoints are in [`training/RUNS.md`](training/RUNS.md). Run policies at
 30 Hz.
 
-## Working with Claude Code
-
-- [`CLAUDE.md`](CLAUDE.md): repo rules. Feature work goes in worktrees under
-  `.claude/worktrees/` and reaches `main` through PRs; merged worktrees are deleted.
-- Project skills in `.claude/skills/`:
-  - [`simulation`](.claude/skills/simulation/SKILL.md): running, scripting, recalibrating and
-    capturing with the sim;
-  - [`training`](.claude/skills/training/SKILL.md): submitting, monitoring and evaluating HF
-    Jobs training runs.
-
 ## Credits
 
 Robot model and CAD (including the soft gripper): Seeed Studio
